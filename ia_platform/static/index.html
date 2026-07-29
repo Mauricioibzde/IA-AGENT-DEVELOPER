@@ -230,6 +230,16 @@
         <strong id="ollamaBannerTitle">Ollama offline</strong>
         <p id="ollamaOfflineText">Clique abaixo para instalar o Ollama (Windows: winget), iniciar o serviço e baixar o modelo recomendado.</p>
         <button type="button" class="btn btn-primary btn-gradient btn-sm" id="btnAutoSetup">Configurar automaticamente</button>
+        <div class="models-setup-inline hidden" id="modelsSetupInline">
+          <div class="setup-progress-head">
+            <span class="setup-progress-label">Configurando</span>
+            <span class="setup-percent" id="modelsSetupPercent">0%</span>
+          </div>
+          <div class="pull-bar setup-bar">
+            <div class="pull-bar-fill" id="modelsSetupBarFill"></div>
+          </div>
+          <p class="setup-status" id="modelsSetupStatus">Aguarde...</p>
+        </div>
       </div>
       <div class="models-layout">
         <section class="models-hardware" id="hardwarePanel">

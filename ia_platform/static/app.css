@@ -956,7 +956,22 @@ body {
 
 .ollama-offline-banner .btn { align-self: flex-start; }
 
-.setup-modal { max-width: 460px; text-align: left; }
+#setupModal {
+  z-index: 250;
+}
+
+.models-setup-inline {
+  margin-top: 4px;
+  padding-top: 12px;
+  border-top: 1px solid rgba(248, 113, 113, 0.2);
+}
+
+.models-setup-inline .setup-status {
+  margin-top: 8px;
+  font-size: 0.78rem;
+  color: #fecaca;
+}
+
 .setup-subtitle { color: var(--muted); font-size: 0.85rem; margin: 6px 0 18px; line-height: 1.45; }
 
 .setup-progress-wrap {

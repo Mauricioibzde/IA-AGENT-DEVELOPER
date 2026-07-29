@@ -102,6 +102,10 @@
     ollamaBannerTitle: $("ollamaBannerTitle"),
     ollamaOfflineText: $("ollamaOfflineText"),
     btnAutoSetup: $("btnAutoSetup"),
+    modelsSetupInline: $("modelsSetupInline"),
+    modelsSetupPercent: $("modelsSetupPercent"),
+    modelsSetupBarFill: $("modelsSetupBarFill"),
+    modelsSetupStatus: $("modelsSetupStatus"),
     setupModal: $("setupModal"),
     setupStatus: $("setupStatus"),
     setupBarFill: $("setupBarFill"),
@@ -206,6 +210,21 @@
     if (els.sidebarSetupBar) els.sidebarSetupBar.style.width = `${Math.min(100, Math.max(0, percent || 0))}%`;
   }
 
+  function syncInlineSetupProgress(percent, message) {
+    const modelsOpen = els.modelsModal && !els.modelsModal.classList.contains("hidden");
+    if (!setupProgress.visible || !modelsOpen) {
+      els.modelsSetupInline?.classList.add("hidden");
+      return;
+    }
+    els.modelsSetupInline?.classList.remove("hidden");
+    if (els.modelsSetupPercent) els.modelsSetupPercent.textContent = `${percent}%`;
+    if (els.modelsSetupBarFill) els.modelsSetupBarFill.style.width = `${percent}%`;
+    if (message && els.modelsSetupStatus) els.modelsSetupStatus.textContent = message;
+    if (els.btnAutoSetup) {
+      els.btnAutoSetup.textContent = state.setupInFlight ? "Configurando..." : "Configurar automaticamente";
+    }
+  }
+
   function updateSetupProgress(percent, message, stepId) {
     const pct = Math.min(100, Math.max(0, Math.round(percent ?? 0)));
     setupProgress.lastPercent = pct;
@@ -219,6 +238,7 @@
       if (inferred) setSetupStep(inferred, "active");
     }
     syncSidebarSetupProgress(pct, message || "Configurando...");
+    syncInlineSetupProgress(pct, message || "Configurando...");
   }
 
   function showSetupModal(message, percent) {
@@ -233,9 +253,11 @@
       setupProgress.visible = false;
       els.setupModal?.classList.add("hidden");
       els.sidebarSetupPill?.classList.add("hidden");
+      els.modelsSetupInline?.classList.add("hidden");
       if (els.setupBarFill) els.setupBarFill.style.width = "0%";
       if (els.setupPercent) els.setupPercent.textContent = "0%";
       setupProgress.stepStatus = {};
+      if (els.btnAutoSetup) els.btnAutoSetup.textContent = "Configurar automaticamente";
     };
     if (delayMs > 0) setTimeout(hide, delayMs);
     else hide();
@@ -258,6 +280,8 @@
     updateSetupProgress(setupProgress.lastPercent || 0, message || "Falha na configuração.");
     if (els.setupSubtitle) els.setupSubtitle.textContent = "Corrija o problema abaixo ou tente novamente.";
   }
+
+  function isModelInstalled(name, installed) {
     if (!name) return false;
     const list = installed || state.models || [];
     if (list.includes(name)) return true;
@@ -265,7 +289,7 @@
     return list.some((m) => m.split(":")[0] === base);
   }
 
-  function isModelInstalled(name, installed) {
+  function getSelectedModel() {
     const value = els.modelSelect?.value || "__auto__";
     if (value === "__auto__") return null;
     if (value === "__custom__") {
@@ -410,7 +434,8 @@
       }
     }
     if (els.btnAutoSetup) {
-      els.btnAutoSetup.disabled = !!state.setupInFlight;
+      els.btnAutoSetup.disabled = false;
+      els.btnAutoSetup.textContent = state.setupInFlight ? "Configurando..." : "Configurar automaticamente";
     }
     document.querySelectorAll('[data-action="pull"]').forEach((btn) => {
       const model = btn.dataset.model;
@@ -510,13 +535,13 @@
 
   async function ensureEnvironment(options = {}) {
     const { pullRecommended = false, showProgress = true } = options;
+    if (showProgress) showSetupModal("Iniciando configuração...", 3);
+
     if (state.setupInFlight) return state.setupInFlight;
 
     let setupOk = false;
 
     const task = (async () => {
-      if (showProgress) showSetupModal("Verificando ambiente...", 3);
-
       const ollamaReady = await ensureOllamaRunning(showProgress);
       if (!ollamaReady) return false;
 
@@ -1710,16 +1735,22 @@
   els.btnDeploy.addEventListener("click", runDeploy);
   els.btnModels.addEventListener("click", openModelsModal);
   els.btnAutoSetup?.addEventListener("click", async () => {
-    els.btnAutoSetup.disabled = true;
-    const ok = await ensureEnvironment({ pullRecommended: true, showProgress: true });
-    els.btnAutoSetup.disabled = false;
-    if (ok) {
-      updateOllamaOfflineUI();
-      if (state.pendingPrompt && state.current) {
-        els.promptInput.value = state.pendingPrompt;
-        state.pendingPrompt = null;
-        sendPrompt();
+    try {
+      showSetupModal("Iniciando configuração automática...", 3);
+      const ok = await ensureEnvironment({ pullRecommended: true, showProgress: true });
+      if (ok) {
+        updateOllamaOfflineUI();
+        await loadModelRecommendations().catch(() => {});
+        if (state.pendingPrompt && state.current) {
+          els.promptInput.value = state.pendingPrompt;
+          state.pendingPrompt = null;
+          sendPrompt();
+        } else {
+          closeModelsModal();
+        }
       }
+    } catch (e) {
+      finishSetupError(e.message || "Erro inesperado na configuração.");
     }
   });
   els.btnCloseModels.addEventListener("click", closeModelsModal);
