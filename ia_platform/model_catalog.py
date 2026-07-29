@@ -185,17 +185,8 @@ def pick_smaller_fallback_model(failed: str, installed: List[str]) -> Optional[s
             score += 4.0
         candidates.append((score, name))
     if not candidates:
-        # Last resort: any other non-base installed model, smallest first.
-        leftovers: List[tuple[float, str]] = []
-        for name in installed:
-            lower = (name or "").lower()
-            if not lower or lower == failed_name.lower() or "embed" in lower or lower.endswith("-base"):
-                continue
-            leftovers.append((estimate_model_size_gb(name), name))
-        if not leftovers:
-            return None
-        leftovers.sort(key=lambda item: item[0])
-        return leftovers[0][1]
+        # Never “fall back” to a larger model (e.g. 6.7b → 32b).
+        return None
     candidates.sort(key=lambda item: item[0], reverse=True)
     return candidates[0][1]
 
@@ -293,7 +284,16 @@ def resolve_model_for_chat(
 
 def _resolve_coder_model(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     if requested and str(requested).strip():
-        return str(requested).strip()
+        name = str(requested).strip()
+        # Explicit pick that cannot load on this host → use a smaller installed coder.
+        # (Installed ≠ runnable: qwen2.5-coder:32b often 500s on 16GB boxes.)
+        if installed and not _name_fits_hardware(name, hardware):
+            alt = pick_smaller_fallback_model(name, installed)
+            if alt:
+                return alt
+            # No smaller option: keep the user's pick (runtime OOM fallback may still help).
+            # Never upgrade to a heavier model than requested.
+        return name
 
     rec = recommend_models(hardware, installed)
     primary = rec["primary"]["ollama_name"]

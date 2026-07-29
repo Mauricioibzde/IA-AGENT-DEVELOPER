@@ -28,7 +28,8 @@ from ia_platform.conversations import (
     format_conversation_context,
     list_recent_chats,
     load_messages,
-)from ia_platform.deploy import deploy_preflight, deploy_project
+)
+from ia_platform.deploy import deploy_preflight, deploy_project
 from ia_platform.project_ops import archive_project, duplicate_project, list_projects, rename_project
 from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware

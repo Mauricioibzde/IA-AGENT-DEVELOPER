@@ -681,6 +681,42 @@
     return installed.find((name) => name.toLowerCase() !== avoid && modelFitsHardware(name)) || null;
   }
 
+  function isModelMemoryError(message) {
+    return /insufficient memory|n[aã]o cabe na mem[oó]ria|mem[oó]ria insuficiente|failed to allocate|out of memory|http error 500|internal server error/i.test(
+      String(message || "")
+    );
+  }
+
+  function banAndSwitchFromBrokenModel(brokenName, reason) {
+    const broken = String(brokenName || "").trim();
+    const current = resolveModelForRequest();
+    if (broken && current && current.toLowerCase() === broken.toLowerCase()) {
+      rememberModelPreference(null);
+    } else if (broken && readModelPreference()?.toLowerCase() === broken.toLowerCase()) {
+      rememberModelPreference(null);
+    }
+    const fallback = pickFittingInstalledModel(broken);
+    if (fallback) {
+      setModelSelection(fallback);
+      rememberModelPreference(fallback);
+      showToast(
+        `${reason || "Modelo sem memória"} — trocando para <strong>${escapeHtml(fallback)}</strong>.`,
+        "info",
+        7000
+      );
+      return fallback;
+    }
+    setModelSelection(null);
+    rememberModelPreference(null);
+    showToast(`${reason || "Modelo sem memória"} — usando Auto.`, "info", 7000);
+    return null;
+  }
+
+  function modelNameFromError(message) {
+    const m = String(message || "").match(/modelo ['"]([^'"]+)['"]/i);
+    return m ? m[1] : resolveModelForRequest();
+  }
+
   function setModelSelection(model, opts = {}) {
     if (!els.modelSelect) return;
     const options = Array.from(els.modelSelect.options).map((o) => o.value);
@@ -742,11 +778,22 @@
     }
 
     // Restore a single canonical selection on both selectors.
+    // Never resurrect a preferred model that does not fit this host (e.g. 32b on 16GB).
     const preferred = readModelPreference();
-    const restore =
-      (previousCanonical && (installed || []).includes(previousCanonical) && previousCanonical) ||
-      (preferred && (installed || []).includes(preferred) && preferred) ||
-      null;
+    const usablePreferred =
+      preferred && (installed || []).includes(preferred) && modelFitsHardware(preferred, catalog)
+        ? preferred
+        : null;
+    if (preferred && !usablePreferred) {
+      rememberModelPreference(null);
+    }
+    const usablePrevious =
+      previousCanonical &&
+      (installed || []).includes(previousCanonical) &&
+      modelFitsHardware(previousCanonical, catalog)
+        ? previousCanonical
+        : null;
+    const restore = usablePrevious || usablePreferred || null;
     setModelSelection(restore);
   }
 
@@ -787,8 +834,18 @@
     const preferred = readModelPreference();
     const isAuto = !els.modelSelect || els.modelSelect.value === "__auto__";
 
-    // Never force-replace an explicit user choice. Prefer saved preference, else keep Auto.
-    if (preferred && list.includes(preferred)) {
+    // Never force-replace an explicit user choice — but drop oversized prefs (32b on 16GB).
+    if (preferred && list.includes(preferred) && !modelFitsHardware(preferred)) {
+      rememberModelPreference(null);
+      if (!current || current === preferred || isAuto) {
+        setModelSelection(null);
+        showToast(
+          `Preferência <strong>${escapeHtml(preferred)}</strong> exige mais memória. Usando Auto (${escapeHtml(recommended || "modelo menor")}).`,
+          "info",
+          7000
+        );
+      }
+    } else if (preferred && list.includes(preferred)) {
       if (!current || isAuto) setModelSelection(preferred);
     } else if (isAuto) {
       // Stay on Auto — server picks a fitting model at request time.
@@ -3583,7 +3640,8 @@
       return true;
     }
     // Common short imperatives from users after a Chat suggestion.
-    if (/^implemente(\s+(vc|voc[eê]|as|isso|essas?))?/i.test(t)) return true;
+    if (/^m?implemente(\s+(vc|voc[eê]|as|isso|essas?))?/i.test(t)) return true;
+    if (/implemente\s+vc\s+as\s+melhorias/i.test(t)) return true;
     if (/^(aplica|aplique|fa[cç]a)\s+(as\s+)?(melhorias|sugest|mudan|altera)/i.test(t)) return true;
     return false;
   }
@@ -3851,6 +3909,15 @@
         const isNetwork =
           e.name === "TypeError" ||
           /failed to fetch|networkerror|network error|load failed|fetch/i.test(raw);
+        if (isModelMemoryError(raw) && !opts.oomRetried) {
+          const broken = modelNameFromError(raw);
+          const fallback = banAndSwitchFromBrokenModel(broken, `Chat falhou em ${broken || "modelo grande"}`);
+          state.running = false;
+          window.clearInterval(waitTimer);
+          removeMessage(agentEl);
+          removeMessage(statusEl);
+          return sendChatPrompt(prompt, { model: fallback || "", oomRetried: true });
+        }
         agentEl.textContent = isNetwork
           ? "Erro de conexão com o servidor. Reinicie a plataforma e tente de novo."
           : /404|n[aã]o encontrado|model.*not found/i.test(raw)
@@ -4047,10 +4114,9 @@
             raw
           );
         if (isOom && !opts.oomRetried) {
-          const fallback = pickFittingInstalledModel(modelForRequest);
+          const broken = modelNameFromError(raw) || modelForRequest;
+          const fallback = banAndSwitchFromBrokenModel(broken, "Modelo sem memória suficiente");
           if (fallback && fallback !== modelForRequest) {
-            setModelSelection(fallback);
-            rememberModelPreference(fallback);
             state.running = false;
             removeMessage(agentEl);
             addMessage(

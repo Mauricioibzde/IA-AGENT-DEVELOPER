@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ia_platform.model_catalog import (
     MODEL_CATALOG,
+    pick_smaller_fallback_model,
     recommend_models,
     recommend_setup_model,
     resolve_model_for_chat,
@@ -198,6 +199,39 @@ def test_pick_smaller_fallback_prefers_coder_under_failed() -> None:
         "qwen2.5-coder:1.5b",
         "llama3.2:3b",
     }
+
+
+def test_resolve_explicit_oversized_model_downgrades() -> None:
+    hw = {
+        "tier": "medium",
+        "effective_memory_gb": 15,
+        "ram_total_gb": 16,
+        "ram_available_gb": 15,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert resolve_model_for_run("qwen2.5-coder:32b", installed, hw) == "deepseek-coder:6.7b"
+
+
+def test_resolve_explicit_smaller_model_never_upgrades() -> None:
+    hw = {
+        "tier": "minimal",
+        "effective_memory_gb": 4.5,
+        "ram_total_gb": 16,
+        "ram_available_gb": 4.5,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert resolve_model_for_run("deepseek-coder:6.7b", installed, hw) == "deepseek-coder:6.7b"
+    assert pick_smaller_fallback_model("deepseek-coder:6.7b", installed) is None
 
 
 def test_resolve_model_for_chat_skips_oversized_installed() -> None:
