@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import hashlib
 import re
 import shutil
 import time
@@ -18,6 +19,7 @@ class Validator:
         self.config = config
         self.project_index = project_index
         self.baseline_failures: Set[str] = set()
+        self.baseline_fingerprints: Dict[str, str] = {}
         self.command_count = 0
 
     def discover_commands(self, preferred: Optional[List[str]] = None) -> List[str]:
@@ -39,9 +41,30 @@ class Validator:
                 out.append(cmd)
         return out[:6]
 
+    @classmethod
+    def fingerprint_failure(cls, result: ValidationResult) -> str:
+        """Stable signature of a failed validation (exit + normalized diagnostics)."""
+        combined = "\n".join(filter(None, [result.stdout, result.stderr]))
+        diags = cls._extract_diagnostics(combined)
+        if not diags:
+            diags = [cls._tail(combined, 12)]
+        normalized = []
+        for line in diags:
+            text = re.sub(r"\s+", " ", (line or "").strip().lower())
+            # Drop volatile absolute paths / line-noise timestamps.
+            text = re.sub(r"/[^\s:]+", "<path>", text)
+            text = re.sub(r"\b\d{2}:\d{2}:\d{2}\b", "<time>", text)
+            if text:
+                normalized.append(text[:180])
+        payload = f"exit={result.exit_code}|{'||'.join(normalized[:6])}"
+        return hashlib.sha256(payload.encode("utf-8", errors="ignore")).hexdigest()[:20]
+
     def establish_baseline(self) -> List[ValidationResult]:
         results = self.run_all()
         self.baseline_failures = {r.command for r in results if not r.success}
+        self.baseline_fingerprints = {
+            r.command: self.fingerprint_failure(r) for r in results if not r.success
+        }
         # run_all() categorizes before baseline_failures is known — re-tag so
         # pre-existing failures are not treated as agent-introduced regressions.
         for item in results:
@@ -117,10 +140,27 @@ class Validator:
             category = "timeout"
         elif data.get("exit_code") == 127 or "not found" in (result.error or "").lower():
             category = "missing_tool"
-        elif command in self.baseline_failures and not success:
-            category = "pre_existing"
-        elif not success and command not in self.baseline_failures:
-            category = "introduced"
+        elif not success:
+            provisional = ValidationResult(
+                command=command,
+                success=False,
+                exit_code=int(data.get("exit_code", 1)),
+                stdout=str(data.get("stdout", "")),
+                stderr=str(data.get("stderr", "") or result.error or ""),
+                duration_seconds=duration,
+                category="code",
+            )
+            if command in self.baseline_failures:
+                baseline_fp = self.baseline_fingerprints.get(command)
+                current_fp = self.fingerprint_failure(provisional)
+                # Same command still failing with equivalent diagnostics → pre-existing.
+                # New/changed diagnostics on a previously failing command → introduced regression.
+                if baseline_fp and current_fp == baseline_fp:
+                    category = "pre_existing"
+                else:
+                    category = "introduced"
+            else:
+                category = "introduced"
         return ValidationResult(
             command=command,
             success=success,

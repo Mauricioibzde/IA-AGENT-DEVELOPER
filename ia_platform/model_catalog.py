@@ -294,6 +294,33 @@ def recommend_setup_model(
 ) -> str:
     """Pick the best first-time download model (CPU/GPU aware)."""
     installed = installed or []
+
+    # Prefer exact installed coder tags first (avoid matching :1.5b-base to :1.5b).
+    installed_coders: List[tuple[float, str]] = []
+    for entry in MODEL_CATALOG:
+        if "coder" not in entry.tags:
+            continue
+        if entry.ollama_name not in installed:
+            continue
+        score = _score(entry, hardware)
+        if score < 0:
+            # Still usable if already downloaded — slight penalty only.
+            score = 40.0 - abs(TIER_ORDER.get(entry.tier, 2) - TIER_ORDER.get(hardware.get("tier", "medium"), 2)) * 5
+        # Prefer larger exact tags when multiple exact installs exist on tiny RAM.
+        score += min(entry.size_gb, 8.0) * 0.5
+        installed_coders.append((score, entry.ollama_name))
+    if installed_coders:
+        installed_coders.sort(key=lambda item: item[0], reverse=True)
+        return installed_coders[0][1]
+
+    # Fuzzy match (tag family) only when no exact catalog name is installed.
+    for entry in MODEL_CATALOG:
+        if "coder" not in entry.tags:
+            continue
+        name = _installed_model_name(entry.ollama_name, installed)
+        if name and name in installed:
+            return name
+
     has_gpu = bool(hardware.get("has_gpu") or hardware.get("gpus"))
 
     if has_gpu:
@@ -316,15 +343,7 @@ def recommend_setup_model(
 
     if candidates:
         candidates.sort(key=lambda item: item[0], reverse=True)
-        chosen = candidates[0][1].ollama_name
-        installed_chosen = _installed_model_name(chosen, installed)
-        if installed_chosen:
-            return installed_chosen
-        for _score_val, entry in candidates:
-            installed_entry = _installed_model_name(entry.ollama_name, installed)
-            if installed_entry:
-                return installed_entry
-        return chosen
+        return candidates[0][1].ollama_name
 
     exact_installed = [
         entry

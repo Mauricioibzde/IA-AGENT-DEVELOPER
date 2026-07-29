@@ -66,11 +66,41 @@ class Executor:
                 return results, True
 
             tool = self.registry.get(name)
-            if tool and tool.requires_confirmation and tool.risk_level in {RiskLevel.HIGH, RiskLevel.CRITICAL}:
-                if not self.config.auto_approve_low_risk:
+            if tool and tool.requires_confirmation:
+                risk = tool.risk_level
+                # CRITICAL is never auto-approved.
+                if risk == RiskLevel.CRITICAL:
                     result = ToolResult(
                         ok=False,
-                        error=f"Tool {name} requires confirmation (risk={tool.risk_level.value})",
+                        error=(
+                            f"Ação crítica bloqueada ({name}). "
+                            "Essa operação não é permitida automaticamente."
+                        ),
+                        data={"confirmation_required": True, "risk_level": risk.value},
+                    )
+                    results.append({"tool": name, "result": result.to_dict()})
+                    continue
+                # HIGH always needs explicit confirmation — auto_approve_low_risk
+                # only covers LOW/MEDIUM (see CLI help).
+                if risk == RiskLevel.HIGH:
+                    result = ToolResult(
+                        ok=False,
+                        error=(
+                            f"Ação sensível bloqueada ({name}): revise antes de continuar "
+                            f"(risco={risk.value})."
+                        ),
+                        data={"confirmation_required": True, "risk_level": risk.value},
+                    )
+                    results.append({"tool": name, "result": result.to_dict()})
+                    continue
+                if risk == RiskLevel.MEDIUM and not self.config.auto_approve_low_risk:
+                    result = ToolResult(
+                        ok=False,
+                        error=(
+                            f"Ação sensível bloqueada ({name}): revise antes de continuar "
+                            f"(risco={risk.value})."
+                        ),
+                        data={"confirmation_required": True, "risk_level": risk.value},
                     )
                     results.append({"tool": name, "result": result.to_dict()})
                     continue

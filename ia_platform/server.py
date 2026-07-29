@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
 import mimetypes
 import platform
@@ -233,8 +234,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_deploy_status(project_id)
         if project_id and sub == "runs":
             return self._handle_get_runs(project_id)
+        if project_id and sub == "active-run":
+            return self._handle_active_run(project_id)
         if project_id and sub == "search":
             return self._handle_project_search(project_id, qs)
+        if path.startswith("/api/runs/") and path.endswith("/events"):
+            run_id = path.split("/")[3]
+            after = int(qs.get("after", ["0"])[0] or 0)
+            return self._handle_run_events(run_id, after=after)
+        if path.startswith("/api/runs/") and path.count("/") == 3:
+            run_id = path.split("/")[3]
+            return self._handle_run_status(run_id)
         if path in {"/", "/index.html"}:
             return self._serve_file(STATIC / "index.html")
         if path.startswith("/static/"):
@@ -565,6 +575,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "project_ops": True,
                     "deploy_preflight": True,
                     "dev_recovery": True,
+                    "run_reconnect": True,
+                    "file_revisions": True,
                 },
             },
         )
@@ -756,7 +768,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             content = target.read_text(encoding="utf-8")
         except UnicodeDecodeError:
             return self._send_json(415, {"error": "binary file"})
-        self._send_json(200, {"path": file_path, "content": content})
+        revision = hashlib.sha256(content.encode("utf-8")).hexdigest()
+        self._send_json(200, {"path": file_path, "content": content, "revision": revision})
 
     def _handle_write_file(self, project_id: str) -> None:
         try:
@@ -783,6 +796,29 @@ class PlatformHandler(BaseHTTPRequestHandler):
         rel_parts = Path(file_path).parts
         if rel_parts and rel_parts[0] in {".forge", ".git", "node_modules", "__pycache__"}:
             return self._send_json(403, {"error": "path not writable"})
+        expected = data.get("expected_revision")
+        current_revision = None
+        if target.is_file():
+            try:
+                current_bytes = target.read_bytes()
+                current_revision = hashlib.sha256(current_bytes).hexdigest()
+            except OSError:
+                current_revision = None
+            if expected and current_revision and str(expected) != current_revision:
+                try:
+                    current_text = current_bytes.decode("utf-8")
+                except UnicodeDecodeError:
+                    current_text = ""
+                return self._send_json(
+                    409,
+                    {
+                        "error": "Conflito: o arquivo mudou desde que você abriu. Recarregue ou salve como cópia.",
+                        "conflict": True,
+                        "path": file_path,
+                        "revision": current_revision,
+                        "content": current_text if len(current_text) <= 500_000 else "",
+                    },
+                )
         target.parent.mkdir(parents=True, exist_ok=True)
         backup = None
         if target.is_file():
@@ -803,9 +839,48 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 except OSError:
                     pass
             return self._send_json(500, {"error": f"write failed: {exc}"})
+        new_revision = hashlib.sha256(content.encode("utf-8")).hexdigest()
         return self._send_json(
             200,
-            {"ok": True, "path": file_path, "bytes": len(content.encode("utf-8")), "backup": backup},
+            {
+                "ok": True,
+                "path": file_path,
+                "bytes": len(content.encode("utf-8")),
+                "backup": backup,
+                "revision": new_revision,
+            },
+        )
+
+    def _handle_active_run(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        info = run_manager.active_for_workspace(str(base))
+        if not info:
+            return self._send_json(200, {"active": False, "run_id": None})
+        return self._send_json(200, info)
+
+    def _handle_run_status(self, run_id: str) -> None:
+        info = run_manager.status(run_id)
+        if not info:
+            return self._send_json(404, {"error": "run not found"})
+        return self._send_json(200, info)
+
+    def _handle_run_events(self, run_id: str, after: int = 0) -> None:
+        info = run_manager.status(run_id)
+        if not info:
+            return self._send_json(404, {"error": "run not found"})
+        events = run_manager.events_after(run_id, after=max(0, after))
+        return self._send_json(
+            200,
+            {
+                "run_id": run_id,
+                "active": info.get("active"),
+                "status": info.get("status"),
+                "events": events,
+                "event_count": info.get("event_count"),
+            },
         )
 
     def _handle_get_chat(self, project_id: str) -> None:
@@ -1283,11 +1358,14 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(self._preflight_status(preflight_error), preflight_error)
 
         if run_manager.is_workspace_busy(workspace):
+            active = run_manager.active_for_workspace(str(workspace)) or {}
             return self._send_json(
                 409,
                 {
                     "error": "Agente já em execução neste projeto. Aguarde ou cancele a execução atual.",
                     "busy": True,
+                    "run_id": active.get("run_id"),
+                    "goal": active.get("goal"),
                 },
             )
 
@@ -1303,7 +1381,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
             self._send_sse({"type": "error", "error": "Workspace ocupado por outra execução."})
             return
 
-        self._send_sse({"type": "started", "run_id": run_id, "goal": prompt})
+        run_manager.set_goal(run_id, prompt)
+        started = {"type": "started", "run_id": run_id, "goal": prompt}
+        run_manager.append_event(run_id, started)
+        self._send_sse(started)
         try:
             from local_agent.agent import CodingAgent
 
@@ -1315,14 +1396,19 @@ class PlatformHandler(BaseHTTPRequestHandler):
             def _sink(ev: Dict[str, Any]) -> None:
                 if isinstance(ev, dict):
                     timeline.append({k: ev.get(k) for k in ("type", "status", "analysis", "tools", "summary", "message", "paths") if k in ev})
+                    run_manager.append_event(run_id, ev)
                 self._send_sse(ev)
 
             agent = CodingAgent(config, event_sink=_sink)
             report = agent.run(prompt, conversation_context=conversation)
             result = self._finalize_run(workspace, project_id, report, run_id=run_id, events=timeline)
-            self._send_sse({"type": "done", **result})
+            done_ev = {"type": "done", **result}
+            run_manager.append_event(run_id, done_ev)
+            self._send_sse(done_ev)
         except Exception as exc:
-            self._send_sse({"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]})
+            err_ev = {"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]}
+            run_manager.append_event(run_id, err_ev)
+            self._send_sse(err_ev)
         finally:
             run_manager.clear(run_id)
 

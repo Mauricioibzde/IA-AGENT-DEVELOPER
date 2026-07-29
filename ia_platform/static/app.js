@@ -10,6 +10,7 @@
     files: [],
     selectedFile: null,
     fileEditorOriginal: "",
+    fileEditorRevision: null,
     fileEditorDirty: false,
     lastReport: "",
     running: false,
@@ -1385,6 +1386,7 @@
     els.fileEditorShell?.classList.add("hidden");
     if (els.fileViewer) els.fileViewer.value = "";
     state.fileEditorOriginal = "";
+    state.fileEditorRevision = null;
     state.fileEditorDirty = false;
     syncFileEditorDirty();
     els.projectTitle.textContent = project.name;
@@ -1404,6 +1406,83 @@
     await maybeEnableDevPreview({ preferDev: options.preferDev, autoStart: !!options.autoStart });
     updatePreview();
     syncDevPolling();
+    await resumeActiveRunIfNeeded();
+  }
+
+  async function resumeActiveRunIfNeeded() {
+    if (!state.current || state.running) return;
+    try {
+      const info = await api(`/api/projects/${encodeURIComponent(state.current.id)}/active-run`);
+      if (!info?.active || !info.run_id) return;
+      addMessage(
+        `Reconectando à execução${info.goal ? `: ${info.goal}` : ""}…`,
+        "system"
+      );
+      await pollActiveRun(info.run_id, info.goal || "Execução em andamento");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  async function pollActiveRun(runId, goal) {
+    state.running = true;
+    state.runId = runId;
+    els.btnSend.disabled = true;
+    els.btnCancel?.classList.remove("hidden");
+    els.btnCancel.disabled = false;
+    const progressEl = addMessage("", "progress");
+    const activity = createRunActivity(goal);
+    startActivityTimer(progressEl, activity);
+    const agentEl = addMessage("Execução retomada — aguardando eventos…", "agent live");
+    let after = 0;
+    let donePayload = null;
+    try {
+      while (state.running) {
+        const data = await api(`/api/runs/${encodeURIComponent(runId)}/events?after=${after}`);
+        const events = data.events || [];
+        for (const ev of events) {
+          after = Math.max(after, Number(ev._seq || after));
+          if (ev.type === "done") {
+            donePayload = ev;
+            continue;
+          }
+          handleStreamEvent(ev, progressEl, agentEl, activity);
+        }
+        if (donePayload || data.active === false) break;
+        await new Promise((r) => setTimeout(r, 900));
+      }
+      stopActivityTimer(activity);
+      finishRunActivity(progressEl, activity, donePayload);
+      agentEl.classList.remove("live", "thinking");
+      if (donePayload) {
+        const fullReport = donePayload.report || "(sem relatório)";
+        const chatSummary = donePayload.summary || fullReport;
+        setMessageContent(agentEl, chatSummary, "agent");
+        state.lastReport = fullReport;
+        await syncWorkspaceAfterRun(donePayload);
+        renderRunArtifacts({
+          report: fullReport,
+          created_files: donePayload.created_files || [],
+          modified_files: donePayload.modified_files || [],
+          summary: chatSummary,
+        });
+        addMessage("Execução retomada e concluída.", "system");
+        window.setTimeout(() => removeMessage(progressEl), 4500);
+      } else {
+        agentEl.textContent = agentEl.textContent || "Execução finalizada.";
+      }
+    } catch (e) {
+      stopActivityTimer(activity);
+      agentEl.classList.remove("live", "thinking");
+      agentEl.textContent = "Falha ao reconectar: " + (e.message || String(e));
+      agentEl.classList.add("error");
+    } finally {
+      state.running = false;
+      state.runId = null;
+      els.btnSend.disabled = false;
+      els.btnCancel?.classList.add("hidden");
+      syncModeControls();
+    }
   }
 
   async function maybeEnableDevPreview({ preferDev = false, autoStart = false } = {}) {
@@ -2819,6 +2898,7 @@
       }
       if (els.fileEditorPath) els.fileEditorPath.textContent = path;
       state.fileEditorOriginal = d.content ?? "";
+      state.fileEditorRevision = d.revision || null;
       state.fileEditorDirty = false;
       syncFileEditorDirty();
       if (options.preferPreview !== false && /\.html?$/i.test(path)) {
@@ -2835,6 +2915,7 @@
       }
       if (els.fileEditorPath) els.fileEditorPath.textContent = path;
       state.fileEditorOriginal = "";
+      state.fileEditorRevision = null;
       state.fileEditorDirty = false;
       syncFileEditorDirty();
       if (options.switchToFiles) switchTab("files");
@@ -2853,22 +2934,31 @@
     syncFileEditorDirty();
   }
 
-  async function saveCurrentFile() {
+  async function saveCurrentFile(options = {}) {
     if (!state.current || !state.selectedFile || !els.fileViewer || els.fileViewer.readOnly) return;
-    if (!state.fileEditorDirty) return;
+    if (!state.fileEditorDirty && !options.force) return;
     const path = state.selectedFile;
     const content = els.fileViewer.value;
+    const asCopy = !!options.asCopy;
+    const savePath = asCopy ? path.replace(/(\.[^.]+)?$/, ".copy$1") : path;
     els.btnFileSave && (els.btnFileSave.disabled = true);
     try {
-      await api(`/api/projects/${encodeURIComponent(state.current.id)}/file`, {
+      const body = { path: savePath, content };
+      if (!asCopy && state.fileEditorRevision) {
+        body.expected_revision = state.fileEditorRevision;
+      }
+      const saved = await api(`/api/projects/${encodeURIComponent(state.current.id)}/file`, {
         method: "POST",
-        body: JSON.stringify({ path, content }),
+        body: JSON.stringify(body),
       });
-      state.fileEditorOriginal = content;
-      state.fileEditorDirty = false;
+      if (!asCopy) {
+        state.fileEditorOriginal = content;
+        state.fileEditorRevision = saved.revision || null;
+        state.fileEditorDirty = false;
+      }
       syncFileEditorDirty();
       if (els.fileEditorPath) {
-        els.fileEditorPath.textContent = path + " · salvo";
+        els.fileEditorPath.textContent = (asCopy ? savePath : path) + " · salvo";
         window.setTimeout(() => {
           if (state.selectedFile === path && els.fileEditorPath) {
             els.fileEditorPath.textContent = path;
@@ -2876,10 +2966,21 @@
         }, 1600);
       }
       await loadFiles().catch(() => {});
-      if (/\.html?$|\.css$|\.js$/i.test(path)) {
-        updatePreview(/\.html?$/i.test(path) ? path : findPreviewPath());
+      if (/\.html?$|\.css$|\.js$/i.test(savePath)) {
+        updatePreview(/\.html?$/i.test(savePath) ? savePath : findPreviewPath());
       }
     } catch (e) {
+      if (e.status === 409 && e.data?.conflict) {
+        const choice = window.confirm(
+          "Conflito: o arquivo mudou (ex.: o agente editou).\n\nOK = recarregar do disco\nCancelar = salvar como cópia (.copy)"
+        );
+        if (choice) {
+          await openFile(path, { switchToFiles: true, preferPreview: false });
+        } else {
+          await saveCurrentFile({ asCopy: true, force: true });
+        }
+        return;
+      }
       if (els.fileEditorPath) {
         els.fileEditorPath.textContent = path + " · erro: " + (e.message || String(e));
       }

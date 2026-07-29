@@ -35,6 +35,15 @@ def _patch_ollama_offline(monkeypatch: pytest.MonkeyPatch) -> None:
         },
     )
 
+    class OfflineClient:
+        def check_available(self, timeout: int = 5) -> bool:
+            return False
+
+        def list_models(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: OfflineClient())
+
 
 def _patch_ollama_online(monkeypatch: pytest.MonkeyPatch, models: list[str] | None = None) -> None:
     installed = models if models is not None else []
@@ -489,6 +498,7 @@ def test_ollama_setup_stream_starts_daemon(platform_url: str, monkeypatch: pytes
             "message": "ready",
         },
     )
+    monkeypatch.setattr(_mod.ollama_service, "is_api_ready", lambda host, timeout=2.0: False)
 
     class FakeClient:
         def check_available(self, timeout: int = 5) -> bool:
@@ -505,7 +515,8 @@ def test_ollama_setup_stream_starts_daemon(platform_url: str, monkeypatch: pytes
     with urllib.request.urlopen(req, timeout=10) as resp:
         body = resp.read().decode("utf-8")
     assert "done" in body
-    assert "ready" in body or '"ok": true' in body.replace(" ", "")
+    compact = body.replace(" ", "")
+    assert "ready" in body or '"ok":true' in compact
 
 
 def test_setup_status(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

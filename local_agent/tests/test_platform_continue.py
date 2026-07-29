@@ -123,3 +123,24 @@ def test_detect_fastapi_dev_script(tmp_path: Path) -> None:
     status = mgr.status("api-demo", tmp_path)
     assert status["has_dev_script"] is True
     assert status["runtime"] == "uvicorn"
+
+
+def test_baseline_detects_changed_diagnostics_as_introduced(tmp_path: Path) -> None:
+    cfg = AgentConfig.from_args(tmp_path, no_memory=True, no_git=True)
+    index = ProjectIndex(tmp_path)
+    index.detected_commands = {"test": ['python3 -c "raise SystemExit(1)"'], "lint": [], "build": []}
+    validator = Validator(cfg, index)
+    baseline = validator.establish_baseline()
+    assert baseline and baseline[0].category == "pre_existing"
+    # Same exit, different diagnostic text → regression.
+    validator.baseline_fingerprints[baseline[0].command] = "different-fp"
+    again = validator.run_one(baseline[0].command)
+    assert again.success is False
+    assert again.category == "introduced"
+
+
+def test_recommend_setup_prefers_installed_coder() -> None:
+    from ia_platform.model_catalog import recommend_setup_model
+
+    hw = {"tier": "low", "effective_memory_gb": 5.0, "has_gpu": False, "gpus": []}
+    assert recommend_setup_model(hw, ["deepseek-coder:6.7b"]) == "deepseek-coder:6.7b"

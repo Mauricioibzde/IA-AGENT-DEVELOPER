@@ -113,17 +113,30 @@ def run_command(args: Dict[str, Any], **context: Any) -> ToolResult:
         return ToolResult(ok=False, error=reason, data={"command": command, "blocked": True})
 
     risk = classify_command_risk(command)
-    if risk in {RiskLevel.HIGH, RiskLevel.CRITICAL} and not cfg.auto_approve_low_risk:
-        return ToolResult(
-            ok=False,
-            error=f"Command requires confirmation due to risk={risk.value}",
-            data={"command": command, "risk_level": risk.value},
-        )
     if risk == RiskLevel.CRITICAL:
         return ToolResult(
             ok=False,
-            error=f"Refusing critical-risk command: {command}",
-            data={"command": command, "risk_level": risk.value},
+            error=f"Comando crítico bloqueado: {command}",
+            data={"command": command, "risk_level": risk.value, "confirmation_required": True},
+        )
+    if risk == RiskLevel.HIGH:
+        # Never auto-approve HIGH (rm, curl, chmod, git push, …).
+        return ToolResult(
+            ok=False,
+            error=(
+                f"Ação sensível bloqueada: revise antes de continuar "
+                f"(comando com risco={risk.value})."
+            ),
+            data={"command": command, "risk_level": risk.value, "confirmation_required": True},
+        )
+    if risk == RiskLevel.MEDIUM and not cfg.auto_approve_low_risk:
+        return ToolResult(
+            ok=False,
+            error=(
+                f"Ação sensível bloqueada: revise antes de continuar "
+                f"(comando com risco={risk.value})."
+            ),
+            data={"command": command, "risk_level": risk.value, "confirmation_required": True},
         )
 
     cwd = resolve_in_workspace(workspace, args.get("cwd", "."))

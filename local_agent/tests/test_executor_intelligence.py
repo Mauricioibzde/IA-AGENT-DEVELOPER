@@ -49,6 +49,18 @@ def test_mark_read_allows_edit(tmp_path: Path) -> None:
     assert results[0]["result"]["ok"] is True
 
 
+def test_delete_file_requires_confirmation_even_with_auto_approve(tmp_path: Path) -> None:
+    target = tmp_path / "doomed.txt"
+    target.write_text("x\n", encoding="utf-8")
+    cfg = AgentConfig.from_args(tmp_path, no_memory=True, auto_approve_low_risk=True)
+    executor = Executor(build_default_registry(include_git=False), cfg, AgentLogger(cfg))
+    executor.mark_read("doomed.txt")
+    results, _ = executor.run_calls([{"tool": "delete_file", "args": {"path": "doomed.txt"}}])
+    assert results[0]["result"]["ok"] is False
+    assert results[0]["result"].get("confirmation_required") is True
+    assert target.is_file()
+
+
 def test_mutation_budget_allows_reedit_same_file(tmp_path: Path) -> None:
     cfg = AgentConfig.from_args(tmp_path, no_memory=True)
     cfg.max_modified_files = 1
