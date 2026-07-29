@@ -139,6 +139,26 @@ MODEL_CATALOG: List[ModelEntry] = [
 TIER_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "ultra": 4}
 
 
+def resolve_model_for_run(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
+    """Pick the best model name for an agent run."""
+    if requested and str(requested).strip():
+        return str(requested).strip()
+
+    rec = recommend_models(hardware, installed)
+    primary = rec["primary"]["ollama_name"]
+    if _is_model_installed(primary, installed):
+        return primary
+
+    for name in installed:
+        lower = name.lower()
+        if any(tag in lower for tag in ("coder", "qwen", "deepseek", "codellama")):
+            return name
+
+    if installed:
+        return installed[0]
+    return primary
+
+
 def _is_model_installed(ollama_name: str, installed: List[str]) -> bool:
     if ollama_name in installed:
         return True

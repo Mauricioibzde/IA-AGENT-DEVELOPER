@@ -13,11 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from ia_platform.conversations import append_message, clear_messages, load_messages
+from ia_platform.conversations import append_message, clear_messages, format_conversation_context, load_messages
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import dev_manager
 from ia_platform.hardware import detect_hardware
-from ia_platform.model_catalog import recommend_models
+from ia_platform.model_catalog import recommend_models, resolve_model_for_run
 from ia_platform.ollama_models import OllamaModelManager
 
 ROOT = Path(__file__).resolve().parent
@@ -607,17 +607,41 @@ class PlatformHandler(BaseHTTPRequestHandler):
         result = deploy_project(base, project_id)
         return self._send_json(200, {"project": project_id, **result})
 
-    def _build_agent_config(self, data: Dict[str, Any], workspace: Path):
+    def _build_agent_config(self, data: Dict[str, Any], workspace: Path, model: str):
         from local_agent.config import AgentConfig
 
         return AgentConfig.from_args(
             workspace,
-            model=data.get("model"),
+            model=model,
             max_steps=int(data.get("max_steps") or 12),
             dry_run=bool(data.get("dry_run")),
             plan_only=bool(data.get("plan_only")),
             verbose=True,
         )
+
+    def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[str, str, Optional[Dict[str, Any]]]:
+        """Resolve model, build conversation context, preflight availability."""
+        mgr = self._ollama_manager()
+        installed = mgr.list_names()
+        hardware = detect_hardware()
+        model = resolve_model_for_run(data.get("model"), installed, hardware)
+
+        if not mgr.has_model(model):
+            return model, "", {
+                "error": f"Modelo '{model}' não está instalado. Baixe em Modelos IA.",
+                "model": model,
+                "missing_model": True,
+                "pull_available": True,
+                "recommended": recommend_models(hardware, installed).get("primary"),
+            }
+
+        messages = load_messages(workspace)
+        if messages and messages[-1].get("role") == "user":
+            prior = messages[:-1]
+        else:
+            prior = messages
+        conversation = format_conversation_context(prior, limit=10)
+        return model, conversation, None
 
     def _finalize_run(self, workspace: Path, project_id: Optional[str], report) -> Dict[str, Any]:
         rendered = report.render()
@@ -659,6 +683,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
         workspace.mkdir(parents=True, exist_ok=True)
         project_id = _project_id_from_workspace(workspace)
 
+        model, conversation, preflight_error = self._prepare_run(data, workspace)
+        if preflight_error:
+            return self._send_json(400, preflight_error)
+
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")
@@ -669,9 +697,9 @@ class PlatformHandler(BaseHTTPRequestHandler):
         try:
             from local_agent.agent import CodingAgent
 
-            config = self._build_agent_config(data, workspace)
+            config = self._build_agent_config(data, workspace, model)
             agent = CodingAgent(config, event_sink=self._send_sse)
-            report = agent.run(prompt)
+            report = agent.run(prompt, conversation_context=conversation)
             result = self._finalize_run(workspace, project_id, report)
             self._send_sse({"type": "done", **result})
         except Exception as exc:
@@ -690,11 +718,15 @@ class PlatformHandler(BaseHTTPRequestHandler):
         workspace.mkdir(parents=True, exist_ok=True)
         project_id = _project_id_from_workspace(workspace)
 
+        model, conversation, preflight_error = self._prepare_run(data, workspace)
+        if preflight_error:
+            return self._send_json(400, preflight_error)
+
         try:
             from local_agent.agent import CodingAgent
 
-            config = self._build_agent_config(data, workspace)
-            report = CodingAgent(config).run(prompt)
+            config = self._build_agent_config(data, workspace, model)
+            report = CodingAgent(config).run(prompt, conversation_context=conversation)
             self._send_json(200, self._finalize_run(workspace, project_id, report))
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "trace": traceback.format_exc()[-2000:]})

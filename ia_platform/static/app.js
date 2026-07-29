@@ -14,6 +14,7 @@
     selectedTemplate: "blank",
     models: [],
     modelRecommendations: null,
+    recommendedModel: null,
     pullingModel: false,
     devStatus: null,
     previewMode: "static",
@@ -62,6 +63,8 @@
     pullProgress: $("pullProgress"),
     pullBarFill: $("pullBarFill"),
     pullStatus: $("pullStatus"),
+    modelOptions: $("modelOptions"),
+    modelHint: $("modelHint"),
   };
 
   // ── API helpers ──
@@ -73,10 +76,44 @@
     });
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
-      const msg = data.error || res.statusText || "Erro na requisição";
-      throw new Error(msg);
+      const err = new Error(data.error || res.statusText || "Erro na requisição");
+      err.data = data;
+      err.status = res.status;
+      throw err;
     }
     return data;
+  }
+
+  function updateModelOptions(models) {
+    if (!els.modelOptions) return;
+    els.modelOptions.innerHTML = (models || [])
+      .map((m) => `<option value="${escapeHtml(m)}"></option>`)
+      .join("");
+  }
+
+  function applyRecommendedModel(recommended, installed) {
+    state.recommendedModel = recommended || null;
+    const list = installed || state.models || [];
+    const isInstalled = recommended && list.some((m) => m === recommended || m.startsWith(String(recommended).split(":")[0] + ":"));
+
+    if (!els.modelInput.value && recommended && isInstalled) {
+      els.modelInput.value = recommended;
+    } else if (!els.modelInput.value && list.length) {
+      const coder = list.find((m) => /coder|qwen|deepseek/i.test(m));
+      if (coder) els.modelInput.value = coder;
+    }
+
+    if (els.modelHint) {
+      if (recommended && !isInstalled) {
+        els.modelHint.textContent = `Recomendado: ${recommended} — clique em Modelos IA para baixar.`;
+        els.modelHint.classList.remove("hidden");
+      } else if (recommended) {
+        els.modelHint.textContent = `Modelo recomendado: ${recommended}`;
+        els.modelHint.classList.remove("hidden");
+      } else {
+        els.modelHint.classList.add("hidden");
+      }
+    }
   }
 
   // ── Health ──
@@ -85,16 +122,11 @@
     try {
       const d = await api("/api/health");
       state.models = d.models || [];
+      updateModelOptions(state.models);
+      applyRecommendedModel(d.recommended_model, state.models);
       const ok = d.ollama && d.agent;
-      els.healthStatus.innerHTML = `<span class="status-dot ${ok ? "ok" : "err"}"></span>${ok ? "Ollama pronto" : "Ollama offline?"}`;
-      if (!els.modelInput.value) {
-        if (d.recommended_model) {
-          els.modelInput.placeholder = d.recommended_model;
-        } else if (state.models.length) {
-          const coder = state.models.find((m) => /coder|qwen|deepseek/i.test(m));
-          if (coder) els.modelInput.placeholder = coder;
-        }
-      }
+      const modelLabel = els.modelInput.value ? ` · ${els.modelInput.value}` : "";
+      els.healthStatus.innerHTML = `<span class="status-dot ${ok ? "ok" : "err"}"></span>${ok ? "Ollama pronto" : "Ollama offline?"}${modelLabel}`;
     } catch {
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
     }
@@ -390,7 +422,9 @@
 
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));
-        throw new Error(errData.error || "Falha no streaming");
+        const err = new Error(errData.error || "Falha no streaming");
+        err.data = errData;
+        throw err;
       }
 
       const reader = res.body.getReader();
@@ -444,6 +478,11 @@
       const err = "Erro: " + e.message;
       agentEl.textContent = err;
       agentEl.classList.add("error");
+      if (e.data?.missing_model) {
+        addMessage(`Modelo ausente: ${e.data.model}. Abra Modelos IA para baixar.`, "system");
+        openModelsModal();
+        if (e.data.model) pullModel(e.data.model);
+      }
       await persistMessage("agent", err).catch(() => {});
     } finally {
       state.running = false;
@@ -470,9 +509,11 @@
       case "reflection":
         progressEl.textContent = `Reflexão: ${ev.status} — ${(ev.analysis || "").slice(0, 120)}`;
         break;
+      case "planning":
+        progressEl.textContent = ev.message || "Criando plano...";
+        break;
       case "llm_chunk":
-        agentEl.textContent += ev.text || "";
-        els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+        progressEl.textContent = "Gerando chamada de ferramentas...";
         break;
       case "error":
         progressEl.textContent = "Erro: " + (ev.message || ev.error || "desconhecido");

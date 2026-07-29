@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ia_platform.model_catalog import MODEL_CATALOG, recommend_models
+from ia_platform.model_catalog import MODEL_CATALOG, recommend_models, resolve_model_for_run
 
 
 def test_recommend_medium_hardware() -> None:
@@ -43,3 +43,10 @@ def test_recommend_low_hardware_prefers_small_models() -> None:
 
 def test_catalog_not_empty() -> None:
     assert len(MODEL_CATALOG) >= 5
+
+
+def test_resolve_model_for_run_prefers_installed() -> None:
+    hw = {"tier": "medium", "effective_memory_gb": 10, "has_gpu": False, "ram_total_gb": 16, "ram_available_gb": 12, "vram_total_gb": 0, "vram_free_gb": 0, "cpu_cores": 8, "gpus": []}
+    model = resolve_model_for_run("", ["deepseek-coder:6.7b"], hw)
+    assert "deepseek" in model
+

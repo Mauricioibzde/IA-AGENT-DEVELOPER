@@ -157,8 +157,20 @@ def detect_hardware() -> Dict[str, Any]:
 
     vram_total = max((g.get("vram_total_gb") or 0) for g in gpus) if gpus else 0.0
     vram_free = max((g.get("vram_free_gb") or 0) for g in gpus) if gpus else 0.0
-    has_gpu = bool(gpus) and vram_total > 0
-    tier = _compute_tier(ram_total_gb, vram_total, cpu_cores)
+
+    # Apple Silicon uses unified memory — treat shared RAM as effective VRAM when VRAM is unknown.
+    apple_silicon = platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
+    if apple_silicon and any(g.get("vendor") == "apple" for g in gpus) and vram_total <= 0:
+        vram_total = round(ram_available_gb * 0.75, 1)
+        vram_free = vram_total
+        for gpu in gpus:
+            if gpu.get("vendor") == "apple":
+                gpu["vram_total_gb"] = vram_total
+                gpu["vram_free_gb"] = vram_free
+                gpu["unified_memory"] = True
+
+    has_gpu = bool(gpus) and (vram_total > 0 or apple_silicon)
+    tier = _compute_tier(ram_available_gb, vram_total, cpu_cores)
 
     return {
         "os": platform.system(),

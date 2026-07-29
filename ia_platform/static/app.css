@@ -110,6 +110,13 @@ body {
   color: var(--muted);
 }
 
+.model-hint {
+  margin-top: 8px;
+  font-size: 0.72rem;
+  line-height: 1.35;
+  color: var(--warn);
+}
+
 .status-dot {
   display: inline-block;
   width: 7px; height: 7px;

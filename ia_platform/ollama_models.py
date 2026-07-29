@@ -38,6 +38,11 @@ class OllamaModelManager:
     def list_names(self) -> List[str]:
         return [m["name"] for m in self.list_installed() if m.get("name")]
 
+    def has_model(self, model: str) -> bool:
+        from ia_platform.model_catalog import _is_model_installed
+
+        return _is_model_installed(model, self.list_names())
+
     def pull(
         self,
         model: str,

@@ -204,12 +204,21 @@ def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: py
     from local_agent.agent import CodingAgent
     from local_agent.models import AgentReport, FinalStatus
 
-    def fake_run(self, prompt: str) -> AgentReport:
+    def fake_run(self, prompt: str, **kwargs) -> AgentReport:
         if self.event_sink:
             self.event_sink({"type": "plan", "summary": "demo plan", "task_count": 1})
         return AgentReport(status=FinalStatus.SUCCESS, goal=prompt, summary="stream ok")
 
     monkeypatch.setattr(CodingAgent, "run", fake_run)
+
+    class FakeMgr:
+        def list_names(self):
+            return ["qwen2.5-coder:7b"]
+
+        def has_model(self, model):
+            return True
+
+    monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
 
     req = urllib.request.Request(
         f"{platform_url}/api/run/stream",
@@ -263,3 +272,31 @@ def test_model_pull_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -
         body = resp.read().decode("utf-8")
     assert "done" in body
     assert "qwen2.5-coder:7b" in body
+
+
+def test_run_preflight_missing_model(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "demo"
+    project_dir.mkdir(parents=True)
+
+    class FakeMgr:
+        def list_names(self):
+            return []
+
+        def has_model(self, model):
+            return False
+
+    monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/run",
+        data=json.dumps({"prompt": "teste", "workspace": "projects/demo", "model": "qwen2.5-coder:7b"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 400
+    body = json.loads(exc.value.read().decode())
+    assert body.get("missing_model") is True
+

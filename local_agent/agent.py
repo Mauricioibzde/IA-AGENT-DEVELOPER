@@ -51,7 +51,7 @@ class CodingAgent:
         except Exception:  # noqa: BLE001
             pass
 
-    def run(self, goal: str) -> AgentReport:
+    def run(self, goal: str, conversation_context: str = "") -> AgentReport:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
         self.logger.info("agent_start", message=f"Goal: {goal}")
         self._event("started", goal=goal)
@@ -76,6 +76,7 @@ class CodingAgent:
                 self.logger.warn("baseline_failed", message=str(exc))
 
         # Create plan.
+        self._event("planning", message="Analisando projeto e criando plano...")
         plan = self.planner.create_plan(goal, self.index.summary(), index=self.index)
         for task in plan.tasks:
             task.max_attempts = self.config.max_task_attempts
@@ -144,6 +145,7 @@ class CodingAgent:
                 errors=self.errors[-5:],
                 validation=last_validation,
                 previous_results=last_results_json or None,
+                conversation=conversation_context,
             )
             self.executor.mark_reads(self.context_manager.last_read_paths)
 

@@ -38,10 +38,12 @@ class ContextManager:
         extra_files: Optional[List[str]] = None,
         errors: Optional[List[str]] = None,
         validation: str = "",
+        conversation: str = "",
         previous_results: Optional[str] = None,
     ) -> str:
         sections = {
             "goal": self._clip(goal, 1500),
+            "conversation": self._clip(conversation, 2500) if conversation else "",
             "task": self._clip(
                 f"id={task.id} title={task.title}\n{task.description}"
                 + (f"\nNotes: {task.notes}" if task.notes else ""),

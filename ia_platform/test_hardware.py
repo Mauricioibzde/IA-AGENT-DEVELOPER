@@ -19,3 +19,22 @@ def test_compute_tier_ultra() -> None:
 
 def test_compute_tier_minimal() -> None:
     assert _compute_tier(ram_gb=4, vram_gb=0, cpu_cores=2) == "minimal"
+
+
+def test_apple_silicon_unified_memory(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.platform, "system", lambda: "Darwin")
+    monkeypatch.setattr(hwmod.platform, "machine", lambda: "arm64")
+    monkeypatch.setattr(hwmod.platform, "release", lambda: "23.0.0")
+    monkeypatch.setattr(hwmod, "_detect_memory", lambda: (16.0, 12.0))
+    monkeypatch.setattr(hwmod, "_detect_nvidia_gpus", lambda: [])
+    monkeypatch.setattr(
+        hwmod,
+        "_detect_apple_gpu",
+        lambda: {"vendor": "apple", "name": "Apple M2", "vram_total_gb": 0.0, "vram_free_gb": 0.0},
+    )
+    profile = hwmod.detect_hardware()
+    assert profile["has_gpu"] is True
+    assert profile["vram_total_gb"] > 0
+

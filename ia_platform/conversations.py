@@ -67,3 +67,23 @@ def append_messages(project_dir: Path, entries: List[Dict[str, Any]]) -> List[Di
 
 def clear_messages(project_dir: Path) -> None:
     save_messages(project_dir, [])
+
+
+def format_conversation_context(messages: List[Dict[str, Any]], limit: int = 10) -> str:
+    """Format prior chat turns for injection into the agent context."""
+    if not messages:
+        return ""
+    trimmed = messages[-limit:]
+    lines: List[str] = []
+    for msg in trimmed:
+        role = str(msg.get("role", "system"))
+        text = str(msg.get("text", "")).strip()
+        if not text:
+            continue
+        if role == "user":
+            lines.append(f"Usuário: {text[:800]}")
+        elif role == "agent":
+            lines.append(f"Agente: {text[:500]}")
+        else:
+            lines.append(f"Sistema: {text[:300]}")
+    return "\n".join(lines)
