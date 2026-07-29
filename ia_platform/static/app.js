@@ -455,8 +455,45 @@
     if (!name) return false;
     const list = installed || state.models || [];
     if (list.includes(name)) return true;
-    const base = String(name).split(":")[0];
-    return list.some((m) => m.split(":")[0] === base);
+    const [base, tag = ""] = String(name).split(":");
+    const baseL = base.toLowerCase();
+    const tagL = tag.toLowerCase();
+    return list.some((m) => {
+      const [mb, mt = ""] = String(m).split(":");
+      if (mb.toLowerCase() !== baseL) return false;
+      if (!tagL) return true;
+      const mtL = mt.toLowerCase();
+      return mtL === tagL || mtL.startsWith(`${tagL}-`);
+    });
+  }
+
+  function catalogEntryForModel(name, catalog) {
+    const list = catalog || state.modelRecommendations?.catalog || [];
+    const lower = String(name || "").toLowerCase();
+    return list.find((e) => String(e.ollama_name || "").toLowerCase() === lower) || null;
+  }
+
+  function modelFitsHardware(name, catalog) {
+    const entry = catalogEntryForModel(name, catalog);
+    if (!entry) return true;
+    return entry.fits !== false;
+  }
+
+  function modelOptionLabel(name, catalog) {
+    if (modelFitsHardware(name, catalog)) return name;
+    return `${name} (instalado · não cabe na RAM)`;
+  }
+
+  function warnIfModelTooLarge(selected) {
+    if (!selected) return;
+    if (modelFitsHardware(selected)) return;
+    const entry = catalogEntryForModel(selected);
+    const need = entry?.ram_gb ? `~${entry.ram_gb} GB RAM` : "mais memória";
+    showToast(
+      `<strong>${escapeHtml(selected)}</strong> está instalado, mas provavelmente <strong>não cabe</strong> neste PC (precisa ${escapeHtml(String(need))}). Use Auto ou um modelo menor.`,
+      "err",
+      7000
+    );
   }
 
   function getSelectedModel() {
@@ -504,7 +541,7 @@
 
     if (els.modelGroupInstalled) {
       els.modelGroupInstalled.innerHTML = (installed || [])
-        .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+        .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(modelOptionLabel(name, catalog))}</option>`)
         .join("");
     }
 
@@ -520,7 +557,7 @@
 
     if (els.composerModelSelect) {
       const opts = ['<option value="">Auto</option>']
-        .concat((installed || []).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`));
+        .concat((installed || []).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(modelOptionLabel(name, catalog))}</option>`));
       const current = els.composerModelSelect.value;
       els.composerModelSelect.innerHTML = opts.join("");
       if (current && (installed || []).includes(current)) els.composerModelSelect.value = current;
@@ -1227,7 +1264,11 @@
       .join("");
     const statusTags = [
       entry.installed ? '<span class="model-tag ok">instalado</span>' : '<span class="model-tag warn">não instalado</span>',
-      entry.fits ? '<span class="model-tag ok">compatível</span>' : '<span class="model-tag warn">pode não caber</span>',
+      entry.fits
+        ? '<span class="model-tag ok">compatível</span>'
+        : entry.installed
+          ? '<span class="model-tag warn">instalado · não cabe na RAM</span>'
+          : '<span class="model-tag warn">pode não caber</span>',
       entry.recommended ? '<span class="model-tag accent">recomendado</span>' : "",
     ].join("");
     const name = escapeHtml(entry.ollama_name);
@@ -1500,8 +1541,16 @@
             return;
           }
           setModelSelection(model);
-          showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> selecionado.`, "ok");
-          showToast(`Modelo selecionado: ${escapeHtml(model)}`, "ok");
+          warnIfModelTooLarge(model);
+          if (modelFitsHardware(model)) {
+            showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> selecionado.`, "ok");
+            showToast(`Modelo selecionado: ${escapeHtml(model)}`, "ok");
+          } else {
+            showModelFeedback(
+              `<strong>${escapeHtml(model)}</strong> está instalado, mas pode não caber na memória deste PC.`,
+              "err"
+            );
+          }
           return;
         }
         if (btn.dataset.action === "pull") {
@@ -2867,6 +2916,11 @@
     }
 
     if (!prompt || state.running || !state.current) return;
+
+    const selectedModel = getSelectedModel();
+    if (selectedModel && !modelFitsHardware(selectedModel)) {
+      warnIfModelTooLarge(selectedModel);
+    }
 
     // Keep surface mode and modeSelect aligned.
     if (state.surfaceMode === "work" && els.modeSelect?.value === "chat") {
@@ -4569,6 +4623,10 @@
       showToast("Modelo: Auto (recomendado)", "ok");
       return;
     }
+    if (!modelFitsHardware(selected)) {
+      warnIfModelTooLarge(selected);
+      return;
+    }
     showToast(`Modelo selecionado: ${selected}`, "ok");
   });
   els.promptInput.addEventListener("keydown", (e) => {
@@ -4630,6 +4688,10 @@
       return;
     }
     setModelSelection(val);
+    if (!modelFitsHardware(val)) {
+      warnIfModelTooLarge(val);
+      return;
+    }
     showToast(`Modelo selecionado: ${val}`, "ok");
   });
   els.btnCancelProject.addEventListener("click", closeNewProjectModal);

@@ -199,18 +199,21 @@ def resolve_model_for_chat(
         "qwen2.5",
         "qwen2.5-coder:7b",
         "qwen2.5-coder:3b",
+        "deepseek-coder:6.7b",
         "codellama:latest",
         "codellama:7b",
     ]
     for candidate in preferred:
         hit = _installed_model_name(candidate, installed)
-        if hit and not hit.lower().endswith("-base"):
+        if hit and not hit.lower().endswith("-base") and _name_fits_hardware(hit, hardware):
             return hit
 
     scored: List[tuple[int, str]] = []
     for name in installed:
         lower = name.lower()
         if "embed" in lower or lower.endswith("-base"):
+            continue
+        if not _name_fits_hardware(name, hardware):
             continue
         score = 0
         if any(tag in lower for tag in ("llama3.2", "llama3.1", "mistral", "qwen2.5")):
@@ -219,8 +222,11 @@ def resolve_model_for_chat(
             score += 10
         if any(tag in lower for tag in (":3b", "3b", "1.5b", "tiny", "mini")):
             score += 15
-        if any(tag in lower for tag in (":7b", "7b", "8b")):
+        if any(tag in lower for tag in (":7b", "7b", "8b", "6.7b")):
             score += 8
+        # Prefer smaller when multiple fit (avoid picking 32b when 7b also fits).
+        if any(tag in lower for tag in (":14b", "14b", ":16b", "16b", ":32b", "32b", ":70b")):
+            score -= 25
         scored.append((score, name))
     if scored:
         scored.sort(key=lambda item: (-item[0], item[1]))
@@ -236,13 +242,37 @@ def _resolve_coder_model(requested: Optional[str], installed: List[str], hardwar
     rec = recommend_models(hardware, installed)
     primary = rec["primary"]["ollama_name"]
     installed_primary = _installed_model_name(primary, installed)
-    if installed_primary:
+    if installed_primary and _name_fits_hardware(installed_primary, hardware):
         return installed_primary
 
+    fitting_coders: List[tuple[float, str]] = []
     for name in installed:
         lower = name.lower()
-        if any(tag in lower for tag in ("coder", "qwen", "deepseek", "codellama")):
-            return name
+        if "embed" in lower or lower.endswith("-base"):
+            continue
+        if not any(tag in lower for tag in ("coder", "qwen", "deepseek", "codellama", "llama", "mistral")):
+            continue
+        if not _name_fits_hardware(name, hardware):
+            continue
+        entry = _catalog_entry_for_name(name)
+        score = _score(entry, hardware) if entry else 50.0
+        fitting_coders.append((score, name))
+    if fitting_coders:
+        fitting_coders.sort(key=lambda item: item[0], reverse=True)
+        return fitting_coders[0][1]
+
+    # Nothing fits: prefer the smallest known installed coder as last resort.
+    oversized: List[tuple[float, str]] = []
+    for name in installed:
+        lower = name.lower()
+        if "embed" in lower or lower.endswith("-base"):
+            continue
+        entry = _catalog_entry_for_name(name)
+        size = entry.size_gb if entry else 99.0
+        oversized.append((size, name))
+    if oversized:
+        oversized.sort(key=lambda item: item[0])
+        return oversized[0][1]
 
     if installed:
         return installed[0]
@@ -254,13 +284,64 @@ def _is_model_installed(ollama_name: str, installed: List[str]) -> bool:
 
 
 def _installed_model_name(ollama_name: str, installed: List[str]) -> Optional[str]:
-    if ollama_name in installed:
-        return ollama_name
-    base = ollama_name.split(":")[0]
+    """Match an installed model without confusing different size tags (7b ≠ 32b)."""
+    wanted = (ollama_name or "").strip()
+    if not wanted:
+        return None
+    by_lower = {m.lower(): m for m in installed}
+    if wanted.lower() in by_lower:
+        return by_lower[wanted.lower()]
+
+    parts = wanted.split(":", 1)
+    base = parts[0]
+    tag = parts[1] if len(parts) > 1 else ""
+    base_l = base.lower()
+    tag_l = tag.lower()
+
+    # Same base + same tag (or tag prefix, e.g. 7b vs 7b-instruct).
     for name in installed:
-        if name.split(":")[0] == base:
+        n_parts = name.split(":", 1)
+        n_base = n_parts[0]
+        n_tag = n_parts[1] if len(n_parts) > 1 else ""
+        if n_base.lower() != base_l:
+            continue
+        if tag_l and n_tag.lower() == tag_l:
             return name
+        if tag_l and n_tag.lower().startswith(tag_l + "-"):
+            return name
+        if tag_l and tag_l.startswith(n_tag.lower() + "-") and n_tag:
+            return name
+
+    # Untagged request (e.g. "llama3.2") may use any installed variant of that base.
+    if not tag_l:
+        for name in installed:
+            if name.split(":", 1)[0].lower() == base_l:
+                return name
     return None
+
+
+def _catalog_entry_for_name(name: str) -> Optional[ModelEntry]:
+    lower = (name or "").lower()
+    for entry in MODEL_CATALOG:
+        if entry.ollama_name.lower() == lower:
+            return entry
+    # Exact base+tag family: qwen2.5-coder:7b-instruct → qwen2.5-coder:7b
+    base_tag = lower.split(":", 1)
+    if len(base_tag) == 2:
+        base, tag = base_tag
+        for entry in MODEL_CATALOG:
+            e_base, e_tag = (entry.ollama_name.split(":", 1) + [""])[:2]
+            if e_base.lower() == base and tag.startswith(e_tag.lower()) and e_tag:
+                return entry
+    return None
+
+
+def _name_fits_hardware(name: str, hardware: Dict[str, Any]) -> bool:
+    entry = _catalog_entry_for_name(name)
+    if entry:
+        return _fits_hardware(entry, hardware)
+    # Unknown install: allow (cannot prove it won't fit).
+    return True
 
 
 def _fits_hardware(entry: ModelEntry, hardware: Dict[str, Any]) -> bool:
@@ -295,8 +376,9 @@ def recommend_setup_model(
     """Pick the best first-time download model (CPU/GPU aware)."""
     installed = installed or []
 
-    # Prefer exact installed coder tags first (avoid matching :1.5b-base to :1.5b).
-    installed_coders: List[tuple[float, str]] = []
+    # Prefer exact installed coder tags that fit hardware.
+    fitting_installed: List[tuple[float, str]] = []
+    oversized_installed: List[tuple[float, str]] = []
     for entry in MODEL_CATALOG:
         if "coder" not in entry.tags:
             continue
@@ -304,21 +386,21 @@ def recommend_setup_model(
             continue
         score = _score(entry, hardware)
         if score < 0:
-            # Still usable if already downloaded — slight penalty only.
-            score = 40.0 - abs(TIER_ORDER.get(entry.tier, 2) - TIER_ORDER.get(hardware.get("tier", "medium"), 2)) * 5
-        # Prefer larger exact tags when multiple exact installs exist on tiny RAM.
+            # Keep as last resort only — installed ≠ runnable on this machine.
+            oversized_installed.append((entry.size_gb, entry.ollama_name))
+            continue
         score += min(entry.size_gb, 8.0) * 0.5
-        installed_coders.append((score, entry.ollama_name))
-    if installed_coders:
-        installed_coders.sort(key=lambda item: item[0], reverse=True)
-        return installed_coders[0][1]
+        fitting_installed.append((score, entry.ollama_name))
+    if fitting_installed:
+        fitting_installed.sort(key=lambda item: item[0], reverse=True)
+        return fitting_installed[0][1]
 
-    # Fuzzy match (tag family) only when no exact catalog name is installed.
+    # Fuzzy match (tag family) only when an installed variant fits.
     for entry in MODEL_CATALOG:
         if "coder" not in entry.tags:
             continue
         name = _installed_model_name(entry.ollama_name, installed)
-        if name and name in installed:
+        if name and name in installed and _name_fits_hardware(name, hardware):
             return name
 
     has_gpu = bool(hardware.get("has_gpu") or hardware.get("gpus"))
@@ -344,6 +426,11 @@ def recommend_setup_model(
     if candidates:
         candidates.sort(key=lambda item: item[0], reverse=True)
         return candidates[0][1].ollama_name
+
+    # Nothing fits to download: fall back to smallest oversized install.
+    if oversized_installed:
+        oversized_installed.sort(key=lambda item: item[0])
+        return oversized_installed[0][1]
 
     exact_installed = [
         entry

@@ -17,6 +17,41 @@ class OllamaError(RuntimeError):
     """Raised when Ollama cannot be reached or returns an invalid payload."""
 
 
+def _read_http_error_body(exc: urllib.error.HTTPError, limit: int = 400) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="replace")[:limit]
+    except Exception:
+        return ""
+
+
+def _format_ollama_http_error(exc: urllib.error.HTTPError, model_name: Optional[str] = None) -> str:
+    detail = _read_http_error_body(exc)
+    lower = detail.lower()
+    model = (model_name or "").strip() or "modelo"
+    if any(
+        token in lower
+        for token in (
+            "insufficient memory",
+            "out of memory",
+            "can't allocate",
+            "cannot allocate",
+            "failed to allocate",
+            "oom",
+        )
+    ):
+        return (
+            f"O modelo '{model}' está instalado, mas não cabe na memória deste computador "
+            f"(Ollama sem RAM/VRAM suficiente para carregar). "
+            f"Escolha Auto ou um modelo menor (ex.: 7B / 6.7B). {detail}".strip()
+        )
+    if exc.code == 404:
+        return (
+            f"Modelo '{model}' não encontrado no Ollama (404). "
+            f"Escolha outro modelo ou use Auto. {detail}".strip()
+        )
+    return f"HTTP Error {exc.code}: {exc.reason}" + (f" — {detail}" if detail else "")
+
+
 class OllamaClient:
     def __init__(self, config: AgentConfig, logger: Optional[AgentLogger] = None) -> None:
         self.config = config
@@ -96,9 +131,13 @@ class OllamaClient:
                 # Non-stream chat (also falls back to /api/generate) when stream 404s or fails.
                 content = self._chat_once(messages, model_name, temperature, timeout)
             except Exception as fallback_exc:
+                msg = str(fallback_exc)
+                # Avoid duplicating the prefix when the stream path already formatted it.
+                if msg.startswith(f"Chat falhou no modelo '{model_name}'"):
+                    raise OllamaError(msg) from fallback_exc
                 raise OllamaError(
                     f"Chat falhou no modelo '{model_name}': {fallback_exc}. "
-                    "Escolha Auto ou outro modelo instalado."
+                    "Escolha Auto ou um modelo que caiba na memória deste PC."
                 ) from fallback_exc
             if on_chunk and content:
                 on_chunk(content)
@@ -135,17 +174,9 @@ class OllamaClient:
         try:
             response = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            detail = ""
-            try:
-                detail = exc.read().decode("utf-8", errors="replace")[:300]
-            except Exception:
-                pass
-            if exc.code == 404:
-                raise OllamaError(
-                    f"Modelo '{model_name}' não encontrado no Ollama (404). "
-                    f"Escolha outro modelo ou use Auto. {detail}".strip()
-                ) from exc
-            raise OllamaError(f"Streaming chat failed: HTTP Error {exc.code}: {exc.reason}") from exc
+            raise OllamaError(
+                f"Chat falhou no modelo '{model_name}': {_format_ollama_http_error(exc, model_name)}"
+            ) from exc
         except Exception as exc:
             raise OllamaError(f"Streaming chat failed: {exc}") from exc
 
@@ -323,8 +354,12 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            model_name = str(payload.get("model") or "")
+            raise OllamaError(_format_ollama_http_error(exc, model_name)) from exc
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
