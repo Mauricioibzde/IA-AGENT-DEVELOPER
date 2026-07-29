@@ -1675,7 +1675,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
             config = self._build_agent_config(data, workspace, models)
             config.run_id = run_id
             config.cancel_check = lambda: run_manager.is_cancelled(run_id)
-            report = CodingAgent(config).run(prompt, conversation_context=conversation)
+            report = CodingAgent(config).run(
+                enrich_goal_with_conversation(prompt, conversation or ""),
+                conversation_context=conversation,
+            )
             self._send_json(200, self._finalize_run(workspace, project_id, report, run_id=run_id))
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "trace": traceback.format_exc()[-2000:]})
