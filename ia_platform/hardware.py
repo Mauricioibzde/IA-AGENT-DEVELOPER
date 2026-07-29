@@ -2,11 +2,15 @@
 
 from __future__ import annotations
 
+import hashlib
+import json
 import os
 import platform
 import re
 import shutil
+import socket
 import subprocess
+import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
 
@@ -74,8 +78,36 @@ def _read_macos_memory() -> Optional[tuple[int, int]]:
         return None
 
 
+def _is_wsl() -> bool:
+    if platform.system() != "Linux":
+        return False
+    if Path("/proc/sys/fs/binfmt_misc/WSLInterop").exists():
+        return True
+    try:
+        version = Path("/proc/version").read_text(encoding="utf-8", errors="ignore").lower()
+    except OSError:
+        return False
+    return "microsoft" in version or "wsl" in version
+
+
+def _is_container() -> bool:
+    if Path("/.dockerenv").exists():
+        return True
+    try:
+        cgroup = Path("/proc/1/cgroup").read_text(encoding="utf-8", errors="ignore")
+    except OSError:
+        return False
+    return any(token in cgroup for token in ("docker", "containerd", "kubepods", "podman"))
+
+
 def _detect_memory() -> tuple[float, float]:
-    readers = (_read_linux_meminfo, _read_windows_memory, _read_macos_memory)
+    system = platform.system()
+    if system == "Windows":
+        readers = (_read_windows_memory,)
+    elif system == "Darwin":
+        readers = (_read_macos_memory,)
+    else:
+        readers = (_read_linux_meminfo, _read_windows_memory, _read_macos_memory)
     for reader in readers:
         data = reader()
         if data:
@@ -247,6 +279,77 @@ def _detect_rocm_gpus() -> List[Dict[str, Any]]:
     return gpus
 
 
+def _guess_vendor_from_name(name: str) -> str:
+    lower = name.lower()
+    if "nvidia" in lower or "geforce" in lower or "quadro" in lower or "rtx" in lower or "gtx" in lower:
+        return "nvidia"
+    if "amd" in lower or "radeon" in lower or "rx " in lower:
+        return "amd"
+    if "intel" in lower or "uhd" in lower or "iris" in lower or "arc" in lower:
+        return "intel"
+    return "unknown"
+
+
+def _detect_windows_gpus() -> List[Dict[str, Any]]:
+    """Enumerate GPUs via WMI when nvidia-smi/rocm are unavailable."""
+    if platform.system() != "Windows":
+        return []
+    ps = (
+        "Get-CimInstance Win32_VideoController | "
+        "Select-Object Name,AdapterRAM,DriverVersion | ConvertTo-Json -Compress"
+    )
+    try:
+        output = subprocess.check_output(
+            ["powershell", "-NoProfile", "-Command", ps],
+            text=True,
+            timeout=8,
+            stderr=subprocess.DEVNULL,
+        ).strip()
+    except (subprocess.SubprocessError, OSError, FileNotFoundError):
+        return []
+    if not output:
+        return []
+    try:
+        payload = json.loads(output)
+    except json.JSONDecodeError:
+        return []
+    if isinstance(payload, dict):
+        rows = [payload]
+    elif isinstance(payload, list):
+        rows = payload
+    else:
+        return []
+
+    gpus: List[Dict[str, Any]] = []
+    for row in rows:
+        name = str(row.get("Name") or "").strip()
+        if not name:
+            continue
+        # Skip Microsoft basic display adapters.
+        if "microsoft basic" in name.lower():
+            continue
+        adapter_ram = row.get("AdapterRAM")
+        vram_gb = 0.0
+        try:
+            # AdapterRAM is often capped/incorrect on modern GPUs; treat as soft hint only.
+            if adapter_ram is not None and int(adapter_ram) > 0:
+                vram_gb = round(int(adapter_ram) / (1024**3), 1)
+        except (TypeError, ValueError):
+            vram_gb = 0.0
+        gpus.append(
+            {
+                "vendor": _guess_vendor_from_name(name),
+                "name": name,
+                "vram_total_gb": vram_gb,
+                "vram_free_gb": vram_gb,
+                "driver": str(row.get("DriverVersion") or ""),
+                "shared_memory": vram_gb <= 0,
+                "source": "wmi",
+            }
+        )
+    return gpus
+
+
 def _merge_gpu_lists(*sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
     merged: List[Dict[str, Any]] = []
     seen: set[tuple[str, str]] = set()
@@ -288,17 +391,49 @@ def _compute_tier(ram_gb: float, vram_gb: float, cpu_cores: int) -> str:
     return "minimal"
 
 
+def _runtime_context() -> Dict[str, Any]:
+    wsl = _is_wsl()
+    container = _is_container()
+    if wsl:
+        source = "wsl"
+    elif container:
+        source = "container"
+    else:
+        source = "native"
+    try:
+        hostname = socket.gethostname()
+    except OSError:
+        hostname = "unknown"
+    return {
+        "hostname": hostname,
+        "source": source,
+        "is_wsl": wsl,
+        "is_container": container,
+    }
+
+
 def detect_hardware() -> Dict[str, Any]:
-    """Return a JSON-serializable hardware profile."""
+    """Return a JSON-serializable hardware profile for the machine running Forge."""
     ram_total_gb, ram_available_gb = _detect_memory()
     cpu_cores = os.cpu_count() or 4
-    gpus = _merge_gpu_lists(_detect_nvidia_gpus(), _detect_linux_drm_gpus(), _detect_rocm_gpus())
+    gpus = _merge_gpu_lists(
+        _detect_nvidia_gpus(),
+        _detect_linux_drm_gpus(),
+        _detect_rocm_gpus(),
+        _detect_windows_gpus(),
+    )
     apple_gpu = _detect_apple_gpu()
     if apple_gpu:
         gpus.append(apple_gpu)
 
     vram_total = max((g.get("vram_total_gb") or 0) for g in gpus) if gpus else 0.0
     vram_free = max((g.get("vram_free_gb") or 0) for g in gpus) if gpus else 0.0
+
+    # Prefer nvidia-smi VRAM when WMI also listed the same NVIDIA card with bad AdapterRAM.
+    nvidia = [g for g in gpus if g.get("vendor") == "nvidia" and g.get("source") != "wmi"]
+    if nvidia:
+        vram_total = max(g.get("vram_total_gb") or 0 for g in nvidia)
+        vram_free = max(g.get("vram_free_gb") or 0 for g in nvidia)
 
     # Apple Silicon uses unified memory — treat shared RAM as effective VRAM when VRAM is unknown.
     apple_silicon = platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
@@ -324,11 +459,17 @@ def detect_hardware() -> Dict[str, Any]:
 
     has_gpu = bool(gpus) and (vram_total > 0 or apple_silicon)
     tier = _compute_tier(ram_available_gb, vram_total, cpu_cores)
+    runtime = _runtime_context()
+    os_name = platform.system()
+    machine = platform.machine()
+    fingerprint = hashlib.sha256(
+        f"{os_name}|{machine}|{ram_total_gb}|{cpu_cores}|{runtime['hostname']}".encode("utf-8")
+    ).hexdigest()[:12]
 
     return {
-        "os": platform.system(),
+        "os": os_name,
         "os_release": platform.release(),
-        "machine": platform.machine(),
+        "machine": machine,
         "cpu_cores": cpu_cores,
         "ram_total_gb": ram_total_gb,
         "ram_available_gb": ram_available_gb,
@@ -338,4 +479,15 @@ def detect_hardware() -> Dict[str, Any]:
         "vram_free_gb": vram_free,
         "tier": tier,
         "effective_memory_gb": round(max(ram_available_gb * 0.65, vram_free * 0.85), 1),
+        "hostname": runtime["hostname"],
+        "source": runtime["source"],
+        "is_wsl": runtime["is_wsl"],
+        "is_container": runtime["is_container"],
+        "fingerprint": fingerprint,
+        "detected_at": int(time.time()),
+        "scope": "server",
+        "note": (
+            "Hardware do processo Forge (onde o servidor/Ollama rodam). "
+            "Se você abrir 127.0.0.1 via túnel/remoto, estes números são da máquina remota — não do PC do navegador."
+        ),
     }

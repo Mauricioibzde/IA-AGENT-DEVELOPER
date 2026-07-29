@@ -122,6 +122,10 @@
     modelsModal: $("modelsModal"),
     btnCloseModels: $("btnCloseModels"),
     hardwareGrid: $("hardwareGrid"),
+    clientHardwareGrid: $("clientHardwareGrid"),
+    hardwareMismatch: $("hardwareMismatch"),
+    hardwareNote: $("hardwareNote"),
+    btnRefreshHardware: $("btnRefreshHardware"),
     primaryModelCard: $("primaryModelCard"),
     modelsCatalog: $("modelsCatalog"),
     pullProgress: $("pullProgress"),
@@ -1017,13 +1021,114 @@
 
   // ── Models & hardware ──
 
+  function readClientHardware() {
+    const ua = navigator.userAgent || "";
+    let os = "Desconhecido";
+    if (/Windows NT/i.test(ua)) os = "Windows";
+    else if (/Mac OS X|Macintosh/i.test(ua)) os = "macOS";
+    else if (/Android/i.test(ua)) os = "Android";
+    else if (/Linux/i.test(ua)) os = "Linux";
+    const ram = typeof navigator.deviceMemory === "number" ? navigator.deviceMemory : null;
+    return {
+      os,
+      platform: navigator.platform || "",
+      cpu_cores: navigator.hardwareConcurrency || null,
+      ram_gb_approx: ram,
+      language: navigator.language || "",
+    };
+  }
+
+  function renderHwStats(container, stats) {
+    if (!container) return;
+    container.innerHTML = stats
+      .map(
+        ([label, value]) =>
+          `<div class="hw-stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(String(value))}</div></div>`
+      )
+      .join("");
+  }
+
+  function renderClientHardware() {
+    const client = readClientHardware();
+    const stats = [
+      ["SO (navegador)", client.os],
+      ["CPU (núcleos)", client.cpu_cores != null ? String(client.cpu_cores) : "—"],
+      ["RAM aprox.", client.ram_gb_approx != null ? `~${client.ram_gb_approx} GB` : "— (Chrome/Edge)"],
+      ["Platform", client.platform || "—"],
+    ];
+    renderHwStats(els.clientHardwareGrid, stats);
+    return client;
+  }
+
+  function normalizeOs(name) {
+    const raw = String(name || "").toLowerCase();
+    if (raw.includes("win")) return "windows";
+    if (raw.includes("mac") || raw.includes("darwin")) return "macos";
+    if (raw.includes("linux")) return "linux";
+    return raw || "unknown";
+  }
+
+  function renderHardwareMismatch(serverHw, clientHw) {
+    if (!els.hardwareMismatch) return;
+    if (!serverHw || !clientHw) {
+      els.hardwareMismatch.classList.add("hidden");
+      els.hardwareMismatch.textContent = "";
+      return;
+    }
+    const serverOs = normalizeOs(serverHw.os);
+    const clientOs = normalizeOs(clientHw.os);
+    const host = serverHw.hostname || "servidor";
+    const source = serverHw.source || "native";
+    const differentOs = serverOs !== "unknown" && clientOs !== "unknown" && serverOs !== clientOs;
+    const coreGap =
+      serverHw.cpu_cores &&
+      clientHw.cpu_cores &&
+      Math.abs(Number(serverHw.cpu_cores) - Number(clientHw.cpu_cores)) >= 2;
+
+    if (!differentOs && !coreGap && source === "native") {
+      els.hardwareMismatch.classList.add("hidden");
+      els.hardwareMismatch.textContent = "";
+      return;
+    }
+
+    const bits = [];
+    if (differentOs) {
+      bits.push(
+        `O navegador está em <strong>${escapeHtml(clientHw.os)}</strong>, mas o Forge/Ollama rodam em <strong>${escapeHtml(
+          `${serverHw.os} (${host})`
+        )}</strong>.`
+      );
+    } else if (coreGap) {
+      bits.push(
+        `CPU do navegador (${escapeHtml(String(clientHw.cpu_cores))} núcleos) difere do servidor Forge (${escapeHtml(
+          String(serverHw.cpu_cores)
+        )} núcleos em <strong>${escapeHtml(host)}</strong>).`
+      );
+    }
+    if (source === "wsl") {
+      bits.push("Detecção via WSL — o perfil é do ambiente Linux, não do Windows host completo.");
+    } else if (source === "container") {
+      bits.push("Forge parece estar em container — o hardware reportado é do container/VM.");
+    }
+    bits.push(
+      "As recomendações de modelo usam o <strong>servidor</strong>. Para usar a GPU/RAM deste PC, rode o Forge nele (não só pelo túnel remoto)."
+    );
+    els.hardwareMismatch.innerHTML = bits.join(" ");
+    els.hardwareMismatch.classList.remove("hidden");
+  }
+
   function renderHardware(hw) {
     if (!hw) {
-      els.hardwareGrid.textContent = "Não foi possível detectar hardware.";
+      if (els.hardwareGrid) els.hardwareGrid.textContent = "Não foi possível detectar hardware.";
       return;
     }
     const gpu = hw.gpus?.length ? hw.gpus.map((g) => g.name).join(", ") : "Nenhuma detectada";
+    const when = hw.detected_at
+      ? new Date(hw.detected_at * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
+      : "—";
     const stats = [
+      ["Host", hw.hostname || "—"],
+      ["ID", hw.fingerprint || "—"],
       ["Tier", hw.tier || "?"],
       ["RAM", `${hw.ram_available_gb}/${hw.ram_total_gb} GB`],
       ["VRAM", hw.vram_total_gb ? `${hw.vram_free_gb}/${hw.vram_total_gb} GB` : "—"],
@@ -1031,13 +1136,13 @@
       ["Memória útil", `${hw.effective_memory_gb} GB`],
       ["GPU", gpu],
       ["SO", `${hw.os || ""} ${hw.machine || ""}`.trim()],
+      ["Ambiente", hw.source || "native"],
+      ["Detectado", when],
     ];
-    els.hardwareGrid.innerHTML = stats
-      .map(
-        ([label, value]) =>
-          `<div class="hw-stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(String(value))}</div></div>`
-      )
-      .join("");
+    renderHwStats(els.hardwareGrid, stats);
+    if (els.hardwareNote && hw.note) {
+      els.hardwareNote.textContent = hw.note;
+    }
   }
 
   function modelCardHtml(entry, featured) {
@@ -1076,8 +1181,10 @@
     });
   }
 
-  async function loadModelRecommendations() {
-    const data = await api("/api/models/recommendations");
+  async function loadModelRecommendations(options = {}) {
+    const refresh = !!options.refresh;
+    const client = renderClientHardware();
+    const data = await api(`/api/models/recommendations${refresh ? "?refresh=1" : ""}`);
     state.modelRecommendations = data;
     state.models = (data.catalog || []).filter((e) => e.installed).map((e) => e.ollama_name);
     populateModelSelect(
@@ -1087,6 +1194,7 @@
     );
     applyRecommendedModel(data.primary?.ollama_name, state.models);
     renderHardware(data.hardware);
+    renderHardwareMismatch(data.hardware, client);
     if (data.primary) {
       els.primaryModelCard.innerHTML = modelCardHtml(data.primary, true);
       bindModelCardActions(els.primaryModelCard);
@@ -1102,8 +1210,9 @@
     els.modelsModal.classList.remove("hidden");
     els.pullProgress.classList.add("hidden");
     updateOllamaOfflineUI();
-    loadModelRecommendations().catch((e) => {
-      els.hardwareGrid.textContent = "Erro: " + e.message;
+    renderClientHardware();
+    loadModelRecommendations({ refresh: true }).catch((e) => {
+      if (els.hardwareGrid) els.hardwareGrid.textContent = "Erro: " + e.message;
     });
   }
 
@@ -3737,6 +3846,16 @@
 
   els.btnDeploy.addEventListener("click", runDeploy);
   els.btnModels.addEventListener("click", openModelsModal);
+  els.btnRefreshHardware?.addEventListener("click", () => {
+    if (els.btnRefreshHardware) els.btnRefreshHardware.disabled = true;
+    loadModelRecommendations({ refresh: true })
+      .catch((e) => {
+        if (els.hardwareGrid) els.hardwareGrid.textContent = "Erro: " + e.message;
+      })
+      .finally(() => {
+        if (els.btnRefreshHardware) els.btnRefreshHardware.disabled = false;
+      });
+  });
   els.btnAutoSetup?.addEventListener("click", () => runAutoSetupFromModelsModal());
   els.btnSetupRetry?.addEventListener("click", () => runAutoSetupFromModelsModal());
   els.btnSetupClose?.addEventListener("click", () => {

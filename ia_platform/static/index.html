@@ -317,8 +317,24 @@
       </div>
       <div class="models-layout">
         <section class="models-hardware" id="hardwarePanel">
-          <h4>Seu hardware</h4>
-          <div class="hardware-grid" id="hardwareGrid">Carregando...</div>
+          <div class="hardware-head">
+            <h4>Hardware</h4>
+            <button type="button" class="btn btn-ghost btn-sm" id="btnRefreshHardware" title="Detectar de novo">Atualizar</button>
+          </div>
+          <p class="hardware-note" id="hardwareNote">
+            Recomendações de modelo usam o hardware do <strong>servidor Forge</strong> (onde o Python/Ollama rodam), não automaticamente o PC do navegador.
+          </p>
+          <div class="hardware-mismatch hidden" id="hardwareMismatch"></div>
+          <div class="hardware-sections">
+            <div>
+              <h5 class="hardware-sub">Servidor Forge</h5>
+              <div class="hardware-grid" id="hardwareGrid">Carregando...</div>
+            </div>
+            <div>
+              <h5 class="hardware-sub">Este navegador / PC</h5>
+              <div class="hardware-grid" id="clientHardwareGrid">Detectando...</div>
+            </div>
+          </div>
         </section>
         <section class="models-primary" id="primaryRecommendation">
           <h4>Recomendado para você</h4>

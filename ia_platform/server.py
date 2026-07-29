@@ -46,17 +46,31 @@ PLATFORM_VERSION = 3
 IGNORE_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".agent", ".pytest_cache"}
 
 _HARDWARE_CACHE: Optional[tuple[float, Dict[str, Any]]] = None
-_HARDWARE_CACHE_TTL = 60.0
+_HARDWARE_CACHE_TTL = 30.0
 
 
-def _cached_hardware() -> Dict[str, Any]:
+def _invalidate_hardware_cache() -> None:
+    global _HARDWARE_CACHE
+    _HARDWARE_CACHE = None
+
+
+def _cached_hardware(*, force: bool = False) -> Dict[str, Any]:
     global _HARDWARE_CACHE
     now = time.time()
-    if _HARDWARE_CACHE and now - _HARDWARE_CACHE[0] < _HARDWARE_CACHE_TTL:
+    if not force and _HARDWARE_CACHE and now - _HARDWARE_CACHE[0] < _HARDWARE_CACHE_TTL:
         return _HARDWARE_CACHE[1]
     hw = detect_hardware()
     _HARDWARE_CACHE = (now, hw)
     return hw
+
+
+def _want_refresh(qs: Optional[Dict[str, List[str]]] = None) -> bool:
+    if not qs:
+        return False
+    values = qs.get("refresh") or qs.get("force") or []
+    if not values:
+        return False
+    return str(values[0]).strip().lower() in {"1", "true", "yes", "refresh"}
 
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "-", name.strip())[:64]
@@ -201,9 +215,9 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if path == "/api/setup/status":
             return self._handle_setup_status()
         if path == "/api/system/hardware":
-            return self._handle_hardware()
+            return self._handle_hardware(qs)
         if path == "/api/models/recommendations":
-            return self._handle_model_recommendations()
+            return self._handle_model_recommendations(qs)
         if path == "/api/models/installed":
             return self._handle_models_installed()
         if path == "/api/projects":
@@ -587,15 +601,20 @@ class PlatformHandler(BaseHTTPRequestHandler):
             },
         )
 
-    def _handle_hardware(self) -> None:
-        return self._send_json(200, {"hardware": detect_hardware()})
+    def _handle_hardware(self, qs: Optional[Dict[str, List[str]]] = None) -> None:
+        refresh = _want_refresh(qs)
+        if refresh:
+            _invalidate_hardware_cache()
+        return self._send_json(200, {"hardware": _cached_hardware(force=refresh)})
 
     def _handle_models_installed(self) -> None:
         mgr = self._ollama_manager()
         return self._send_json(200, {"models": mgr.list_installed()})
 
-    def _handle_model_recommendations(self) -> None:
-        hw = detect_hardware()
+    def _handle_model_recommendations(self, qs: Optional[Dict[str, List[str]]] = None) -> None:
+        if _want_refresh(qs):
+            _invalidate_hardware_cache()
+        hw = _cached_hardware(force=True)
         installed = self._ollama_manager().list_names()
         return self._send_json(200, recommend_models(hw, installed))
 
