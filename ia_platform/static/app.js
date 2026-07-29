@@ -31,6 +31,8 @@
     setupInFlight: null,
     pendingPrompt: null,
     ollamaInstalled: true,
+    setupPlatform: null,
+    setupInstallUrl: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -117,6 +119,12 @@
     sidebarSetupPill: $("sidebarSetupPill"),
     sidebarSetupLabel: $("sidebarSetupLabel"),
     sidebarSetupBar: $("sidebarSetupBar"),
+    setupModelPick: $("setupModelPick"),
+    setupActions: $("setupActions"),
+    btnSetupRetry: $("btnSetupRetry"),
+    btnSetupClose: $("btnSetupClose"),
+    setupInstallLink: $("setupInstallLink"),
+    setupInstallLinkWrap: $("setupInstallLinkWrap"),
   };
 
   const SETUP_STEPS = [
@@ -128,6 +136,18 @@
     { id: "config", label: "Configurar modelo" },
     { id: "done", label: "Pronto para usar" },
   ];
+
+  const SETUP_PHASE_STEP = {
+    check: "check",
+    install: "install",
+    start: "start",
+    hardware: "hardware",
+    model: "model",
+    config: "config",
+    done: "done",
+  };
+
+  const SETUP_DISMISS_KEY = "forge_setup_dismissed";
 
   const setupProgress = {
     stepStatus: {},
@@ -258,6 +278,8 @@
       if (els.setupPercent) els.setupPercent.textContent = "0%";
       setupProgress.stepStatus = {};
       if (els.btnAutoSetup) els.btnAutoSetup.textContent = "Configurar automaticamente";
+      els.setupModelPick?.classList.add("hidden");
+      showSetupActions(false);
     };
     if (delayMs > 0) setTimeout(hide, delayMs);
     else hide();
@@ -274,7 +296,7 @@
     if (els.setupSubtitle) els.setupSubtitle.textContent = "Tudo pronto — você já pode usar o agente.";
   }
 
-  function finishSetupError(message) {
+  function finishSetupError(message, options = {}) {
     SETUP_STEPS.forEach((s) => {
       const st = setupProgress.stepStatus[s.id];
       if (st === "active") setupProgress.stepStatus[s.id] = "error";
@@ -287,8 +309,61 @@
       else setupProgress.stepStatus.check = "error";
     }
     renderSetupSteps();
-    updateSetupProgress(setupProgress.lastPercent || 0, message || "Falha na configuração.");
-    if (els.setupSubtitle) els.setupSubtitle.textContent = "Corrija o problema abaixo ou tente novamente.";
+    let text = message || "Falha na configuração.";
+    const installUrl = options.installUrl || state.setupInstallUrl;
+    if (installUrl && els.setupInstallLink) {
+      els.setupInstallLink.href = installUrl;
+      els.setupInstallLinkWrap?.classList.remove("hidden");
+    } else {
+      els.setupInstallLinkWrap?.classList.add("hidden");
+    }
+    updateSetupProgress(setupProgress.lastPercent || 0, text);
+    if (els.setupSubtitle) {
+      els.setupSubtitle.textContent = installUrl
+        ? "Corrija o problema abaixo, instale manualmente ou tente novamente."
+        : "Corrija o problema abaixo ou tente novamente.";
+    }
+  }
+
+  function clearSetupDismissed() {
+    try {
+      localStorage.removeItem(SETUP_DISMISS_KEY);
+    } catch {
+      /* private mode */
+    }
+  }
+
+  function isSetupDismissed() {
+    try {
+      return localStorage.getItem(SETUP_DISMISS_KEY) === "1";
+    } catch {
+      return false;
+    }
+  }
+
+  function dismissSetupPrompt() {
+    try {
+      localStorage.setItem(SETUP_DISMISS_KEY, "1");
+    } catch {
+      /* private mode */
+    }
+  }
+
+  function setupBannerHint() {
+    const platform = (state.setupPlatform || "").toLowerCase();
+    if (state.ollamaInstalled === false) {
+      if (platform === "linux") {
+        return "Ollama não detectado. A instalação pode pedir senha sudo no terminal do servidor.";
+      }
+      if (platform === "darwin") {
+        return "Ollama não detectado. Tentaremos instalar via Homebrew ou você pode baixar manualmente.";
+      }
+      return "Ollama não detectado. Clique em Configurar automaticamente para instalar (winget), iniciar e baixar o modelo.";
+    }
+    if (!state.models.length) {
+      return "Nenhum modelo instalado. Clique abaixo para baixar o recomendado para o seu hardware.";
+    }
+    return "Clique abaixo para iniciar o Ollama e baixar o modelo recomendado automaticamente.";
   }
 
   function isModelInstalled(name, installed) {
@@ -432,16 +507,7 @@
         : "Ollama offline";
     }
     if (els.ollamaOfflineText) {
-      if (state.ollamaInstalled === false) {
-        els.ollamaOfflineText.textContent =
-          "Ollama não detectado. Clique em Configurar automaticamente para instalar (winget), iniciar e baixar o modelo.";
-      } else if (!state.models.length) {
-        els.ollamaOfflineText.textContent =
-          "Nenhum modelo instalado. Clique abaixo para baixar o recomendado para o seu hardware.";
-      } else {
-        els.ollamaOfflineText.textContent =
-          "Clique abaixo para iniciar o Ollama e baixar o modelo recomendado automaticamente.";
-      }
+      els.ollamaOfflineText.textContent = setupBannerHint();
     }
     if (els.btnAutoSetup) {
       els.btnAutoSetup.disabled = false;
@@ -476,7 +542,7 @@
             "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute novamente: .\\scripts\\run-platform.ps1"
           );
         } else {
-          finishSetupError(data.error || "Falha ao configurar Ollama.");
+          finishSetupError(data.error || "Falha ao configurar Ollama.", { installUrl: data.install_url });
         }
       }
       state.ollamaOk = false;
@@ -513,7 +579,7 @@
 
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));
-        if (showProgress) finishSetupError(errData.error || "Falha ao configurar Ollama.");
+        if (showProgress) finishSetupError(errData.error || "Falha ao configurar Ollama.", { installUrl: errData.install_url });
         state.ollamaOk = false;
         state.ollamaInstalled = errData.installed !== false;
         updateOllamaOfflineUI();
@@ -547,7 +613,11 @@
       }
 
       if (!donePayload?.ok) {
-        if (showProgress) finishSetupError(donePayload?.error || "Não foi possível configurar o Ollama.");
+        if (showProgress) {
+          finishSetupError(donePayload?.error || "Não foi possível configurar o Ollama.", {
+            installUrl: donePayload?.install_url,
+          });
+        }
         state.ollamaOk = false;
         state.ollamaInstalled = donePayload?.installed !== false;
         updateOllamaOfflineUI();
@@ -582,77 +652,194 @@
     );
   }
 
-  async function ensureEnvironment(options = {}) {
-    const { pullRecommended = false, showProgress = true } = options;
-    if (showProgress) showSetupModal("Iniciando configuração...", 3);
+  function showSetupActions(show) {
+    els.setupActions?.classList.toggle("hidden", !show);
+  }
 
+  function handleSetupStreamEvent(ev, showProgress) {
+    if (!ev || !showProgress) return null;
+
+    if (ev.type === "error") {
+      finishSetupError(ev.error || "Erro durante a configuração.", { installUrl: ev.install_url });
+      showSetupActions(true);
+      return false;
+    }
+
+    if (ev.type === "phase") {
+      const step = SETUP_PHASE_STEP[ev.phase] || "check";
+      if (ev.skipped) setSetupStep(step, "skip");
+      else setSetupStep(step, "active");
+      updateSetupProgress(ev.percent ?? setupProgress.lastPercent, ev.message, null);
+      if (ev.model && els.setupModelPick) {
+        els.setupModelPick.textContent = `Modelo selecionado: ${ev.model}`;
+        els.setupModelPick.classList.remove("hidden");
+      }
+    }
+
+    if (ev.type === "progress") {
+      const step = SETUP_PHASE_STEP[ev.phase] || "model";
+      updateSetupProgress(ev.percent ?? setupProgress.lastPercent, ev.message, step);
+    }
+
+    if (ev.type === "done") {
+      if (ev.ok) {
+        state.ollamaOk = true;
+        state.ollamaInstalled = true;
+        clearSetupDismissed();
+        if (ev.model) {
+          setModelSelection(ev.model);
+          applyRecommendedModel(ev.model, ev.models || state.models);
+        }
+        setSetupStep("config", "done");
+        setSetupStep("done", "done");
+        finishSetupSuccess(ev.message || "Ambiente configurado — pronto para gerar apps!");
+        showSetupActions(false);
+        els.setupInstallLinkWrap?.classList.add("hidden");
+        hideSetupModal(1200);
+        checkHealth();
+        loadModelRecommendations().catch(() => {});
+        updateOllamaOfflineUI();
+      } else {
+        finishSetupError(ev.error || ev.message || "Falha na configuração automática.", {
+          installUrl: ev.install_url,
+        });
+        showSetupActions(true);
+      }
+      return ev.ok;
+    }
+
+    return undefined;
+  }
+
+  async function runFullSetupStream(options = {}) {
+    const { pullRecommended = true, showProgress = true } = options;
+    if (showProgress) {
+      showSetupModal("Iniciando configuração completa...", 3);
+      showSetupActions(false);
+    }
+
+    try {
+      const res = await fetch("/api/setup/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ install: true, pull_recommended: pullRecommended }),
+      });
+
+      if (res.status === 404) return null;
+
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        if (showProgress) {
+          finishSetupError(errData.error || "Falha ao iniciar configuração.");
+          showSetupActions(true);
+        }
+        return false;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let result = undefined;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const ev = parseSseBlock(block);
+          if (!ev) continue;
+          const handled = handleSetupStreamEvent(ev, showProgress);
+          if (handled !== undefined) result = handled;
+        }
+      }
+
+      return result === true;
+    } catch (e) {
+      if (showProgress) {
+        finishSetupError("Erro: " + e.message);
+        showSetupActions(true);
+      }
+      return false;
+    }
+  }
+
+  async function ensureEnvironmentLegacy(options = {}) {
+    const { pullRecommended = false, showProgress = true } = options;
+    const ollamaReady = await ensureOllamaRunning(showProgress);
+    if (!ollamaReady) return false;
+
+    if (showProgress) {
+      setSetupStep("hardware", "active");
+      updateSetupProgress(48, "Analisando hardware e escolhendo modelo recomendado...", "hardware");
+    }
+
+    try {
+      await loadModelRecommendations();
+    } catch {
+      /* health may still be enough */
+    }
+
+    if (showProgress) setSetupStep("hardware", "done");
+
+    const rec = getRecommendedModelName();
+    const needsModel = !state.models.length || (rec && !isModelInstalled(rec, state.models));
+
+    if (pullRecommended && needsModel && rec) {
+      const pulled = await pullModel(rec, { setupUI: showProgress, autoConfigure: true });
+      if (!pulled) {
+        if (showProgress) {
+          finishSetupError(`Falha ao baixar o modelo ${rec}.`);
+          showSetupActions(true);
+        }
+        return false;
+      }
+      await checkHealth();
+      if (showProgress) {
+        setSetupStep("model", "done");
+        setSetupStep("config", "done");
+      }
+    } else if (rec && isModelInstalled(rec, state.models)) {
+      setModelSelection(rec);
+      if (els.modelHint) els.modelHint.classList.add("hidden");
+      if (showProgress) {
+        setSetupStep("model", "skip");
+        setSetupStep("config", "active");
+        updateSetupProgress(92, `Modelo ${rec} já instalado — configurando...`, "config");
+        setSetupStep("config", "done");
+      }
+    } else if (showProgress) {
+      setSetupStep("model", "skip");
+      setSetupStep("config", "skip");
+    }
+
+    updateOllamaOfflineUI();
+    const ok = state.ollamaOk && state.models.length > 0;
+    if (ok && showProgress) {
+      finishSetupSuccess("Ambiente configurado — pronto para gerar apps!");
+      hideSetupModal(1000);
+    } else if (!ok && showProgress) {
+      showSetupActions(true);
+    }
+    return ok;
+  }
+
+  async function ensureEnvironment(options = {}) {
+    const { pullRecommended = true, showProgress = true } = options;
     if (state.setupInFlight) return state.setupInFlight;
 
-    let setupOk = false;
-
     const task = (async () => {
-      const ollamaReady = await ensureOllamaRunning(showProgress);
-      if (!ollamaReady) return false;
-
-      if (showProgress) {
-        setSetupStep("hardware", "active");
-        updateSetupProgress(48, "Analisando hardware e escolhendo modelo recomendado...", "hardware");
-      }
-
-      try {
-        await loadModelRecommendations();
-      } catch {
-        /* health may still be enough */
-      }
-
-      if (showProgress) setSetupStep("hardware", "done");
-
-      const rec = getRecommendedModelName();
-      const needsModel = !state.models.length || (rec && !isModelInstalled(rec, state.models));
-
-      if (pullRecommended && needsModel && rec) {
-        const pulled = await pullModel(rec, { setupUI: showProgress, autoConfigure: true });
-        if (!pulled) {
-          if (showProgress) finishSetupError(`Falha ao baixar o modelo ${rec}.`);
-          return false;
-        }
-        await checkHealth();
-        if (showProgress) {
-          setSetupStep("model", "done");
-          setSetupStep("config", "done");
-        }
-      } else if (rec && isModelInstalled(rec, state.models)) {
-        setModelSelection(rec);
-        if (els.modelHint) els.modelHint.classList.add("hidden");
-        if (showProgress) {
-          setSetupStep("model", "skip");
-          setSetupStep("config", "active");
-          updateSetupProgress(92, `Modelo ${rec} já instalado — configurando...`, "config");
-          setSetupStep("config", "done");
-        }
-      } else if (showProgress) {
-        setSetupStep("model", "skip");
-        setSetupStep("config", "skip");
-      }
-
-      updateOllamaOfflineUI();
-      const ok = state.ollamaOk && state.models.length > 0;
-      if (ok && showProgress) {
-        finishSetupSuccess("Ambiente configurado — pronto para gerar apps!");
-        hideSetupModal(1000);
-      }
-      return ok;
+      const full = await runFullSetupStream({ pullRecommended, showProgress });
+      if (full !== null) return full;
+      return ensureEnvironmentLegacy({ pullRecommended, showProgress });
     })();
 
     state.setupInFlight = task;
     try {
-      setupOk = await task;
-      return setupOk;
+      return await task;
     } finally {
       state.setupInFlight = null;
-      if (showProgress && !setupOk) {
-        /* mantém modal aberto para o usuário ver o erro */
-      }
     }
   }
 
@@ -1783,9 +1970,21 @@
 
   els.btnDeploy.addEventListener("click", runDeploy);
   els.btnModels.addEventListener("click", openModelsModal);
-  els.btnAutoSetup?.addEventListener("click", async () => {
+  els.btnAutoSetup?.addEventListener("click", () => runAutoSetupFromModelsModal());
+  els.btnSetupRetry?.addEventListener("click", () => runAutoSetupFromModelsModal());
+  els.btnSetupClose?.addEventListener("click", () => {
+    dismissSetupPrompt();
+    hideSetupModal();
+    showSetupActions(false);
+  });
+
+  async function runAutoSetupFromModelsModal() {
     try {
+      clearSetupDismissed();
+      resetSetupProgress();
+      els.setupInstallLink?.classList.add("hidden");
       showSetupModal("Iniciando configuração automática...", 3);
+      showSetupActions(false);
       const ok = await ensureEnvironment({ pullRecommended: true, showProgress: true });
       if (ok) {
         updateOllamaOfflineUI();
@@ -1793,6 +1992,7 @@
         if (state.pendingPrompt && state.current) {
           els.promptInput.value = state.pendingPrompt;
           state.pendingPrompt = null;
+          closeModelsModal();
           sendPrompt();
         } else {
           closeModelsModal();
@@ -1800,8 +2000,9 @@
       }
     } catch (e) {
       finishSetupError(e.message || "Erro inesperado na configuração.");
+      showSetupActions(true);
     }
-  });
+  }
   els.btnCloseModels.addEventListener("click", closeModelsModal);
   els.modelsModal.addEventListener("click", (e) => {
     if (e.target === els.modelsModal && !state.pullingModel) closeModelsModal();
@@ -1866,8 +2067,25 @@
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);
-    ensureEnvironment({ pullRecommended: true, showProgress: true }).catch(() => {
-      openModelsModal();
+    checkHealth().then(async () => {
+      try {
+        const status = await api("/api/setup/status");
+        state.setupPlatform = status.platform || null;
+        state.setupInstallUrl = status.install_url || null;
+        state.ollamaInstalled = status.ollama_installed !== false;
+        updateOllamaOfflineUI();
+        if (!status.setup_complete && !isSetupDismissed()) {
+          ensureEnvironment({ pullRecommended: true, showProgress: true }).catch(() => {
+            showSetupActions(true);
+          });
+        }
+      } catch {
+        if (!isSetupDismissed()) {
+          ensureEnvironment({ pullRecommended: true, showProgress: true }).catch(() => {
+            showSetupActions(true);
+          });
+        }
+      }
     });
     try {
       await loadProjects();

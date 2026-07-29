@@ -214,12 +214,20 @@
           <div class="pull-bar-fill" id="setupBarFill"></div>
         </div>
         <p class="setup-status" id="setupStatus">Iniciando...</p>
+        <p class="setup-model-pick hidden" id="setupModelPick"></p>
       </div>
       <ul class="setup-steps" id="setupSteps" aria-label="Etapas da configuração"></ul>
       <div class="setup-log-wrap hidden" id="setupLogWrap">
         <div class="setup-log-title">Detalhes</div>
         <pre class="setup-log" id="setupLog"></pre>
       </div>
+      <div class="setup-actions hidden" id="setupActions">
+        <button type="button" class="btn btn-primary btn-gradient btn-sm" id="btnSetupRetry">Tentar novamente</button>
+        <button type="button" class="btn btn-ghost btn-sm" id="btnSetupClose">Fechar</button>
+      </div>
+      <p class="setup-install-link hidden" id="setupInstallLinkWrap">
+        <a href="https://ollama.com/download" target="_blank" rel="noopener noreferrer" id="setupInstallLink">Instalar Ollama manualmente</a>
+      </p>
     </div>
   </div>
 

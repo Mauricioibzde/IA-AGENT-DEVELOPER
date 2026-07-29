@@ -73,6 +73,15 @@ class OllamaServiceManager:
             for path in self._windows_candidate_paths():
                 if os.path.isfile(path):
                     return path
+        if platform.system() == "Linux":
+            for path in (
+                "/usr/local/bin/ollama",
+                "/usr/bin/ollama",
+                os.path.expanduser("~/.local/bin/ollama"),
+                os.path.expanduser("~/.ollama/bin/ollama"),
+            ):
+                if os.path.isfile(path):
+                    return path
         return None
 
     def is_installed(self) -> bool:
@@ -85,6 +94,16 @@ class OllamaServiceManager:
                 return True
         except (urllib.error.URLError, TimeoutError, OSError, ValueError):
             return False
+
+    def install_url_for_platform(self) -> str:
+        system = platform.system()
+        if system == "Windows":
+            return "https://ollama.com/download/windows"
+        if system == "Linux":
+            return "https://ollama.com/download/linux"
+        if system == "Darwin":
+            return "https://ollama.com/download/mac"
+        return "https://ollama.com/download"
 
     def install(self, status_cb: StatusCallback = None) -> Dict[str, Any]:
         """Attempt to install Ollama on the local machine."""
@@ -191,20 +210,36 @@ class OllamaServiceManager:
             }
         self._emit(status_cb, "Instalando Ollama via script oficial (pode pedir senha sudo)...")
         try:
-            subprocess.run(
+            completed = subprocess.run(
                 ["sh", "-c", "curl -fsSL https://ollama.com/install.sh | sh"],
+                capture_output=True,
+                text=True,
                 timeout=INSTALL_TIMEOUT,
                 check=True,
             )
+            output = (completed.stdout or "") + (completed.stderr or "")
+            if "password" in output.lower() or "sudo" in output.lower():
+                self._emit(status_cb, "Instalação concluída (sudo utilizado).")
         except subprocess.CalledProcessError as exc:
+            detail = (exc.stderr or exc.stdout or "").strip()
+            lower = detail.lower()
+            hint = " Execute no terminal: curl -fsSL https://ollama.com/install.sh | sh"
+            if "password" in lower or "sudo" in lower or exc.returncode == 1:
+                hint = " A instalação precisa de sudo — abra um terminal e execute: curl -fsSL https://ollama.com/install.sh | sh"
             return {
                 "ok": False,
                 "installed": False,
-                "error": f"Instalação Linux falhou (exit {exc.returncode}).",
-                "install_url": "https://ollama.com/download/linux",
+                "error": f"Instalação Linux falhou (exit {exc.returncode}).{hint}",
+                "install_url": self.install_url_for_platform(),
+                "detail": detail[:240] if detail else None,
             }
         except subprocess.TimeoutExpired:
-            return {"ok": False, "installed": False, "error": "Timeout ao instalar Ollama no Linux."}
+            return {
+                "ok": False,
+                "installed": False,
+                "error": "Timeout ao instalar Ollama no Linux.",
+                "install_url": self.install_url_for_platform(),
+            }
 
         if self._wait_for_binary(status_cb):
             return {"ok": True, "installed": True, "message": "Ollama instalado com sucesso."}
@@ -212,6 +247,7 @@ class OllamaServiceManager:
             "ok": False,
             "installed": False,
             "error": "Ollama instalado, mas não encontrado no PATH. Reinicie a aplicação.",
+            "install_url": self.install_url_for_platform(),
         }
 
     def _install_macos(self, status_cb: StatusCallback) -> Dict[str, Any]:

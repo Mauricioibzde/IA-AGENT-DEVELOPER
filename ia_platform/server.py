@@ -5,6 +5,7 @@ from __future__ import annotations
 import argparse
 import json
 import mimetypes
+import platform
 import re
 import sys
 import time
@@ -23,7 +24,7 @@ from ia_platform.conversations import append_message, clear_messages, format_con
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
-from ia_platform.model_catalog import recommend_models, resolve_model_for_run, resolve_models_for_run
+from ia_platform.model_catalog import recommend_models, recommend_setup_model, resolve_model_for_run, resolve_models_for_run
 from ia_platform.ollama_models import OllamaModelManager
 from ia_platform.ollama_service import ollama_service
 from ia_platform.run_history import load_runs, record_run
@@ -340,6 +341,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self._handle_health()
+        if path == "/api/setup/status":
+            return self._handle_setup_status()
         if path == "/api/system/hardware":
             return self._handle_hardware()
         if path == "/api/models/recommendations":
@@ -394,6 +397,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_ollama_ensure()
         if path == "/api/ollama/setup/stream":
             return self._handle_ollama_setup_stream()
+        if path == "/api/setup/stream":
+            return self._handle_full_setup_stream()
+        if path == "/api/setup/status":
+            return self._handle_setup_status()
         project_id, sub = _parse_project_route(path)
         if project_id and sub == "chat":
             return self._handle_post_chat(project_id)
@@ -486,6 +493,150 @@ class PlatformHandler(BaseHTTPRequestHandler):
             emit({"type": "error", "error": str(exc)})
             emit({"type": "done", "ok": False, "ollama": False, "error": str(exc)})
 
+    def _handle_setup_status(self) -> None:
+        from local_agent.config import AgentConfig
+        from local_agent.ollama_client import OllamaClient
+
+        cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
+        client = OllamaClient(cfg)
+        ollama_online = client.check_available(timeout=2)
+        installed = client.list_models() if ollama_online else []
+        hw = _cached_hardware()
+        setup_model = recommend_setup_model(hw, installed)
+        mgr = self._ollama_manager()
+        has_setup_model = mgr.has_model(setup_model)
+        ready = ollama_online and (has_setup_model or bool(installed))
+        system = platform.system()
+        auto_install = system in {"Windows", "Linux", "Darwin"}
+
+        self._send_json(
+            200,
+            {
+                "ollama_online": ollama_online,
+                "ollama_installed": ollama_service.is_installed(),
+                "models_installed": installed,
+                "recommended_model": setup_model,
+                "setup_complete": ready,
+                "hardware_tier": hw.get("tier"),
+                "has_gpu": bool(hw.get("has_gpu") or hw.get("gpus")),
+                "platform": system.lower(),
+                "auto_install_supported": auto_install,
+                "install_url": ollama_service.install_url_for_platform(),
+                "needs_ollama": not ollama_online,
+                "needs_model": ollama_online and not has_setup_model and not installed,
+            },
+        )
+
+    def _handle_full_setup_stream(self) -> None:
+        data = self._read_json()
+        auto_install = self._ollama_setup_auto_install(data)
+        pull_recommended = bool(data.get("pull_recommended", True))
+        host = self._ollama_host()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(payload: Dict[str, Any]) -> None:
+            self._send_sse(payload)
+
+        def phase(phase_id: str, message: str, percent: int, **extra: Any) -> None:
+            emit({"type": "phase", "phase": phase_id, "message": message, "percent": percent, **extra})
+
+        try:
+            phase("check", "Verificando ambiente...", 5)
+
+            if not ollama_service.is_api_ready(host):
+
+                def ollama_status(message: str) -> None:
+                    lower = message.lower()
+                    if "instal" in lower or "winget" in lower or "download" in lower:
+                        phase("install", message, 22)
+                    else:
+                        phase("start", message, 35)
+
+                ollama_result = ollama_service.ensure_running(
+                    host,
+                    auto_install=auto_install,
+                    status_cb=ollama_status,
+                )
+                if not ollama_result.get("ok"):
+                    emit({"type": "done", "ok": False, **ollama_result})
+                    return
+                if ollama_result.get("started") or "instal" in str(ollama_result.get("message", "")).lower():
+                    phase("install", ollama_result.get("message") or "Ollama instalado.", 38, installed=True)
+                else:
+                    phase("install", "Ollama já estava instalado.", 32, skipped=True)
+            else:
+                phase("install", "Ollama já instalado.", 32, skipped=True)
+
+            phase("start", "Serviço Ollama online.", 45)
+
+            hw = _cached_hardware()
+            mgr = self._ollama_manager()
+            installed = mgr.list_names()
+            setup_model = recommend_setup_model(hw, installed)
+            gpu_note = "GPU detectada" if hw.get("has_gpu") or hw.get("gpus") else "modo CPU (sem GPU)"
+            phase(
+                "hardware",
+                f"Recomendado: {setup_model} — {gpu_note}, tier {hw.get('tier', '?')}.",
+                52,
+                model=setup_model,
+                hardware=hw.get("tier"),
+            )
+
+            needs_pull = pull_recommended and not mgr.has_model(setup_model)
+            if needs_pull:
+
+                def pull_event(event: Dict[str, Any]) -> None:
+                    if event.get("type") != "progress":
+                        return
+                    pct = event.get("percent")
+                    overall = 55 + int(pct * 0.38) if pct is not None else 58
+                    msg = event.get("status") or f"Baixando {setup_model}..."
+                    if pct is not None:
+                        msg = f"Baixando {setup_model}... {pct}%"
+                    emit({"type": "progress", "phase": "model", "message": msg, "percent": overall})
+
+                phase("model", f"Iniciando download de {setup_model} (~pode demorar)...", 55, model=setup_model)
+                pull_result = mgr.pull(setup_model, on_event=pull_event)
+                if not pull_result.get("ok"):
+                    emit(
+                        {
+                            "type": "done",
+                            "ok": False,
+                            "error": pull_result.get("error") or f"Falha ao baixar {setup_model}",
+                            "model": setup_model,
+                        }
+                    )
+                    return
+                phase("model", f"Modelo {setup_model} instalado.", 93, model=setup_model)
+            elif mgr.has_model(setup_model):
+                phase("model", f"Modelo {setup_model} já instalado.", 88, model=setup_model, skipped=True)
+            else:
+                phase("model", "Nenhum modelo baixado (pull desativado).", 88, skipped=True)
+
+            installed = mgr.list_names()
+            phase("config", f"Configurando {setup_model} como modelo padrão.", 97, model=setup_model)
+            emit(
+                {
+                    "type": "done",
+                    "ok": True,
+                    "ollama": True,
+                    "installed": True,
+                    "model": setup_model,
+                    "models": installed,
+                    "message": "Ambiente configurado — pronto para usar!",
+                    "percent": 100,
+                }
+            )
+        except Exception as exc:
+            emit({"type": "error", "error": str(exc)})
+            emit({"type": "done", "ok": False, "error": str(exc)})
+
     def _handle_health(self) -> None:
         from local_agent.config import AgentConfig
         from local_agent.ollama_client import OllamaClient
@@ -497,8 +648,11 @@ class PlatformHandler(BaseHTTPRequestHandler):
         recommended_name = None
         if ollama_ok:
             hw = _cached_hardware()
-            recommendation = recommend_models(hw, models).get("primary")
-            recommended_name = recommendation.get("ollama_name") if recommendation else None
+            if models:
+                recommendation = recommend_models(hw, models).get("primary")
+                recommended_name = recommendation.get("ollama_name") if recommendation else None
+            else:
+                recommended_name = recommend_setup_model(hw, models)
         self._send_json(
             200,
             {
@@ -511,6 +665,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "features": {
                     "ollama_setup_stream": True,
                     "ollama_auto_install": True,
+                    "full_setup_stream": True,
                 },
             },
         )

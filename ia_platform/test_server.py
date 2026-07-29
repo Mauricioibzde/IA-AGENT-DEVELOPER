@@ -36,13 +36,15 @@ def _patch_ollama_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     )
 
 
-def _patch_ollama_online(monkeypatch: pytest.MonkeyPatch) -> None:
+def _patch_ollama_online(monkeypatch: pytest.MonkeyPatch, models: list[str] | None = None) -> None:
+    installed = models if models is not None else []
+
     class FakeClient:
         def check_available(self, timeout: int = 5) -> bool:
             return True
 
         def list_models(self) -> list[str]:
-            return []
+            return installed
 
     monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
 
@@ -472,6 +474,7 @@ def test_ollama_ensure_already_online(platform_url: str, monkeypatch: pytest.Mon
     assert data["ollama"] is True
 
 
+def test_ollama_setup_stream_starts_daemon(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         _mod.ollama_service,
         "ensure_running",
@@ -500,6 +503,46 @@ def test_ollama_ensure_already_online(platform_url: str, monkeypatch: pytest.Mon
         body = resp.read().decode("utf-8")
     assert "done" in body
     assert "ready" in body or '"ok": true' in body.replace(" ", "")
+
+
+def test_setup_status(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_ollama_online(monkeypatch, models=["qwen2.5-coder:7b"])
+    with urllib.request.urlopen(f"{platform_url}/api/setup/status", timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert "setup_complete" in data
+    assert "recommended_model" in data
+    assert "platform" in data
+    assert "install_url" in data
+    assert data["ollama_online"] is True
+
+
+def test_full_setup_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_ollama_online(monkeypatch, models=["qwen2.5-coder:7b"])
+    monkeypatch.setattr(_mod.ollama_service, "is_api_ready", lambda host, timeout=2.0: True)
+
+    class FakeMgr:
+        def list_names(self):
+            return ["qwen2.5-coder:7b"]
+
+        def has_model(self, name: str) -> bool:
+            return name in self.list_names()
+
+        def pull(self, model: str, on_event=None):
+            return {"ok": True}
+
+    monkeypatch.setattr(_mod.PlatformHandler, "_ollama_manager", lambda self: FakeMgr())
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/setup/stream",
+        data=json.dumps({"install": True, "pull_recommended": True}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8")
+    assert '"type": "phase"' in body or '"type":"phase"' in body.replace(" ", "")
+    assert "done" in body
+    assert '"ok": true' in body.replace(" ", "") or '"ok":true' in body.replace(" ", "")
 
 
 def test_ollama_ensure_starts_daemon(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

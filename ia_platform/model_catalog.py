@@ -229,6 +229,45 @@ def _score(entry: ModelEntry, hardware: Dict[str, Any]) -> float:
     return score
 
 
+def recommend_setup_model(
+    hardware: Dict[str, Any],
+    installed: Optional[List[str]] = None,
+) -> str:
+    """Pick the best first-time download model (CPU/GPU aware)."""
+    installed = installed or []
+    has_gpu = bool(hardware.get("has_gpu") or hardware.get("gpus"))
+
+    if has_gpu:
+        return recommend_models(hardware, installed)["primary"]["ollama_name"]
+
+    # CPU-only: prefer smaller coder models that fit RAM
+    candidates: List[tuple[float, ModelEntry]] = []
+    for entry in MODEL_CATALOG:
+        if "coder" not in entry.tags:
+            continue
+        if not _fits_hardware(entry, hardware):
+            continue
+        score = _score(entry, hardware)
+        score += max(0.0, 18.0 - entry.size_gb * 4.0)
+        if entry.tier in {"minimal", "low"}:
+            score += 18.0
+        elif entry.tier == "medium":
+            score += 6.0
+        candidates.append((score, entry))
+
+    if candidates:
+        candidates.sort(key=lambda item: item[0], reverse=True)
+        chosen = candidates[0][1].ollama_name
+        if _is_model_installed(chosen, installed):
+            return chosen
+        for _score_val, entry in candidates:
+            if _is_model_installed(entry.ollama_name, installed):
+                return entry.ollama_name
+        return chosen
+
+    return recommend_models(hardware, installed)["primary"]["ollama_name"]
+
+
 def recommend_models(
     hardware: Dict[str, Any],
     installed: Optional[List[str]] = None,
