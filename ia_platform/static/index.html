@@ -341,6 +341,23 @@
             Recomendações de modelo usam o hardware do <strong>servidor Forge</strong> (onde o Python/Ollama rodam), não automaticamente o PC do navegador.
           </p>
           <div class="hardware-mismatch hidden" id="hardwareMismatch"></div>
+          <div class="local-run-guide hidden" id="localRunGuide">
+            <h5>Rodar Forge neste PC (Windows)</h5>
+            <ol>
+              <li>Feche esta aba do túnel remoto (hardware “cursor” / Linux).</li>
+              <li>No PowerShell, na pasta do projeto no seu PC:</li>
+            </ol>
+            <pre class="local-run-code" id="localRunCommands"># Terminal 1 — Ollama (se ainda não estiver aberto)
+ollama serve
+
+# Terminal 2 — Forge local neste Windows
+powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
+            <div class="local-run-actions">
+              <button type="button" class="btn btn-ghost btn-sm" id="btnCopyLocalRun">Copiar comandos</button>
+              <a class="btn btn-ghost btn-sm" href="https://ollama.com/download" target="_blank" rel="noopener">Baixar Ollama</a>
+            </div>
+            <p class="local-run-note">Depois abra <strong>http://127.0.0.1:8787</strong> — o SO deve aparecer como <strong>Windows</strong> (não Linux/cursor). Aí Baixar modelo usa a GPU/RAM deste PC.</p>
+          </div>
           <div class="hardware-sections">
             <div>
               <h5 class="hardware-sub">Servidor Forge</h5>

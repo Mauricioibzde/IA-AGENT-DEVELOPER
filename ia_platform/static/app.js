@@ -126,6 +126,9 @@
     clientHardwareGrid: $("clientHardwareGrid"),
     hardwareMismatch: $("hardwareMismatch"),
     hardwareNote: $("hardwareNote"),
+    localRunGuide: $("localRunGuide"),
+    localRunCommands: $("localRunCommands"),
+    btnCopyLocalRun: $("btnCopyLocalRun"),
     btnRefreshHardware: $("btnRefreshHardware"),
     primaryModelCard: $("primaryModelCard"),
     modelsCatalog: $("modelsCatalog"),
@@ -1079,6 +1082,7 @@
     if (!serverHw || !clientHw) {
       els.hardwareMismatch.classList.add("hidden");
       els.hardwareMismatch.textContent = "";
+      els.localRunGuide?.classList.add("hidden");
       return;
     }
     const serverOs = normalizeOs(serverHw.os);
@@ -1090,10 +1094,12 @@
       serverHw.cpu_cores &&
       clientHw.cpu_cores &&
       Math.abs(Number(serverHw.cpu_cores) - Number(clientHw.cpu_cores)) >= 2;
+    const remoteLike = differentOs || source === "container" || source === "wsl";
 
     if (!differentOs && !coreGap && source === "native") {
       els.hardwareMismatch.classList.add("hidden");
       els.hardwareMismatch.textContent = "";
+      els.localRunGuide?.classList.add("hidden");
       return;
     }
 
@@ -1114,13 +1120,25 @@
     if (source === "wsl") {
       bits.push("Detecção via WSL — o perfil é do ambiente Linux, não do Windows host completo.");
     } else if (source === "container") {
-      bits.push("Forge parece estar em container — o hardware reportado é do container/VM.");
+      bits.push("Forge parece estar em container/túnel remoto — o hardware reportado é da VM (ex.: host <code>cursor</code>), não deste PC.");
     }
     bits.push(
-      "As recomendações de modelo usam o <strong>servidor</strong>. Para usar a GPU/RAM deste PC, rode o Forge nele (não só pelo túnel remoto)."
+      "Baixar modelo e recomendações usam o <strong>servidor</strong>. Para GPU/RAM deste PC, rode o Forge localmente (passos abaixo)."
     );
     els.hardwareMismatch.innerHTML = bits.join(" ");
     els.hardwareMismatch.classList.remove("hidden");
+
+    if (els.localRunGuide) {
+      const showGuide = remoteLike && clientOs === "windows";
+      els.localRunGuide.classList.toggle("hidden", !showGuide);
+      if (showGuide && els.localRunCommands) {
+        els.localRunCommands.textContent =
+          "# Na pasta do repositório no seu Windows\n" +
+          "ollama serve\n\n" +
+          "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-platform.ps1\n\n" +
+          "# Depois abra http://127.0.0.1:8787 (SO deve ser Windows, host != cursor)";
+      }
+    }
   }
 
   function renderHardware(hw) {
@@ -4076,6 +4094,15 @@
       .finally(() => {
         if (els.btnRefreshHardware) els.btnRefreshHardware.disabled = false;
       });
+  });
+  els.btnCopyLocalRun?.addEventListener("click", async () => {
+    const text = els.localRunCommands?.textContent || "";
+    try {
+      await navigator.clipboard.writeText(text);
+      showModelFeedback("Comandos copiados. Cole no PowerShell na pasta do projeto no Windows.", "ok");
+    } catch (_) {
+      showModelFeedback("Não foi possível copiar automaticamente — selecione o bloco de comandos e copie (Ctrl+C).", "info");
+    }
   });
   els.btnAutoSetup?.addEventListener("click", () => runAutoSetupFromModelsModal());
   els.btnSetupRetry?.addEventListener("click", () => runAutoSetupFromModelsModal());
