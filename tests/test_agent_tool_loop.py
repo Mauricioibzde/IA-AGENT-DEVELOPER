@@ -1,10 +1,9 @@
-import json
 from pathlib import Path
-
 import sys
+
 sys.path.insert(0, str(Path(__file__).resolve().parents[1]))
 
-from ollama_agent import parse_tool_call, execute_tool
+from ollama_agent import execute_tool, parse_tool_call
 
 
 def test_parse_tool_call_with_json_payload():
@@ -20,3 +19,10 @@ def test_execute_tool_writes_file(tmp_path):
     result = execute_tool('write_file', {'path': str(target), 'content': 'ok'}, workspace=str(tmp_path))
     assert result['ok'] is True
     assert target.read_text(encoding='utf-8') == 'ok'
+
+
+def test_execute_tool_creates_directory(tmp_path):
+    target = tmp_path / 'nested'
+    result = execute_tool('create_directory', {'path': 'nested'}, workspace=str(tmp_path))
+    assert result['ok'] is True
+    assert target.exists() is True

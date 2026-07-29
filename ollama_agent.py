@@ -49,10 +49,53 @@ def infer_tool_call_from_text(text: str) -> Dict[str, Any] | None:
         file_content = content_match.group(1).strip().strip('"\'') if content_match else ""
         return {"tool": "write_file", "args": {"path": path, "content": file_content}}
 
+    if any(phrase in lower for phrase in ["create a folder", "create folder", "make folder", "make directory", "create directory"]):
+        path_match = re.search(r"(?:named|called|folder\s+)([a-z0-9_.\\/-]+)", content, re.I)
+        path = path_match.group(1) if path_match else "new-folder"
+        return {"tool": "create_directory", "args": {"path": path}}
+
+    if any(phrase in lower for phrase in ["list files", "show files", "list directory", "show directory"]):
+        return {"tool": "list_dir", "args": {"path": "."}}
+
+    if any(phrase in lower for phrase in ["read file", "open file", "show content"]):
+        path_match = re.search(r"(?:file|named|called)\s+([a-z0-9_.\\/-]+)", content, re.I)
+        path = path_match.group(1) if path_match else "README.md"
+        return {"tool": "read_file", "args": {"path": path}}
+
     if any(phrase in lower for phrase in ["validate", "confirm", "check that"]):
         return {"tool": "run_command", "args": {"command": "dir", "cwd": "."}}
 
     return None
+
+
+def parse_tool_call(payload: str | Dict[str, Any] | Any) -> tuple[str | None, Dict[str, Any]]:
+    if isinstance(payload, dict):
+        tool_name = payload.get("tool") or payload.get("name") or payload.get("action")
+        args = payload.get("args", {})
+        if isinstance(args, dict):
+            return tool_name, args
+        return tool_name, {}
+
+    if isinstance(payload, str):
+        content = payload.strip()
+        if not content:
+            return None, {}
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
+        try:
+            parsed = json.loads(content)
+        except json.JSONDecodeError:
+            match = re.search(r"\{.*\}", content, re.S)
+            if not match:
+                return None, {}
+            try:
+                parsed = json.loads(match.group(0))
+            except json.JSONDecodeError:
+                return None, {}
+        return parse_tool_call(parsed)
+
+    return None, {}
 
 
 def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
@@ -64,11 +107,24 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
     try:
         payload = json.loads(content)
         if isinstance(payload, list):
-            return [item for item in payload if isinstance(item, dict)]
+            parsed = []
+            for item in payload:
+                tool_name, args = parse_tool_call(item)
+                if tool_name:
+                    parsed.append({"tool": tool_name, "args": args})
+            return parsed
         if isinstance(payload, dict):
             if "tool_calls" in payload and isinstance(payload["tool_calls"], list):
-                return [item for item in payload["tool_calls"] if isinstance(item, dict)]
-            return [payload]
+                parsed = []
+                for item in payload["tool_calls"]:
+                    tool_name, args = parse_tool_call(item)
+                    if tool_name:
+                        parsed.append({"tool": tool_name, "args": args})
+                return parsed
+            tool_name, args = parse_tool_call(payload)
+            if tool_name:
+                return [{"tool": tool_name, "args": args}]
+            return []
     except json.JSONDecodeError:
         pass
 
@@ -77,11 +133,23 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
         try:
             payload = json.loads(match.group(0))
             if isinstance(payload, list):
-                return [item for item in payload if isinstance(item, dict)]
+                parsed = []
+                for item in payload:
+                    tool_name, args = parse_tool_call(item)
+                    if tool_name:
+                        parsed.append({"tool": tool_name, "args": args})
+                return parsed
             if isinstance(payload, dict):
                 if "tool_calls" in payload and isinstance(payload["tool_calls"], list):
-                    return [item for item in payload["tool_calls"] if isinstance(item, dict)]
-                return [payload]
+                    parsed = []
+                    for item in payload["tool_calls"]:
+                        tool_name, args = parse_tool_call(item)
+                        if tool_name:
+                            parsed.append({"tool": tool_name, "args": args})
+                    return parsed
+                tool_name, args = parse_tool_call(payload)
+                if tool_name:
+                    return [{"tool": tool_name, "args": args}]
         except json.JSONDecodeError:
             pass
 
