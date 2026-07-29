@@ -246,6 +246,20 @@ def execute_tool(tool_name: str, args: Dict[str, Any], workspace: str) -> Dict[s
         (target_dir / "index.js").write_text("console.log('Hello from starter project');\n", encoding="utf-8")
         return {"ok": True, "path": str(target_dir)}
 
+    if tool_name == "create_multiple_files":
+        created = []
+        for entry in args.get("files", []):
+            path = entry.get("path")
+            if not path:
+                continue
+            file_path = Path(path)
+            if not file_path.is_absolute():
+                file_path = Path(workspace) / file_path
+            file_path.parent.mkdir(parents=True, exist_ok=True)
+            file_path.write_text(entry.get("content", ""), encoding="utf-8")
+            created.append(str(file_path))
+        return {"ok": True, "files": created}
+
     if tool_name == "final":
         return {"ok": True, "answer": args.get("answer", "")}
 
@@ -265,6 +279,7 @@ def run_agent(prompt: str, workspace: str, model: str = "qwen3-coder:30b", max_s
         '- replace text in a file: {"tool":"replace_in_file","args":{"path":"relative/path.txt","old":"old text","new":"new text"}}\n'
         '- run a shell command: {"tool":"run_command","args":{"command":"cmd here","cwd":"."}}\n'
         '- scaffold a project: {"tool":"scaffold_project","args":{"name":"my-app","path":"relative/path"}}\n'
+        '- create multiple files: {"tool":"create_multiple_files","args":{"files":[{"path":"relative/file1.txt","content":"hello"},{"path":"relative/file2.txt","content":"world"}]}}\n'
         '- create a source file: {"tool":"write_file","args":{"path":"relative/src/file.js","content":"// code\n"}}\n'
         'After running a validation command, report the result clearly: success or failure, exit code, and relevant output.\n'
         "For multiple tool calls, return a JSON array of objects.\n"
