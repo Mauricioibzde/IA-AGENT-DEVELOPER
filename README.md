@@ -2,16 +2,41 @@
 
 Agente local de programação com Ollama + interface web **Forge** para criar sites/apps por conversa (fluxo estilo Lovable).
 
+## Importante: local vs túnel remoto
+
+Se o modal **Modelos IA** mostrar algo como:
+
+> navegador em Windows, Forge/Ollama em Linux (`cursor`) / container
+
+você está abrindo o Forge **remoto** (túnel do agente/cloud). Nesse caso:
+
+- o hardware e o download de modelos são da **VM Linux**, não do seu PC
+- a GPU/RAM do Windows **não** entram nas recomendações
+
+Para usar **este computador Windows**:
+
+1. Clone/abra o repositório **no seu PC**
+2. Suba o Forge localmente (comandos abaixo)
+3. Abra `http://127.0.0.1:8787` e confirme em Modelos IA: **SO = Windows** e host **diferente de `cursor`**
+
+---
+
 ## Terminar o projeto hoje (3 passos)
 
-### Windows
+### Windows (recomendado no seu PC)
 
 ```powershell
-# Terminal 1
+# Terminal 1 — Ollama (ícone da llama ou:)
 ollama serve
 
-# Terminal 2 — setup + testes + plataforma web
+# Terminal 2 — na pasta do repositório
 powershell -ExecutionPolicy Bypass -File .\scripts\start-today.ps1
+```
+
+Ou só a UI, se o setup já foi feito:
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1
 ```
 
 Abra no navegador: **http://127.0.0.1:8787**
