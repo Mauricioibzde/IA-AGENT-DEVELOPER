@@ -941,7 +941,7 @@
       if (autoName && isAutoModelSelected()) {
         const extra =
           download && download !== autoName
-            ? ` Opcional baixar: ${download}.`
+            ? ` Para Chat geral mais natural, baixe ${download} em Modelos IA.`
             : "";
         els.modelHint.textContent = `Auto usará ${autoName} agora.${extra}`;
         els.modelHint.classList.remove("hidden");
@@ -3979,6 +3979,11 @@
             clearThinkingState(agentEl);
             fullText += ev.text;
             agentEl.textContent = fullText;
+            els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+          } else if (ev.type === "chat_replace" && ev.text != null) {
+            clearThinkingState(agentEl);
+            fullText = String(ev.text || "");
+            setMessageContent(agentEl, fullText, "agent");
             els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
           } else if (ev.type === "error") {
             throw Object.assign(new Error(ev.error || ev.message || "Erro no chat"), { data: ev });

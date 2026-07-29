@@ -23,11 +23,14 @@ if str(REPO_ROOT) not in sys.path:
 
 from ia_platform.conversations import (
     append_message,
+    build_open_chat_messages,
     clear_messages,
     enrich_goal_with_conversation,
     format_conversation_context,
+    is_coding_scope_refusal,
     list_recent_chats,
     load_messages,
+    open_chat_system_prompt,
 )
 from ia_platform.deploy import deploy_preflight, deploy_project
 from ia_platform.project_ops import archive_project, duplicate_project, list_projects, rename_project
@@ -608,6 +611,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
             setup_pick = recommend_setup_model(hw, models)
             if setup_pick and setup_pick not in models:
                 suggested_download = setup_pick
+            # If only coder models are installed, suggest a conversational model for Chat.
+            coder_only = bool(models) and all(
+                ("coder" in m.lower() or "codellama" in m.lower()) and "llama3.2" not in m.lower()
+                for m in models
+            )
+            if coder_only:
+                for chat_candidate in ("llama3.2:3b", "llama3.2", "mistral:7b", "qwen2.5:3b"):
+                    if chat_candidate not in models:
+                        suggested_download = chat_candidate
+                        break
         self._send_json(
             200,
             {
@@ -1414,13 +1427,14 @@ class PlatformHandler(BaseHTTPRequestHandler):
         cancelled = run_manager.cancel(run_id, force=force)
         return self._send_json(200, {"ok": True, "cancelled": cancelled, "run_id": run_id, "force": force})
 
-    def _chat_history_for_ollama(self, workspace: Path, limit: int = 8) -> list:
-        """Keep chat context short — long histories + large models often drop the connection."""
+    def _chat_history_for_ollama(self, workspace: Path, limit: int = 10) -> list:
+        """Keep chat context short and drop coding-only refusals that poison the model."""
         messages = load_messages(workspace)
         if messages and messages[-1].get("role") == "user":
             messages = messages[:-1]
         history = []
-        for msg in messages[-limit:]:
+        # Read a wider window, then filter refusals.
+        for msg in messages[-(limit * 2) :]:
             role = str(msg.get("role") or "")
             text = str(msg.get("text") or "").strip()
             if not text:
@@ -1428,11 +1442,39 @@ class PlatformHandler(BaseHTTPRequestHandler):
             if role == "user":
                 history.append({"role": "user", "content": text[:1800]})
             elif role == "agent":
+                if is_coding_scope_refusal(text):
+                    continue
                 history.append({"role": "assistant", "content": text[:1800]})
-        return history
+        return history[-limit:]
+
+    def _complete_chat_answer(self, client, messages, model: str, system: str, on_chunk, cancel_check):
+        try:
+            return client.stream_chat(
+                messages,
+                model=model,
+                system=system,
+                temperature=0.7,
+                timeout=180,
+                on_chunk=on_chunk,
+                cancel_check=cancel_check,
+            )
+        except Exception as stream_exc:
+            msg = str(stream_exc).lower()
+            if "empty streaming" not in msg and "404" not in msg and "not found" not in msg:
+                raise
+            answer = client.chat(
+                messages,
+                model=model,
+                system=system,
+                temperature=0.7,
+                timeout=180,
+            )
+            if on_chunk and answer:
+                on_chunk(answer)
+            return answer
 
     def _handle_chat_stream(self) -> None:
-        """Fast conversational mode — no planner/tools loop."""
+        """Fast conversational mode — open topics + optional coding help."""
         data = self._read_json()
         prompt = str(data.get("prompt", "")).strip()
         if not prompt:
@@ -1495,7 +1537,6 @@ class PlatformHandler(BaseHTTPRequestHandler):
             client = OllamaClient(cfg)
 
             history = self._chat_history_for_ollama(workspace)
-            history.append({"role": "user", "content": prompt})
             memory_note = ""
             try:
                 from local_agent.memory import AgentMemory
@@ -1506,55 +1547,62 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     memory_note = f"\nContexto do projeto:\n{summary[:1200]}\n"
             except Exception:
                 pass
-            system = (
-                "Você é o Forge, um assistente conversacional completo e útil. "
-                "Pode falar sobre QUALQUER assunto: ideias, negócios, estudos, vida, "
-                "planejamento de produto, dúvidas gerais, brainstorming, etc. "
-                "Não restrinja a conversa a programação. Responda no idioma do usuário "
-                "(preferência: português), com clareza, empatia e objetividade.\n"
-                "Você também é forte em software (web, APIs, apps, várias tecnologias) "
-                "quando o tema pedir — mas só aprofunde código se fizer sentido.\n"
-                "Este é o modo Chat: converse e ajude a entender o problema; "
-                "NÃO edite arquivos daqui.\n"
-                "Quando o usuário quiser criar/alterar um app ou software de verdade, "
-                "oriente a usar Work / Executar código — o histórico deste chat "
-                "fica disponível como contexto para a implementação.\n"
-                "Se a conversa for exploração (ex.: negócio, público-alvo, fluxo), "
-                "ajude a esclarecer antes de sugerir código.\n"
-                f"Projeto vinculado (contexto opcional): {workspace.name}."
-                f"{memory_note}"
-            )
+            system = open_chat_system_prompt(workspace.name, memory_note)
+            messages = build_open_chat_messages(history, prompt, retry_nudge=False)
+
+            collected: List[str] = []
 
             def on_chunk(text: str) -> None:
                 if run_manager.is_cancelled(run_id):
                     return
+                collected.append(text)
                 self._send_sse({"type": "chat_chunk", "text": text})
 
-            try:
-                answer = client.stream_chat(
-                    history,
-                    model=model,
-                    system=system,
-                    temperature=0.65,
-                    timeout=180,
-                    on_chunk=on_chunk,
-                    cancel_check=lambda: run_manager.is_cancelled(run_id),
+            answer = self._complete_chat_answer(
+                client,
+                messages,
+                model,
+                system,
+                on_chunk,
+                lambda: run_manager.is_cancelled(run_id),
+            )
+
+            from ia_platform.conversations import general_chat_fallback_answer
+
+            # Coder models often refuse non-tech topics; escalate retries, then fall back.
+            if answer and is_coding_scope_refusal(answer) and not run_manager.is_cancelled(run_id):
+                self._send_sse(
+                    {
+                        "type": "chat_chunk",
+                        "text": "\n\n—\nVou responder sem limitar ao tema de programação:\n\n",
+                    }
                 )
-            except Exception as stream_exc:
-                msg = str(stream_exc).lower()
-                if "empty streaming" not in msg and "404" not in msg and "not found" not in msg:
-                    raise
-                # Retry once without relying on the failed stream path.
-                self._send_sse({"type": "chat_chunk", "text": ""})
-                answer = client.chat(
-                    history,
-                    model=model,
-                    system=system,
-                    temperature=0.65,
-                    timeout=180,
+                retry_messages = build_open_chat_messages([], prompt, retry_nudge=True)
+                answer = self._complete_chat_answer(
+                    client,
+                    retry_messages,
+                    model,
+                    system,
+                    on_chunk,
+                    lambda: run_manager.is_cancelled(run_id),
                 )
-                if answer:
-                    self._send_sse({"type": "chat_chunk", "text": answer})
+
+            if answer and is_coding_scope_refusal(answer) and not run_manager.is_cancelled(run_id):
+                framed = build_open_chat_messages([], prompt, completion_frame=True)
+                answer = self._complete_chat_answer(
+                    client,
+                    framed,
+                    model,
+                    system,
+                    on_chunk,
+                    lambda: run_manager.is_cancelled(run_id),
+                )
+
+            if answer and is_coding_scope_refusal(answer) and not run_manager.is_cancelled(run_id):
+                answer = general_chat_fallback_answer(prompt, model_name=model)
+                # Replace the streamed refusal so the UI shows a real open-topic answer.
+                self._send_sse({"type": "chat_replace", "text": answer})
+
             if run_manager.is_cancelled(run_id):
                 self._send_sse({"type": "cancelled", "run_id": run_id})
                 self._send_sse({"type": "done", "ok": False, "status": "CANCELLED", "mode": "chat", "run_id": run_id})
