@@ -16,10 +16,46 @@ Local Ollama-based coding agent for file creation, project scaffolding, and simp
 
 ## Requirements
 - Python 3.10+
-- [Ollama](https://ollama.com/) installed locally
-- A model available, for example `qwen3-coder:30b`
+- [Ollama](https://ollama.com/) (installed automatically by the setup script when possible)
+- Disk space for a coding model (default setup uses `qwen2.5-coder:7b`)
 
-## Quick start
+## One-command setup
+
+This installs Python deps, checks/installs Ollama, pulls a model, creates `sandbox/`, runs unit tests, and does a dry-run smoke test.
+
+**Windows (PowerShell):**
+
+```powershell
+powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
+```
+
+Or double-click / run:
+
+```bat
+scripts\setup.bat
+```
+
+**Linux / macOS:**
+
+```bash
+bash scripts/setup.sh
+```
+
+Useful options:
+
+```powershell
+# Windows: choose model / skip steps
+.\scripts\setup.ps1 -Model qwen2.5-coder:7b
+.\scripts\setup.ps1 -SkipSmoke -SkipTests
+```
+
+```bash
+# Linux/macOS
+bash scripts/setup.sh --model=qwen2.5-coder:7b
+bash scripts/setup.sh --skip-smoke --skip-tests
+```
+
+## Quick start (manual)
 
 ```bash
 # optional: install test tooling
@@ -29,7 +65,7 @@ python -m pip install -e ".[dev]"
 ollama serve
 
 # pull a model if needed
-ollama pull qwen3-coder:30b
+ollama pull qwen2.5-coder:7b
 
 # run the agent
 python ollama_agent.py "Create a file called demo.txt with the content hello"
