@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Set, Tuple
 from .config import AgentConfig
 from .logging_config import AgentLogger
 from .models import RiskLevel, ToolResult
+from .security import to_rel_path
 from .tool_registry import ToolRegistry, infer_tool_call_from_text, parse_tool_calls
 
 MUTATING_TOOLS = {
@@ -33,9 +34,12 @@ class Executor:
         self.read_files: Set[str] = set()
         self.step_diffs: List[str] = []
 
+    def _rel(self, path: str | None) -> str:
+        return to_rel_path(self.config.workspace, path)
+
     def mark_read(self, path: str) -> None:
         if path:
-            self.read_files.add(str(path))
+            self.read_files.add(self._rel(path))
 
     def mark_reads(self, paths: List[str]) -> None:
         for path in paths:
@@ -75,15 +79,16 @@ class Executor:
             if name in READ_TOOLS:
                 path = args.get("path") if isinstance(args, dict) else None
                 if path:
-                    self.read_files.add(str(path))
+                    self.read_files.add(self._rel(str(path)))
 
             # Enforce read-before-edit on existing files.
             if name in MUTATING_TOOLS:
                 path = args.get("path") if isinstance(args, dict) else None
                 if path:
-                    rel = str(path)
+                    rel = self._rel(str(path))
                     abs_path = self.config.workspace / rel
-                    if abs_path.exists() and rel not in self.read_files and rel not in self.created_files:
+                    already_known = rel in self.read_files or rel in self.created_files
+                    if abs_path.exists() and not already_known:
                         result = ToolResult(
                             ok=False,
                             error=f"Must read_file '{rel}' before editing. Read the file first, then retry.",
@@ -116,7 +121,7 @@ class Executor:
                 success=result.ok,
                 duration_ms=duration_ms,
             )
-            self._track(name, result)
+            self._track(name, result, args if isinstance(args, dict) else {})
 
             # Collect diff info for mutations.
             if name in MUTATING_TOOLS and result.ok and not result.dry_run:
@@ -136,19 +141,52 @@ class Executor:
                 return True
         return False
 
-    def _track(self, name: str, result: ToolResult) -> None:
+    def _track(self, name: str, result: ToolResult, args: Dict[str, Any]) -> None:
         data = result.data
         if name == "run_command" and data.get("command"):
             self.commands.append(str(data["command"]))
-        path = data.get("path")
-        files = data.get("files")
-        if name in {"write_file", "create_file", "create_multiple_files", "scaffold_project"} and result.ok and not result.dry_run:
-            if path:
-                self.created_files.append(str(path))
+        if not result.ok or result.dry_run:
+            return
+
+        def _add_created(raw: str | None) -> None:
+            if not raw:
+                return
+            rel = self._rel(raw)
+            self.created_files.append(rel)
+            self.read_files.add(rel)  # newly written files are known content
+
+        def _add_modified(raw: str | None) -> None:
+            if not raw:
+                return
+            rel = self._rel(raw)
+            self.modified_files.append(rel)
+            self.read_files.add(rel)
+
+        if name in {"write_file", "create_file", "create_directory"}:
+            _add_created(str(data.get("path") or args.get("path") or ""))
+        elif name == "create_multiple_files":
+            files = data.get("files")
             if isinstance(files, list):
-                self.created_files.extend(map(str, files))
-        if name in {"apply_patch", "replace_in_file", "edit_file", "append_file", "append_to_file", "move_file"} and result.ok and not result.dry_run:
-            if path:
-                self.modified_files.append(str(path))
-            if data.get("dst"):
-                self.modified_files.append(str(data["dst"]))
+                for item in files:
+                    _add_created(str(item))
+            elif isinstance(args.get("files"), list):
+                for entry in args["files"]:
+                    if isinstance(entry, dict) and entry.get("path"):
+                        _add_created(str(entry["path"]))
+        elif name == "scaffold_project":
+            files = data.get("files")
+            if isinstance(files, list):
+                for item in files:
+                    _add_created(str(item))
+            # Also mark common scaffold roots as known.
+            base = self._rel(str(data.get("path") or args.get("path") or "."))
+            if base and base != ".":
+                self.created_files.append(base)
+        elif name in {"apply_patch", "replace_in_file", "edit_file", "append_file", "append_to_file"}:
+            _add_modified(str(data.get("path") or args.get("path") or ""))
+        elif name == "move_file":
+            _add_modified(str(data.get("path") or args.get("path") or ""))
+            if data.get("dst") or args.get("dst"):
+                _add_modified(str(data.get("dst") or args.get("dst")))
+        elif name == "copy_file":
+            _add_created(str(data.get("dst") or args.get("dst") or ""))

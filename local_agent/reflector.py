@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any, Dict, List, Optional
 
+from .json_utils import loads_json_lenient
 from .models import ReflectionDecision, ReflectionStatus, RiskLevel, Task
 from .ollama_client import OllamaClient
 from .prompts import reflector_prompt
@@ -23,6 +24,7 @@ class Reflector:
         validation_summary: str,
         *,
         no_progress: bool = False,
+        no_progress_count: int = 0,
     ) -> ReflectionDecision:
         if task.attempts >= task.max_attempts:
             return ReflectionDecision(
@@ -34,9 +36,18 @@ class Reflector:
                 evidence=[f"attempts={task.attempts}"],
             )
         if no_progress:
+            if no_progress_count <= 2:
+                return ReflectionDecision(
+                    status=ReflectionStatus.RETRY,
+                    analysis="Repeated identical tool pattern — change approach before replanning",
+                    next_action="Use different tools/args, read more context, or split the edit",
+                    should_replan=False,
+                    risk_level=RiskLevel.MEDIUM,
+                    evidence=["repeated identical tool signature"],
+                )
             return ReflectionDecision(
                 status=ReflectionStatus.REPLAN,
-                analysis="No progress detected (repeated tool/error)",
+                analysis="No progress detected after repeated identical tool/error pattern",
                 next_action="Change strategy and replan remaining work",
                 should_replan=True,
                 risk_level=RiskLevel.MEDIUM,
@@ -54,24 +65,18 @@ class Reflector:
             return self._heuristic(task, tool_results, validation_summary)
 
     def _parse(self, text: str) -> Optional[Dict[str, Any]]:
-        content = text.strip()
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict) and "status" in data:
-                return data
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r"\{.*\}", content, re.S)
+        data = loads_json_lenient(text)
+        if isinstance(data, dict) and "status" in data:
+            return data
+        # Fallback greedy match for partially repaired blobs.
+        match = re.search(r"\{.*\}", text or "", re.S)
         if not match:
             return None
         try:
-            data = json.loads(match.group(0))
+            parsed = json.loads(match.group(0))
         except json.JSONDecodeError:
             return None
-        return data if isinstance(data, dict) and "status" in data else None
+        return parsed if isinstance(parsed, dict) and "status" in parsed else None
 
     def _from_dict(self, data: Dict[str, Any]) -> ReflectionDecision:
         status_raw = str(data.get("status", "continue")).lower()
@@ -99,8 +104,8 @@ class Reflector:
         if not failed:
             return ReflectionDecision(
                 status=ReflectionStatus.CONTINUE,
-                analysis="No failure signals in latest results",
-                next_action="Proceed to next task step",
+                analysis="No failure signals in latest results; more work may remain on this task",
+                next_action="Continue implementing remaining requirements for this task",
             )
         return ReflectionDecision(
             status=ReflectionStatus.RETRY,

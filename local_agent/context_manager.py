@@ -113,10 +113,26 @@ class ContextManager:
 
         # If still nothing, include key config/entry files.
         if not wanted:
+            entrypoints = {
+                "README.md",
+                "setup.py",
+                "main.py",
+                "app.py",
+                "index.js",
+                "index.html",
+                "package.json",
+                "vite.config.js",
+                "vite.config.ts",
+                "src/main.jsx",
+                "src/main.tsx",
+                "src/App.jsx",
+                "src/App.tsx",
+                "src/index.css",
+            }
             for f in index.files:
-                if f.is_config or f.path in {"README.md", "setup.py", "main.py", "app.py", "index.js"}:
+                if f.is_config or f.path in entrypoints:
                     wanted.append(f.path)
-                if len(wanted) >= 5:
+                if len(wanted) >= 8:
                     break
 
         chunks: List[str] = []

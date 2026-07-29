@@ -801,7 +801,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             model=models["coder"],
             planner_model=models["planner"],
             reflection_model=models["reflection"],
-            max_steps=int(data.get("max_steps") or 12),
+            max_steps=int(data.get("max_steps") or 20),
             dry_run=bool(data.get("dry_run")),
             plan_only=bool(data.get("plan_only")),
             verbose=True,
@@ -1174,6 +1174,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
             config = self._build_agent_config(data, workspace, models)
             config.run_id = run_id
+            config.cancel_check = lambda: run_manager.is_cancelled(run_id)
             report = CodingAgent(config).run(prompt, conversation_context=conversation)
             self._send_json(200, self._finalize_run(workspace, project_id, report, run_id=run_id))
         except Exception as exc:

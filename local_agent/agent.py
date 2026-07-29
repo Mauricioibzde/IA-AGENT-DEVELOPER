@@ -37,12 +37,13 @@ class CodingAgent:
         self.context_manager = ContextManager(config)
         self.validator = Validator(config, self.index)
         self.seen_signatures: Set[str] = set()
+        self.signature_hits: Dict[str, int] = {}
         self.analyzed_files: List[str] = []
         self.errors: List[str] = []
         self.fixed_errors: List[str] = []
         self.completed_tasks: List[str] = []
         self.all_validations: List[ValidationResult] = []
-
+        self._deps_ensured = False
     def _event(self, kind: str, **fields: Any) -> None:
         if not self.event_sink:
             return
@@ -243,10 +244,11 @@ class CodingAgent:
                     task.status = TaskStatus.PENDING
                 continue
 
-            # Detect no-progress loops.
+            # Detect no-progress loops (identical tool+args signatures).
             signature = self._signature(task.id, calls)
-            no_progress = signature in self.seen_signatures
-            pending_no_progress = no_progress
+            hit_count = self.signature_hits.get(signature, 0) + 1
+            self.signature_hits[signature] = hit_count
+            no_progress = hit_count >= 2
             self.seen_signatures.add(signature)
 
             # Execute tools.
@@ -302,18 +304,36 @@ class CodingAgent:
             # Auto-validate after filesystem writes.
             validation_results: List[ValidationResult] = []
 
+            # Install Node deps once before npm validations so React builds can succeed.
+            needs_npm = False
+            if task.validation_commands:
+                needs_npm = any("npm" in c or "vite" in c or "npx" in c for c in task.validation_commands)
+            elif wrote_files and self.index.package_scripts:
+                needs_npm = True
+            if needs_npm and not self._deps_ensured:
+                install_result = self.validator.ensure_node_dependencies()
+                self._deps_ensured = True
+                if install_result is not None:
+                    validation_results.append(install_result)
+                    self._event(
+                        "validation",
+                        count=1,
+                        ok=1 if install_result.success else 0,
+                        summary=f"npm install: {'ok' if install_result.success else 'fail'}",
+                    )
+
             if task.validation_commands:
                 self._event("validation_start", commands=task.validation_commands[:3])
-                validation_results = [self.validator.run_one(cmd) for cmd in task.validation_commands]
+                validation_results.extend([self.validator.run_one(cmd) for cmd in task.validation_commands])
             elif wrote_files:
                 quick_checks = self.validator.discover_commands()[:2]
                 if quick_checks:
                     self._event("validation_start", commands=quick_checks)
-                    validation_results = [self.validator.run_one(cmd) for cmd in quick_checks]
+                    validation_results.extend([self.validator.run_one(cmd) for cmd in quick_checks])
 
             if step_had_failures and not validation_results:
                 self._event("validation_start", commands=["auto"])
-                validation_results = self.validator.run_all()[:2]
+                validation_results.extend(self.validator.run_all()[:2])
 
             self.all_validations.extend(validation_results)
             validation_summary = self.validator.summarize(validation_results)
@@ -327,7 +347,7 @@ class CodingAgent:
             last_validation = validation_summary
             for item in validation_results:
                 if not item.success and item.category == "introduced":
-                    self.errors.append(f"{item.command}: {item.stderr[:200]}")
+                    self.errors.append(f"{item.command}: {item.stderr[:200] or item.stdout[:200]}")
 
             # Reflect.
             decision = self.reflector.reflect(
@@ -335,6 +355,7 @@ class CodingAgent:
                 last_results_json[:4000],
                 validation_summary,
                 no_progress=no_progress,
+                no_progress_count=hit_count if no_progress else 0,
             )
             self.logger.info("reflection", message=f"{decision.status.value}: {decision.analysis[:120]}")
             self.memory.add_event("reflection", decision.analysis[:300], {"status": decision.status.value})
@@ -371,10 +392,8 @@ class CodingAgent:
                 continue
 
             if decision.status == ReflectionStatus.CONTINUE:
-                if all_ok and validations_ok:
-                    task.status = TaskStatus.COMPLETED
-                    self.completed_tasks.append(task.title)
-                elif task.attempts >= task.max_attempts:
+                # CONTINUE means more work remains on this task — never mark completed.
+                if task.attempts >= task.max_attempts:
                     task.status = TaskStatus.FAILED
                 else:
                     task.status = TaskStatus.PENDING
@@ -414,9 +433,12 @@ class CodingAgent:
 
     def _repair_tool_calls(self, model_text: str) -> str:
         try:
+            tool_names = ", ".join(sorted(t.name for t in self.registry.list_tools())[:40])
             return self.client.complete(
                 "Your previous response was not valid JSON tool call(s).\n"
-                "Return ONLY one JSON object or JSON array of tool calls. No markdown, no prose.\n\n"
+                "Return ONLY one JSON object or JSON array of tool calls. No markdown, no prose.\n"
+                'Schema: {"tool":"<name>","args":{...}} or [{"tool":"...","args":{...}}, ...]\n'
+                f"Allowed tools include: {tool_names}\n\n"
                 f"Previous output:\n{model_text[:2500]}",
                 model=self.config.coder_model,
                 temperature=0,
@@ -426,32 +448,77 @@ class CodingAgent:
 
     def _format_tool_results(self, results: List[Dict[str, object]]) -> str:
         compact = []
+        budget = 3500
+        used = 0
         for item in results:
             res = item.get("result", {})
-            entry = {"tool": item.get("tool"), "ok": res.get("ok")}
+            if not isinstance(res, dict):
+                continue
+            entry: Dict[str, object] = {"tool": item.get("tool"), "ok": res.get("ok")}
             if res.get("error"):
                 entry["error"] = str(res.get("error"))[:400]
             if res.get("path"):
                 entry["path"] = res.get("path")
             if res.get("stdout"):
-                entry["stdout"] = str(res.get("stdout"))[:400]
+                entry["stdout"] = str(res.get("stdout"))[-800:]
             if res.get("stderr"):
-                entry["stderr"] = str(res.get("stderr"))[:400]
+                entry["stderr"] = str(res.get("stderr"))[-800:]
             if res.get("diff"):
                 entry["diff"] = str(res.get("diff"))[:600]
+            # Preserve payloads the model needs for the next step.
+            if res.get("content") is not None:
+                entry["content"] = str(res.get("content"))[:2500]
+            if res.get("items") is not None:
+                items = res.get("items")
+                if isinstance(items, list):
+                    entry["items"] = items[:80]
+                else:
+                    entry["items"] = items
+            if res.get("matches") is not None:
+                matches = res.get("matches")
+                if isinstance(matches, list):
+                    entry["matches"] = matches[:30]
+                else:
+                    entry["matches"] = matches
+            if res.get("files") is not None:
+                files = res.get("files")
+                if isinstance(files, list):
+                    entry["files"] = [str(f) for f in files[:40]]
+                else:
+                    entry["files"] = files
+            if res.get("total_lines") is not None:
+                entry["total_lines"] = res.get("total_lines")
+            if res.get("answer") is not None:
+                entry["answer"] = str(res.get("answer"))[:500]
+            blob = json.dumps(entry, ensure_ascii=False)
+            if used + len(blob) > budget and compact:
+                entry = {
+                    "tool": entry.get("tool"),
+                    "ok": entry.get("ok"),
+                    "error": entry.get("error"),
+                    "path": entry.get("path"),
+                    "truncated": True,
+                }
             compact.append(entry)
+            used += len(json.dumps(entry, ensure_ascii=False))
         return json.dumps(compact, ensure_ascii=False, indent=2)
 
     def _paths_from_results(self, results: List[Dict[str, object]]) -> List[str]:
+        from .security import to_rel_path
+
         paths: List[str] = []
         for item in results:
             res = item.get("result", {})
             if isinstance(res, dict):
                 if res.get("path"):
-                    paths.append(str(res["path"]))
+                    paths.append(to_rel_path(self.config.workspace, str(res["path"])))
                 if res.get("dst"):
-                    paths.append(str(res["dst"]))
-        return paths
+                    paths.append(to_rel_path(self.config.workspace, str(res["dst"])))
+                files = res.get("files")
+                if isinstance(files, list):
+                    for f in files[:40]:
+                        paths.append(to_rel_path(self.config.workspace, str(f)))
+        return list(dict.fromkeys(paths))
 
     def _rollback_recent_changes(self) -> None:
         for path in reversed(self.executor.modified_files[-5:]):
@@ -473,12 +540,24 @@ class CodingAgent:
         normalized = []
         for call in calls:
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            arg_digest = ""
+            if isinstance(args, dict):
+                # Hash arg values so different content on same path is not "stuck".
+                try:
+                    raw = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+                except TypeError:
+                    raw = str(sorted(args.items()))
+                # Cap huge content payloads but keep enough to distinguish edits.
+                if len(raw) > 1200:
+                    raw = raw[:600] + f"...len={len(raw)}..." + raw[-200:]
+                arg_digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
             normalized.append(
                 {
                     "task": task_id,
                     "tool": call.get("tool"),
-                    "path": args.get("path"),
-                    "keys": sorted(args.keys()) if isinstance(args, dict) else [],
+                    "path": args.get("path") if isinstance(args, dict) else None,
+                    "command": args.get("command") if isinstance(args, dict) else None,
+                    "arg_digest": arg_digest,
                 }
             )
         blob = json.dumps(normalized, sort_keys=True, ensure_ascii=False)

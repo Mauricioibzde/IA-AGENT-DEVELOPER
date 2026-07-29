@@ -6,6 +6,7 @@ import json
 import re
 from typing import Any, Dict, Iterable, List, Optional
 
+from .json_utils import loads_json_lenient, sanitize_json_text, strip_code_fences
 from .models import RiskLevel, ToolDefinition, ToolResult
 
 
@@ -44,7 +45,6 @@ class ToolRegistry:
         validated: Dict[str, Any] = {}
         for key, value in args.items():
             if properties and key not in properties:
-                # Allow unknown keys lightly, but keep them.
                 validated[key] = value
                 continue
             prop = properties.get(key, {}) if isinstance(properties, dict) else {}
@@ -84,31 +84,18 @@ def parse_tool_call(payload: str | Dict[str, Any] | Any) -> tuple[str | None, Di
         return tool_name, {}
 
     if isinstance(payload, str):
-        content = payload.strip()
+        content = sanitize_json_text(payload)
         if not content:
             return None, {}
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
-        try:
-            parsed = json.loads(content)
-        except json.JSONDecodeError:
-            match = re.search(r"\{.*\}", content, re.S)
-            if not match:
-                return None, {}
-            try:
-                parsed = json.loads(match.group(0))
-            except json.JSONDecodeError:
-                return None, {}
+        parsed = loads_json_lenient(content)
+        if parsed is None:
+            return None, {}
         return parse_tool_call(parsed)
     return None, {}
 
 
 def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
-    content = text.strip()
-    if content.startswith("```"):
-        content = re.sub(r"^```(?:json)?\s*", "", content)
-        content = re.sub(r"\s*```$", "", content)
+    content = strip_code_fences(text)
 
     def _from_payload(payload: Any) -> List[Dict[str, Any]]:
         if isinstance(payload, list):
@@ -131,21 +118,11 @@ def parse_tool_calls(text: str) -> List[Dict[str, Any]]:
                 return [{"tool": tool_name, "args": args}]
         return []
 
-    try:
-        payload = json.loads(content)
+    payload = loads_json_lenient(content)
+    if payload is not None:
         parsed = _from_payload(payload)
         if parsed:
             return parsed
-    except json.JSONDecodeError:
-        pass
-
-    match = re.search(r"(\[.*\]|\{.*\})", content, re.S)
-    if match:
-        try:
-            payload = json.loads(match.group(0))
-            return _from_payload(payload)
-        except json.JSONDecodeError:
-            pass
     return []
 
 

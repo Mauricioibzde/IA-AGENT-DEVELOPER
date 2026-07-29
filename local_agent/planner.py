@@ -184,23 +184,9 @@ class Planner:
                         task.validation_commands.append("python -m pytest -q --tb=short")
 
     def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
-        content = text.strip()
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict) and "tasks" in data:
-                return data
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r"\{.*\}", content, re.S)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
+        from .json_utils import loads_json_lenient
+
+        data = loads_json_lenient(text)
         if isinstance(data, dict) and "tasks" in data:
             return data
         return None

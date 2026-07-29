@@ -35,7 +35,7 @@ class AgentConfig:
     coder_model: str = field(default_factory=lambda: _env("OLLAMA_CODER_MODEL", "") or _env("OLLAMA_MODEL", "qwen2.5-coder:7b"))
     reflection_model: str = field(default_factory=lambda: _env("OLLAMA_REFLECTION_MODEL", "") or _env("OLLAMA_MODEL", "qwen2.5-coder:7b"))
     ollama_host: str = field(default_factory=lambda: _normalize_host(_env("OLLAMA_HOST", "http://127.0.0.1:11434")))
-    max_steps: int = field(default_factory=lambda: _env_int("AGENT_MAX_STEPS", 12))
+    max_steps: int = field(default_factory=lambda: _env_int("AGENT_MAX_STEPS", 20))
     max_task_attempts: int = field(default_factory=lambda: _env_int("AGENT_MAX_TASK_ATTEMPTS", 3))
     max_model_calls: int = field(default_factory=lambda: _env_int("AGENT_MAX_MODEL_CALLS", 40))
     max_commands: int = field(default_factory=lambda: _env_int("AGENT_MAX_COMMANDS", 30))

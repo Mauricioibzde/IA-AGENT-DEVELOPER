@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 import shutil
 import time
 from typing import Dict, List, Optional, Set
@@ -48,6 +49,30 @@ class Validator:
         for command in self.discover_commands(preferred):
             results.append(self.run_one(command))
         return results
+
+    def ensure_node_dependencies(self) -> Optional[ValidationResult]:
+        """Run npm install once when package.json exists without node_modules."""
+        pkg = self.config.workspace / "package.json"
+        modules = self.config.workspace / "node_modules"
+        if not pkg.is_file() or modules.is_dir():
+            return None
+        if shutil.which("npm") is None:
+            return ValidationResult(
+                command="npm install",
+                success=False,
+                exit_code=127,
+                stdout="",
+                stderr="npm not installed",
+                duration_seconds=0.0,
+                category="missing_tool",
+            )
+        # Allow a longer install budget without permanently raising command_timeout.
+        previous = self.config.command_timeout
+        try:
+            self.config.command_timeout = max(previous, 180)
+            return self.run_one("npm install")
+        finally:
+            self.config.command_timeout = previous
 
     def run_one(self, command: str) -> ValidationResult:
         if self.command_count >= self.config.max_commands:
@@ -101,14 +126,37 @@ class Validator:
             category=category,
         )
 
+    @staticmethod
+    def _tail(text: str, lines: int = 40) -> str:
+        parts = (text or "").splitlines()
+        if len(parts) <= lines:
+            return "\n".join(parts)
+        return "\n".join(parts[-lines:])
+
+    @staticmethod
+    def _extract_diagnostics(text: str) -> List[str]:
+        hits: List[str] = []
+        for line in (text or "").splitlines():
+            if re.search(r"error|ERROR|FAIL|failed|Cannot find|Module not found|TS\d+|SyntaxError", line):
+                hits.append(line.strip()[:240])
+            elif re.search(r"[\w./\\-]+\.(py|js|jsx|ts|tsx|css|html):\d+", line):
+                hits.append(line.strip()[:240])
+            if len(hits) >= 8:
+                break
+        return hits
+
     def summarize(self, results: List[ValidationResult]) -> str:
         if not results:
             return "No validations executed."
         lines = []
         for item in results:
             mark = "OK" if item.success else "FAIL"
+            combined = "\n".join(filter(None, [item.stdout, item.stderr]))
+            diag = self._extract_diagnostics(combined)
+            tail = self._tail(combined, 30)
+            detail = "; ".join(diag) if diag else tail[:500]
             lines.append(
-                f"[{mark}/{item.category}] {item.command} exit={item.exit_code} "
-                f"stderr={item.stderr[:200]}"
+                f"[{mark}/{item.category}] {item.command} exit={item.exit_code}\n"
+                f"  diagnostic: {detail[:700] or '(empty output)'}"
             )
         return "\n".join(lines)
