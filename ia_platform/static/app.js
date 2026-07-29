@@ -28,6 +28,9 @@
     ollamaOk: false,
     previewDevice: "desktop",
     healthInFlight: false,
+    setupInFlight: null,
+    pendingPrompt: null,
+    ollamaInstalled: true,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -96,7 +99,39 @@
     previewViewport: $("previewViewport"),
     deviceSwitcher: $("deviceSwitcher"),
     ollamaOfflineBanner: $("ollamaOfflineBanner"),
+    ollamaBannerTitle: $("ollamaBannerTitle"),
+    ollamaOfflineText: $("ollamaOfflineText"),
+    btnAutoSetup: $("btnAutoSetup"),
+    setupModal: $("setupModal"),
+    setupStatus: $("setupStatus"),
+    setupBarFill: $("setupBarFill"),
   };
+
+  function isModelInstalled(name, installed) {
+    if (!name) return false;
+    const list = installed || state.models || [];
+    if (list.includes(name)) return true;
+    const base = String(name).split(":")[0];
+    return list.some((m) => m.split(":")[0] === base);
+  }
+
+  function showSetupModal(message, percent) {
+    els.setupModal?.classList.remove("hidden");
+    if (message && els.setupStatus) els.setupStatus.textContent = message;
+    if (els.setupBarFill) {
+      els.setupBarFill.style.width = percent != null ? `${percent}%` : "15%";
+    }
+  }
+
+  function hideSetupModal() {
+    els.setupModal?.classList.add("hidden");
+    if (els.setupBarFill) els.setupBarFill.style.width = "0%";
+  }
+
+  function updateSetupModal(message, percent) {
+    if (message && els.setupStatus) els.setupStatus.textContent = message;
+    if (percent != null && els.setupBarFill) els.setupBarFill.style.width = `${percent}%`;
+  }
 
   function getSelectedModel() {
     const value = els.modelSelect?.value || "__auto__";
@@ -223,19 +258,116 @@
   }
 
   function updateOllamaOfflineUI() {
-    els.ollamaOfflineBanner?.classList.toggle("hidden", state.ollamaOk);
+    const offline = !state.ollamaOk;
+    els.ollamaOfflineBanner?.classList.toggle("hidden", !offline && state.models.length > 0);
+    if (els.ollamaBannerTitle) {
+      els.ollamaBannerTitle.textContent = state.ollamaInstalled === false
+        ? "Ollama não instalado"
+        : "Ollama offline";
+    }
+    if (els.ollamaOfflineText) {
+      if (state.ollamaInstalled === false) {
+        els.ollamaOfflineText.textContent =
+          "Instale o Ollama em ollama.com e reinicie a aplicação. Depois clique em Configurar automaticamente.";
+      } else if (!state.models.length) {
+        els.ollamaOfflineText.textContent =
+          "Nenhum modelo instalado. Clique abaixo para baixar o recomendado para o seu hardware.";
+      } else {
+        els.ollamaOfflineText.textContent =
+          "Clique abaixo para iniciar o Ollama e baixar o modelo recomendado automaticamente.";
+      }
+    }
+    if (els.btnAutoSetup) {
+      els.btnAutoSetup.disabled = !!state.setupInFlight || state.ollamaInstalled === false;
+    }
     document.querySelectorAll('[data-action="pull"]').forEach((btn) => {
       const model = btn.dataset.model;
       const entry = (state.modelRecommendations?.catalog || []).find((e) => e.ollama_name === model);
       const installed = entry?.installed;
       if (!state.ollamaOk) {
-        btn.disabled = true;
-        btn.title = "Ollama offline — execute ollama serve";
+        btn.disabled = state.ollamaInstalled === false;
+        btn.title = state.ollamaInstalled === false
+          ? "Instale o Ollama primeiro"
+          : "Clique em Configurar automaticamente ou aguarde";
       } else {
         btn.disabled = !!installed;
         btn.removeAttribute("title");
       }
     });
+  }
+
+  async function ensureOllamaRunning(showProgress = false) {
+    if (state.ollamaOk) return true;
+    if (showProgress) showSetupModal("Iniciando Ollama...");
+    try {
+      const res = await fetch("/api/ollama/ensure", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const data = await res.json().catch(() => ({}));
+      state.ollamaInstalled = data.installed !== false;
+      if (!res.ok || !data.ok) {
+        if (showProgress) updateSetupModal(data.error || "Não foi possível iniciar o Ollama.");
+        state.ollamaOk = false;
+        updateOllamaOfflineUI();
+        return false;
+      }
+      if (showProgress) updateSetupModal(data.message || "Ollama pronto.", 40);
+      await checkHealth();
+      return state.ollamaOk;
+    } catch (e) {
+      if (showProgress) updateSetupModal("Erro: " + e.message);
+      return false;
+    }
+  }
+
+  function getRecommendedModelName() {
+    return (
+      state.modelRecommendations?.primary?.ollama_name ||
+      state.recommendedModel ||
+      null
+    );
+  }
+
+  async function ensureEnvironment(options = {}) {
+    const { pullRecommended = false, showProgress = true } = options;
+    if (state.setupInFlight) return state.setupInFlight;
+
+    const task = (async () => {
+      const ollamaReady = await ensureOllamaRunning(showProgress);
+      if (!ollamaReady) return false;
+
+      try {
+        await loadModelRecommendations();
+      } catch {
+        /* health may still be enough */
+      }
+
+      const rec = getRecommendedModelName();
+      const needsModel = !state.models.length || (rec && !isModelInstalled(rec, state.models));
+
+      if (pullRecommended && needsModel && rec) {
+        if (showProgress) updateSetupModal(`Baixando modelo ${rec}...`, 55);
+        const pulled = await pullModel(rec, { showProgress: showProgress, autoConfigure: true });
+        if (!pulled) return false;
+        await checkHealth();
+      } else if (rec && isModelInstalled(rec, state.models)) {
+        setModelSelection(rec);
+        if (els.modelHint) els.modelHint.classList.add("hidden");
+      }
+
+      updateOllamaOfflineUI();
+      return state.ollamaOk && state.models.length > 0;
+    })();
+
+    state.setupInFlight = task;
+    try {
+      return await task;
+    } finally {
+      state.setupInFlight = null;
+      if (showProgress) hideSetupModal();
+    }
   }
 
   async function clearChat() {
@@ -318,7 +450,7 @@
       <p class="model-meta">Ollama: <code>${escapeHtml(entry.ollama_name)}</code> · ~${entry.size_gb} GB · RAM ${entry.ram_gb} GB · VRAM ${entry.vram_gb} GB</p>
       <div class="model-actions">
         <button type="button" class="btn btn-primary btn-sm" data-action="use" data-model="${escapeHtml(entry.ollama_name)}">Usar</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${escapeHtml(entry.ollama_name)}" ${entry.installed || !state.ollamaOk ? "disabled" : ""}${!state.ollamaOk && !entry.installed ? ' title="Ollama offline — execute ollama serve"' : ""}>Baixar</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${escapeHtml(entry.ollama_name)}" ${entry.installed ? "disabled" : ""}>Baixar</button>
       </div>
     `;
   }
@@ -333,7 +465,7 @@
           closeModelsModal();
           return;
         }
-        if (btn.dataset.action === "pull") pullModel(model);
+        if (btn.dataset.action === "pull") pullModel(model, { autoConfigure: true });
       });
     });
   }
@@ -374,19 +506,30 @@
     els.modelsModal.classList.add("hidden");
   }
 
-  async function pullModel(model) {
-    if (state.pullingModel) return;
-    if (!state.ollamaOk) {
-      els.pullProgress.classList.remove("hidden");
-      els.pullStatus.textContent = "Ollama offline — execute 'ollama serve' em outro terminal e tente novamente.";
-      updateOllamaOfflineUI();
-      return;
-    }
-    state.pullingModel = true;
-    els.pullProgress.classList.remove("hidden");
-    els.pullBarFill.style.width = "0%";
-    els.pullStatus.textContent = `Iniciando download de ${model}...`;
+  async function pullModel(model, options = {}) {
+    const { showProgress = true, autoConfigure = false } = options;
+    if (state.pullingModel) return false;
 
+    if (!state.ollamaOk) {
+      const ok = await ensureOllamaRunning(showProgress);
+      if (!ok) {
+        if (showProgress) {
+          els.pullProgress?.classList.remove("hidden");
+          els.pullStatus.textContent = "Ollama offline — use Configurar automaticamente.";
+        }
+        return false;
+      }
+    }
+
+    state.pullingModel = true;
+    if (showProgress) {
+      els.pullProgress?.classList.remove("hidden");
+      els.pullBarFill.style.width = "0%";
+      els.pullStatus.textContent = `Iniciando download de ${model}...`;
+    }
+    if (options.showProgress) updateSetupModal(`Baixando ${model}...`, 60);
+
+    let success = false;
     try {
       const res = await fetch("/api/models/pull/stream", {
         method: "POST",
@@ -396,9 +539,11 @@
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));
         if (res.status === 503 || errData.ollama_offline) {
+          const started = await ensureOllamaRunning(showProgress);
+          if (started) return pullModel(model, options);
           state.ollamaOk = false;
           updateOllamaOfflineUI();
-          throw new Error(errData.error || "Ollama offline — execute 'ollama serve' em outro terminal.");
+          throw new Error(errData.error || "Ollama offline.");
         }
         throw new Error(errData.error || "Falha ao iniciar download");
       }
@@ -418,12 +563,24 @@
           if (!line) continue;
           const ev = JSON.parse(line.slice(6));
           if (ev.type === "progress") {
-            if (ev.percent != null) els.pullBarFill.style.width = `${ev.percent}%`;
-            els.pullStatus.textContent = ev.status || `Baixando ${model}...`;
+            if (ev.percent != null) {
+              if (showProgress) els.pullBarFill.style.width = `${ev.percent}%`;
+              if (options.showProgress) updateSetupModal(ev.status || `Baixando ${model}...`, Math.max(60, ev.percent));
+            }
+            if (showProgress) els.pullStatus.textContent = ev.status || `Baixando ${model}...`;
           }
           if (ev.type === "done") {
-            els.pullBarFill.style.width = "100%";
-            els.pullStatus.textContent = ev.ok ? `Modelo ${model} pronto!` : `Falha: ${ev.error || "desconhecido"}`;
+            success = !!ev.ok;
+            if (showProgress) els.pullBarFill.style.width = "100%";
+            if (showProgress) {
+              els.pullStatus.textContent = ev.ok ? `Modelo ${model} pronto!` : `Falha: ${ev.error || "desconhecido"}`;
+            }
+            if (options.showProgress) {
+              updateSetupModal(
+                ev.ok ? `Modelo ${model} pronto!` : `Falha: ${ev.error || "desconhecido"}`,
+                ev.ok ? 100 : undefined
+              );
+            }
           }
           if (ev.type === "error") {
             if (ev.ollama_offline) {
@@ -436,11 +593,19 @@
       }
       await checkHealth();
       await loadModelRecommendations();
+      if (success && autoConfigure) {
+        setModelSelection(model);
+        applyRecommendedModel(model, state.models);
+        if (els.modelHint) els.modelHint.classList.add("hidden");
+      }
     } catch (e) {
-      els.pullStatus.textContent = "Erro: " + e.message;
+      if (showProgress) els.pullStatus.textContent = "Erro: " + e.message;
+      if (options.showProgress) updateSetupModal("Erro: " + e.message);
+      success = false;
     } finally {
       state.pullingModel = false;
     }
+    return success;
   }
 
   // ── Projects ──
@@ -762,17 +927,18 @@
     const prompt = els.promptInput.value.trim();
     if (!prompt || state.running || !state.current) return;
 
-    if (!state.ollamaOk) {
-      addMessage("Ollama offline. Abra um terminal e execute: ollama serve", "system");
+    const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
+    if (!ready) {
+      addMessage(
+        "Ambiente não configurado. Use Modelos IA → Configurar automaticamente (Ollama + modelo recomendado).",
+        "system"
+      );
       openModelsModal();
-      return;
-    }
-    if (!state.models.length) {
-      addMessage("Nenhum modelo instalado. Abra Modelos IA para baixar um modelo coder.", "system");
-      openModelsModal();
+      state.pendingPrompt = prompt;
       return;
     }
 
+    state.pendingPrompt = null;
     addMessage(prompt, "user");
     els.promptInput.value = "";
     updateChatHeroVisibility();
@@ -874,21 +1040,37 @@
         agentEl.textContent = "Cancelando...";
         agentEl.classList.add("error");
       } else if (e.status === 503 || e.data?.ollama_offline) {
+        const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
+        if (ready) {
+          els.promptInput.value = prompt;
+          state.running = false;
+          removeMessage(agentEl);
+          removeMessage(progressEl);
+          return sendPrompt();
+        }
         state.ollamaOk = false;
         updateOllamaOfflineUI();
-        const err = e.message || "Ollama offline — execute 'ollama serve' em outro terminal.";
+        const err = e.message || "Ollama offline.";
         agentEl.textContent = "Erro: " + err;
         agentEl.classList.add("error");
-        addMessage("Depois de iniciar o Ollama, recarregue a página ou aguarde o status na sidebar.", "system");
         openModelsModal();
       } else {
         const err = "Erro: " + e.message;
         agentEl.textContent = err;
         agentEl.classList.add("error");
         if (e.data?.missing_model) {
-          addMessage(`Modelo ausente: ${e.data.model}. Abra Modelos IA para baixar.`, "system");
+          addMessage(`Modelo ausente: ${e.data.model}. Baixando automaticamente...`, "system");
           openModelsModal();
-          if (e.data.model && state.ollamaOk) pullModel(e.data.model);
+          if (e.data.model) {
+            const pulled = await pullModel(e.data.model, { autoConfigure: true, showProgress: true });
+            if (pulled) {
+              els.promptInput.value = prompt;
+              state.running = false;
+              removeMessage(agentEl);
+              removeMessage(progressEl);
+              return sendPrompt();
+            }
+          }
         }
         await persistMessage("agent", err).catch(() => {});
       }
@@ -1303,6 +1485,19 @@
 
   els.btnDeploy.addEventListener("click", runDeploy);
   els.btnModels.addEventListener("click", openModelsModal);
+  els.btnAutoSetup?.addEventListener("click", async () => {
+    els.btnAutoSetup.disabled = true;
+    const ok = await ensureEnvironment({ pullRecommended: true, showProgress: true });
+    els.btnAutoSetup.disabled = false;
+    if (ok) {
+      updateOllamaOfflineUI();
+      if (state.pendingPrompt && state.current) {
+        els.promptInput.value = state.pendingPrompt;
+        state.pendingPrompt = null;
+        sendPrompt();
+      }
+    }
+  });
   els.btnCloseModels.addEventListener("click", closeModelsModal);
   els.modelsModal.addEventListener("click", (e) => {
     if (e.target === els.modelsModal && !state.pullingModel) closeModelsModal();
@@ -1367,6 +1562,9 @@
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);
+    ensureEnvironment({ pullRecommended: true, showProgress: true }).catch(() => {
+      openModelsModal();
+    });
     try {
       await loadProjects();
       if (state.projects.length) {

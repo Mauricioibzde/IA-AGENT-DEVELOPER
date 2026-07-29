@@ -949,7 +949,15 @@ body {
   font-size: 0.82rem;
   margin-bottom: 14px;
   line-height: 1.45;
+  display: flex;
+  flex-direction: column;
+  gap: 10px;
 }
+
+.ollama-offline-banner .btn { align-self: flex-start; }
+
+.setup-modal { max-width: 420px; text-align: center; }
+.setup-subtitle { color: var(--muted); font-size: 0.85rem; margin: 8px 0 16px; }
 
 .ollama-offline-banner code {
   background: rgba(0, 0, 0, 0.3);

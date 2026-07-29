@@ -25,6 +25,7 @@ from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
 from ia_platform.model_catalog import recommend_models, resolve_model_for_run, resolve_models_for_run
 from ia_platform.ollama_models import OllamaModelManager
+from ia_platform.ollama_service import ollama_service
 from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
 
@@ -389,6 +390,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_create_project()
         if path == "/api/models/pull/stream":
             return self._handle_model_pull_stream()
+        if path == "/api/ollama/ensure":
+            return self._handle_ollama_ensure()
         project_id, sub = _parse_project_route(path)
         if project_id and sub == "chat":
             return self._handle_post_chat(project_id)
@@ -407,6 +410,41 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
     def _ollama_manager(self) -> OllamaModelManager:
         return OllamaModelManager(self._ollama_host())
+
+    def _ensure_ollama_online(self) -> Optional[Dict[str, Any]]:
+        """Try to reach Ollama; auto-start local daemon when possible."""
+        from local_agent.config import AgentConfig
+        from local_agent.ollama_client import OllamaClient
+
+        host = self._ollama_host()
+        cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
+        if OllamaClient(cfg).check_available(timeout=2):
+            return None
+        result = ollama_service.ensure_running(host)
+        if result.get("ok"):
+            return None
+        return result
+
+    def _handle_ollama_ensure(self) -> None:
+        from local_agent.config import AgentConfig
+        from local_agent.ollama_client import OllamaClient
+
+        host = self._ollama_host()
+        cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
+        if OllamaClient(cfg).check_available(timeout=2):
+            return self._send_json(
+                200,
+                {
+                    "ok": True,
+                    "ollama": True,
+                    "started": False,
+                    "installed": True,
+                    "message": "Ollama já está online.",
+                },
+            )
+        result = ollama_service.ensure_running(host)
+        status = 200 if result.get("ok") else (503 if result.get("installed", True) else 404)
+        return self._send_json(status, result)
 
     def _handle_health(self) -> None:
         from local_agent.config import AgentConfig
@@ -455,12 +493,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
         from local_agent.ollama_client import OllamaClient
 
         cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
-        if not OllamaClient(cfg).check_available():
+        offline = self._ensure_ollama_online()
+        if offline:
             return self._send_json(
                 503,
                 {
-                    "error": "Ollama offline. Execute 'ollama serve' em outro terminal e tente novamente.",
+                    "error": offline.get("error")
+                    or "Ollama offline. Instale ou reinicie o Ollama.",
                     "ollama_offline": True,
+                    "installed": offline.get("installed", True),
+                    "install_url": offline.get("install_url"),
                 },
             )
 
@@ -705,14 +747,14 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
     def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[Dict[str, str], str, Optional[Dict[str, Any]]]:
         """Resolve models, build conversation context, preflight availability."""
-        from local_agent.config import AgentConfig
-        from local_agent.ollama_client import OllamaClient
-
-        cfg = AgentConfig.from_args(workspace, no_memory=True)
-        if not OllamaClient(cfg).check_available(timeout=3):
+        offline = self._ensure_ollama_online()
+        if offline:
             return {}, "", {
-                "error": "Ollama offline. Execute 'ollama serve' em outro terminal e tente novamente.",
+                "error": offline.get("error")
+                or "Ollama offline. A plataforma tentou iniciar automaticamente sem sucesso.",
                 "ollama_offline": True,
+                "installed": offline.get("installed", True),
+                "install_url": offline.get("install_url"),
             }
 
         mgr = self._ollama_manager()
@@ -932,6 +974,7 @@ def main(argv: list[str] | None = None) -> int:
         print("\nStopped.")
     finally:
         dev_manager.stop_all()
+        ollama_service.stop_if_started()
     return 0
 
 

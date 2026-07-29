@@ -23,6 +23,19 @@ DEFAULT_WORKSPACE = _mod.DEFAULT_WORKSPACE
 PROJECTS_ROOT = _mod.PROJECTS_ROOT
 
 
+def _patch_ollama_offline(monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        _mod.ollama_service,
+        "ensure_running",
+        lambda host: {
+            "ok": False,
+            "ollama": False,
+            "installed": True,
+            "error": "Ollama offline",
+        },
+    )
+
+
 def _patch_ollama_online(monkeypatch: pytest.MonkeyPatch) -> None:
     class FakeClient:
         def check_available(self, timeout: int = 5) -> bool:
@@ -369,12 +382,8 @@ def test_model_pull_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -
                 on_event({"type": "progress", "model": model, "status": "pulling", "percent": 50})
             return {"ok": True, "model": model}
 
-    class FakeClient:
-        def check_available(self):
-            return True
-
     monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
-    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+    _patch_ollama_online(monkeypatch)
     req = urllib.request.Request(
         f"{platform_url}/api/models/pull/stream",
         data=json.dumps({"model": "qwen2.5-coder:7b"}).encode(),
@@ -388,11 +397,7 @@ def test_model_pull_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -
 
 
 def test_model_pull_stream_ollama_offline(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
-    class FakeClient:
-        def check_available(self):
-            return False
-
-    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+    _patch_ollama_offline(monkeypatch)
     req = urllib.request.Request(
         f"{platform_url}/api/models/pull/stream",
         data=json.dumps({"model": "qwen2.5-coder:7b"}).encode(),
@@ -438,12 +443,7 @@ def test_run_preflight_ollama_offline(platform_url: str, tmp_path: Path, monkeyp
     monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
     project_dir = tmp_path / "projects" / "demo"
     project_dir.mkdir(parents=True)
-
-    class FakeClient:
-        def check_available(self, timeout: int = 5) -> bool:
-            return False
-
-    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+    _patch_ollama_offline(monkeypatch)
 
     req = urllib.request.Request(
         f"{platform_url}/api/run/stream",
@@ -456,4 +456,43 @@ def test_run_preflight_ollama_offline(platform_url: str, tmp_path: Path, monkeyp
     assert exc.value.code == 503
     body = json.loads(exc.value.read().decode())
     assert body.get("ollama_offline") is True
+
+
+def test_ollama_ensure_already_online(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    _patch_ollama_online(monkeypatch)
+    req = urllib.request.Request(
+        f"{platform_url}/api/ollama/ensure",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["ok"] is True
+    assert data["ollama"] is True
+
+
+def test_ollama_ensure_starts_daemon(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(
+        _mod.ollama_service,
+        "ensure_running",
+        lambda host: {"ok": True, "ollama": True, "started": True, "installed": True, "message": "started"},
+    )
+
+    class FakeClient:
+        def check_available(self, timeout: int = 5) -> bool:
+            return False
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/ollama/ensure",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["ok"] is True
+    assert data.get("started") is True
 
