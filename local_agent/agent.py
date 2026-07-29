@@ -20,6 +20,7 @@ from .prompts import executor_prompt, final_report_prompt, system_prompt
 from .reflector import Reflector
 from .tools import build_default_registry
 from .validator import Validator
+from .web_scaffold import looks_like_plain_web_goal, write_plain_web_app
 
 
 class CodingAgent:
@@ -83,6 +84,15 @@ class CodingAgent:
         self.index.build()
         self.memory.update_project_summary(self.index.summary(limit=20)[:1500])
         self.memory.add_event("user_request", goal)
+
+        # If Ollama is offline, still deliver tiny HTML/CSS/JS apps deterministically.
+        ollama_ok = False
+        try:
+            ollama_ok = bool(self.client.check_available(timeout=2))
+        except Exception:  # noqa: BLE001
+            ollama_ok = False
+        if not ollama_ok and looks_like_plain_web_goal(goal) and not self.config.plan_only:
+            return self._deterministic_plain_web(goal, reason="Ollama offline — scaffold estático aplicado")
 
         # Establish baseline (what was already failing before we changed anything).
         baseline: List[ValidationResult] = []
@@ -223,6 +233,11 @@ class CodingAgent:
                 task.status = TaskStatus.FAILED
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
+                    if looks_like_plain_web_goal(goal) and not self.executor.created_files:
+                        return self._deterministic_plain_web(
+                            goal,
+                            reason="Modelo indisponível após falhas — scaffold HTML/CSS/JS aplicado",
+                        )
                     self.logger.error("consecutive_failures", message="3 LLM failures in a row, stopping")
                     break
                 continue
@@ -573,6 +588,40 @@ class CodingAgent:
             for risk in plan.risks:
                 lines.append(f"- {risk}")
         return "\n".join(lines)
+
+    def _deterministic_plain_web(self, goal: str, *, reason: str) -> AgentReport:
+        """Create a tiny static HTML/CSS/JS app without calling the LLM."""
+        self._event("planning", message=reason)
+        if self.config.dry_run:
+            files = ["index.html", "style.css", "app.js", "README.md"]
+            return AgentReport(
+                status=FinalStatus.DRY_RUN_COMPLETED,
+                goal=goal,
+                summary=f"{reason}\nArquivos planejados: {', '.join(files)}",
+                next_steps=["Re-run without dry-run to write files", "Abrir preview"],
+            )
+        created, title = write_plain_web_app(self.config.workspace, goal)
+        self.executor.created_files.extend(created)
+        self.completed_tasks.append(f"Criar {title}")
+        self.index.build(use_cache=False)
+        self._event("files_changed", paths=created, created=created, modified=[])
+        self._event("plan", summary=reason, task_count=1, tasks=[{"id": "task-1", "title": f"Criar {title}"}])
+        summary = (
+            f"{reason}\n\n"
+            f"Criei a app **{title}** com `index.html`, `style.css` e `app.js` "
+            "(contador interativo). Abra o Preview para ver."
+        )
+        return AgentReport(
+            status=FinalStatus.SUCCESS,
+            goal=goal,
+            summary=summary,
+            completed_tasks=self.completed_tasks,
+            analyzed_files=created,
+            created_files=list(dict.fromkeys(self.executor.created_files)),
+            modified_files=list(dict.fromkeys(self.executor.modified_files)),
+            next_steps=["Abrir Preview", "Melhorar visual", "Adicionar seção"],
+            risks=[],
+        )
 
     def _should_skip_baseline(self) -> bool:
         """Skip heavy baseline when Node deps are not installed yet."""

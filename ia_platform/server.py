@@ -883,8 +883,13 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
     def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[Dict[str, str], str, Optional[Dict[str, Any]]]:
         """Resolve models, build conversation context, preflight availability."""
+        prompt = str(data.get("prompt") or data.get("goal") or "").strip()
+        from local_agent.web_scaffold import looks_like_plain_web_goal
+
+        allow_offline_scaffold = looks_like_plain_web_goal(prompt) and not bool(data.get("plan_only"))
+
         offline = self._ensure_ollama_online()
-        if offline:
+        if offline and not allow_offline_scaffold:
             return {}, "", {
                 "error": offline.get("error")
                 or "Ollama offline. A plataforma tentou iniciar automaticamente sem sucesso.",
@@ -894,31 +899,39 @@ class PlatformHandler(BaseHTTPRequestHandler):
             }
 
         mgr = self._ollama_manager()
-        installed = mgr.list_names()
+        installed = mgr.list_names() if not offline else []
         hardware = _cached_hardware()
-        models = resolve_models_for_run(data.get("model"), installed, hardware)
-        coder = models["coder"]
-
-        if not installed:
-            primary = recommend_models(hardware, installed).get("primary", {})
-            suggested = primary.get("ollama_name") or coder
-            return models, "", {
-                "error": f"Nenhum modelo instalado. Baixe '{suggested}' em Modelos IA ou execute: ollama pull {suggested}",
-                "model": suggested,
-                "missing_model": True,
-                "pull_available": True,
-                "recommended": primary,
+        if offline and allow_offline_scaffold:
+            # Deterministic HTML/CSS/JS path — no model required.
+            models = {
+                "planner": "offline-scaffold",
+                "coder": "offline-scaffold",
+                "reflection": "offline-scaffold",
             }
+        else:
+            models = resolve_models_for_run(data.get("model"), installed, hardware)
+            coder = models["coder"]
 
-        for role, name in models.items():
-            if not mgr.has_model(name):
+            if not installed:
+                primary = recommend_models(hardware, installed).get("primary", {})
+                suggested = primary.get("ollama_name") or coder
                 return models, "", {
-                    "error": f"Modelo '{name}' ({role}) não está instalado. Baixe em Modelos IA.",
-                    "model": name,
+                    "error": f"Nenhum modelo instalado. Baixe '{suggested}' em Modelos IA ou execute: ollama pull {suggested}",
+                    "model": suggested,
                     "missing_model": True,
                     "pull_available": True,
-                    "recommended": recommend_models(hardware, installed).get("primary"),
+                    "recommended": primary,
                 }
+
+            for role, name in models.items():
+                if not mgr.has_model(name):
+                    return models, "", {
+                        "error": f"Modelo '{name}' ({role}) não está instalado. Baixe em Modelos IA.",
+                        "model": name,
+                        "missing_model": True,
+                        "pull_available": True,
+                        "recommended": recommend_models(hardware, installed).get("primary"),
+                    }
 
         messages = load_messages(workspace)
         if messages and messages[-1].get("role") == "user":

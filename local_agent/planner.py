@@ -107,10 +107,13 @@ class Planner:
         goal_lower = (plan.goal or "").lower()
         frontend_goal = bool(
             re.search(
-                r"\b(react|vite|html|css|landing|frontend|ui|website|site|dashboard|página|pagina)\b",
+                r"\b(react|vite|html|css|landing|frontend|ui|website|site|dashboard|página|pagina|javascript|\bjs\b)\b",
                 goal_lower,
             )
         )
+        from .web_scaffold import looks_like_plain_web_goal
+
+        plain_web_goal = looks_like_plain_web_goal(plan.goal or "")
         for task in plan.tasks:
             if task.validation_commands:
                 # Drop python compileall on frontend-only goals if model added it by habit.
@@ -118,8 +121,18 @@ class Planner:
                     task.validation_commands = [
                         c for c in task.validation_commands if "compileall" not in c.lower()
                     ]
+                # Plain HTML/CSS/JS must never require npm build.
+                if plain_web_goal:
+                    task.validation_commands = [
+                        c
+                        for c in task.validation_commands
+                        if not c.strip().startswith("npm") and "vite" not in c.lower()
+                    ]
                 if task.validation_commands:
                     continue
+            if plain_web_goal:
+                task.validation_commands = []
+                continue
             desc_lower = task.description.lower()
             if not any(word in desc_lower for word in mutate_words):
                 continue

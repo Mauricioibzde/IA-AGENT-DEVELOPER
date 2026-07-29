@@ -227,10 +227,21 @@ def _goal_looks_frontend(goal: str) -> bool:
     g = goal.lower()
     return bool(
         re.search(
-            r"\b(react|vite|html|css|landing|frontend|front-end|ui|ux|página|pagina|website|site|dashboard)\b",
+            r"\b(react|vite|html|css|landing|frontend|front-end|ui|ux|página|pagina|website|site|dashboard|javascript|\bjs\b|aplicativ)\b",
             g,
         )
     )
+
+
+def _goal_looks_react(goal: str) -> bool:
+    g = goal.lower()
+    return bool(re.search(r"\b(react|vite|next\.?js|tsx|jsx|spa)\b", g))
+
+
+def _goal_looks_plain_web(goal: str) -> bool:
+    from .web_scaffold import looks_like_plain_web_goal
+
+    return looks_like_plain_web_goal(goal)
 
 
 def _goal_looks_backend(goal: str) -> bool:
@@ -246,8 +257,48 @@ def _goal_looks_backend(goal: str) -> bool:
 def minimal_safe_plan(goal: str) -> dict:
     frontend = _goal_looks_frontend(goal)
     backend = _goal_looks_backend(goal)
+    plain_web = _goal_looks_plain_web(goal)
+    react = _goal_looks_react(goal)
+
+    if plain_web and not backend:
+        validate: list[str] = []
+        execute_desc = (
+            f"{goal}\n"
+            "Crie/atualize uma app pequena estática: index.html + style.css + app.js. "
+            "HTML semântico, CSS polido, JS mínimo funcional. NÃO use React/Vite/npm "
+            "a menos que o usuário peça. Não rode npm run build."
+        )
+        return {
+            "goal": goal,
+            "summary": "Plano rápido: app HTML/CSS/JS estática (fallback).",
+            "risks": ["Model failed to produce a valid plan — using static web fallback"],
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Criar app HTML/CSS/JS",
+                    "description": execute_desc,
+                    "dependencies": [],
+                    "relevant_files": ["index.html", "style.css", "app.js"],
+                    "validation_commands": validate,
+                    "risk_level": "low",
+                },
+                {
+                    "id": "task-2",
+                    "title": "Revisar preview",
+                    "description": (
+                        "Garantir que index.html linka style.css e app.js, "
+                        "e que a UI abre no preview sem erros óbvios."
+                    ),
+                    "dependencies": ["task-1"],
+                    "relevant_files": ["index.html", "style.css", "app.js"],
+                    "validation_commands": [],
+                    "risk_level": "low",
+                },
+            ],
+        }
+
     if frontend and not backend:
-        validate = ["npm run build"]
+        validate = ["npm run build"] if react else []
         execute_desc = (
             f"{goal}\nApply senior frontend practices: semantic HTML/accessible UI or "
             "React+Vite with proper mount, polished layout, no stubs."
