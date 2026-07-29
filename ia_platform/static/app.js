@@ -275,8 +275,18 @@
   }
 
   function finishSetupError(message) {
-    const active = SETUP_STEPS.find((s) => setupProgress.stepStatus[s.id] === "active");
-    if (active) setSetupStep(active.id, "error");
+    SETUP_STEPS.forEach((s) => {
+      const st = setupProgress.stepStatus[s.id];
+      if (st === "active") setupProgress.stepStatus[s.id] = "error";
+      else if (st !== "done" && st !== "skip") setupProgress.stepStatus[s.id] = "pending";
+    });
+    const failed = SETUP_STEPS.find((s) => setupProgress.stepStatus[s.id] === "error");
+    if (!failed) {
+      const active = SETUP_STEPS.find((s) => setupProgress.stepStatus[s.id] === "active");
+      if (active) setupProgress.stepStatus[active.id] = "error";
+      else setupProgress.stepStatus.check = "error";
+    }
+    renderSetupSteps();
     updateSetupProgress(setupProgress.lastPercent || 0, message || "Falha na configuração.");
     if (els.setupSubtitle) els.setupSubtitle.textContent = "Corrija o problema abaixo ou tente novamente.";
   }
@@ -451,6 +461,41 @@
     });
   }
 
+  async function ensureOllamaViaEnsureEndpoint(showProgress = false) {
+    if (showProgress) updateSetupProgress(12, "Conectando ao Ollama (modo compatível)...", "check");
+    const res = await fetch("/api/ollama/ensure", {
+      method: "POST",
+      headers: { "Content-Type": "application/json" },
+      body: JSON.stringify({ install: true }),
+    });
+    const data = await res.json().catch(() => ({}));
+    if (!res.ok || !data.ok) {
+      if (showProgress) {
+        if (res.status === 404) {
+          finishSetupError(
+            "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute novamente: .\\scripts\\run-platform.ps1"
+          );
+        } else {
+          finishSetupError(data.error || "Falha ao configurar Ollama.");
+        }
+      }
+      state.ollamaOk = false;
+      state.ollamaInstalled = data.installed !== false;
+      updateOllamaOfflineUI();
+      return false;
+    }
+    state.ollamaInstalled = true;
+    if (showProgress) {
+      if (data.started || /instal/i.test(data.message || "")) setSetupStep("install", "done");
+      else setSetupStep("install", "skip");
+      setSetupStep("check", "done");
+      setSetupStep("start", "done");
+      updateSetupProgress(45, data.message || "Ollama online.");
+    }
+    await checkHealth();
+    return state.ollamaOk;
+  }
+
   async function ensureOllamaRunning(showProgress = false) {
     if (state.ollamaOk) return true;
     if (showProgress && !setupProgress.visible) showSetupModal("Verificando Ollama...", 5);
@@ -461,6 +506,10 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ install: true }),
       });
+
+      if (res.status === 404) {
+        return ensureOllamaViaEnsureEndpoint(showProgress);
+      }
 
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));

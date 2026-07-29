@@ -508,6 +508,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "models": models[:20],
                 "recommended_model": recommended_name,
                 "projects_root": str(PROJECTS_ROOT),
+                "features": {
+                    "ollama_setup_stream": True,
+                    "ollama_auto_install": True,
+                },
             },
         )
 
