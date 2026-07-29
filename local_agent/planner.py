@@ -115,18 +115,24 @@ class Planner:
                 goal_lower,
             )
         )
-        from .web_scaffold import looks_like_plain_web_goal
+        from .web_scaffold import is_plain_web_workspace, looks_like_plain_web_goal
 
         plain_web_goal = looks_like_plain_web_goal(plan.goal or "")
+        plain_web_project = bool(index and is_plain_web_workspace(index.workspace))
+        plain_web = plain_web_goal or plain_web_project
         for task in plan.tasks:
             if task.validation_commands:
                 # Drop python compileall on frontend-only goals if model added it by habit.
-                if frontend_goal:
+                if frontend_goal or plain_web:
                     task.validation_commands = [
-                        c for c in task.validation_commands if "compileall" not in c.lower()
+                        c
+                        for c in task.validation_commands
+                        if "compileall" not in c.lower()
+                        and "pytest" not in c.lower()
+                        and not re.search(r"\bpython3?\b", c.lower())
                     ]
                 # Plain HTML/CSS/JS must never require npm build.
-                if plain_web_goal:
+                if plain_web:
                     task.validation_commands = [
                         c
                         for c in task.validation_commands
@@ -134,7 +140,7 @@ class Planner:
                     ]
                 if task.validation_commands:
                     continue
-            if plain_web_goal:
+            if plain_web:
                 task.validation_commands = []
                 continue
             desc_lower = task.description.lower()
@@ -152,6 +158,8 @@ class Planner:
                             nodeish = [c for c in detected if c.startswith("npm")]
                             if nodeish:
                                 pick = nodeish[0]
+                            elif any(x in pick for x in ("pytest", "compileall", "python")):
+                                continue
                         cmds.append(pick)
                         break
                 if not cmds and index.package_scripts:
@@ -179,12 +187,12 @@ class Planner:
                 elif has_rust:
                     cmds = ["cargo check"]
                 elif has_python and not has_node:
-                    cmds = ["python -m compileall ."]
+                    cmds = ["python3 -m compileall ."]
 
             if not cmds and index:
                 has_python = any(f.language == "python" for f in index.files)
                 if has_python and not index.package_scripts and not frontend_goal:
-                    cmds = ["python -m compileall ."]
+                    cmds = ["python3 -m compileall ."]
 
             task.validation_commands = cmds
             if not cmds:
@@ -196,9 +204,9 @@ class Planner:
                         pass
                     elif extra not in task.validation_commands:
                         task.validation_commands.append(extra)
-                elif not frontend_goal and "python -m pytest -q --tb=short" not in task.validation_commands:
+                elif not frontend_goal and "python3 -m pytest -q --tb=short" not in task.validation_commands:
                     if index and any(f.language == "python" for f in index.files):
-                        task.validation_commands.append("python -m pytest -q --tb=short")
+                        task.validation_commands.append("python3 -m pytest -q --tb=short")
 
     def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
         from .json_utils import loads_json_lenient

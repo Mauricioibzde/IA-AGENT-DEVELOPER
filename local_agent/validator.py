@@ -103,6 +103,9 @@ class Validator:
             self.config.command_timeout = previous
 
     def run_one(self, command: str) -> ValidationResult:
+        from .tools.terminal import _normalize_python_command
+
+        command = _normalize_python_command(command)
         if self.command_count >= self.config.max_commands:
             return ValidationResult(
                 command=command,
@@ -117,7 +120,7 @@ class Validator:
         started = time.time()
         # Skip clearly unavailable tools quickly.
         first = command.split()[0]
-        if first in {"ruff", "mypy", "npm"} and shutil.which(first) is None:
+        if first in {"ruff", "mypy", "npm", "python", "python3", "pytest"} and shutil.which(first) is None:
             return ValidationResult(
                 command=command,
                 success=False,

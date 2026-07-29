@@ -15,12 +15,30 @@ def looks_like_plain_web_goal(goal: str) -> bool:
     has_web = bool(re.search(r"\b(html|css|javascript|\bjs\b|site|página|pagina|landing|aplicat|app)\b", g))
     wants_create = bool(
         re.search(
-            r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|build|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit|atualiz)\b",
+            r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|build|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit|atualiz|implement)\b",
             g,
         )
     )
     has_stack = bool(re.search(r"\bhtml\b", g) and re.search(r"\b(css|javascript|\bjs\b)\b", g))
-    return has_web and (wants_create or has_stack)
+    # Follow-ups like "implemente as melhorias" after a static app conversation.
+    implement_followup = bool(
+        re.search(r"\b(implement(e|ar)?|aplique|aplica|melhorias?|sugest\w*)\b", g)
+    )
+    return (has_web and (wants_create or has_stack)) or (implement_followup and has_web)
+
+
+def is_plain_web_workspace(workspace: Path) -> bool:
+    """Detect an existing static HTML/CSS/JS project (no package.json / Python app)."""
+    root = Path(workspace)
+    if not root.is_dir():
+        return False
+    if (root / "package.json").exists() or (root / "pyproject.toml").exists() or (root / "requirements.txt").exists():
+        return False
+    names = {p.name.lower() for p in root.iterdir() if p.is_file()}
+    has_html = "index.html" in names or any(n.endswith(".html") for n in names)
+    has_asset = any(n.endswith((".css", ".js")) for n in names)
+    has_py = any(n.endswith(".py") for n in names)
+    return has_html and has_asset and not has_py
 
 
 def looks_like_react_goal(goal: str) -> bool:

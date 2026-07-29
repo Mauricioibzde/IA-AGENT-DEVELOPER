@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -295,9 +296,10 @@ class ProjectIndex:
                 pass
 
         if (self.workspace / "pyproject.toml").exists() or any(f.language == "python" for f in self.files):
-            self.detected_commands["test"].append("python -m pytest -q")
-            self.detected_commands["lint"].extend(["python -m compileall .", "ruff check ."])
-            self.detected_commands["build"].append("python -m compileall .")
+            py = "python3" if shutil.which("python3") else "python"
+            self.detected_commands["test"].append(f"{py} -m pytest -q")
+            self.detected_commands["lint"].extend([f"{py} -m compileall .", "ruff check ."])
+            self.detected_commands["build"].append(f"{py} -m compileall .")
 
         if (self.workspace / "go.mod").exists() or any(f.language == "go" for f in self.files):
             self.detected_commands["test"].append("go test ./...")

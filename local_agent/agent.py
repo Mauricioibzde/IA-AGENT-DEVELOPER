@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
@@ -359,8 +360,36 @@ class CodingAgent:
                     )
 
             if task.validation_commands:
-                self._event("validation_start", commands=task.validation_commands[:3])
-                validation_results.extend([self.validator.run_one(cmd) for cmd in task.validation_commands])
+                cmds = list(task.validation_commands)
+                if looks_like_plain_web_goal(goal) or (
+                    (self.config.workspace / "index.html").is_file()
+                    and not (self.config.workspace / "package.json").is_file()
+                    and not any(f.language == "python" for f in self.index.files)
+                ):
+                    cmds = [
+                        c
+                        for c in cmds
+                        if "pytest" not in c.lower()
+                        and "compileall" not in c.lower()
+                        and not re.search(r"\bpython3?\b", c.lower())
+                        and not c.strip().startswith("npm")
+                    ]
+                if cmds:
+                    self._event("validation_start", commands=cmds[:3])
+                    validation_results.extend([self.validator.run_one(cmd) for cmd in cmds])
+                else:
+                    problems = validate_plain_web(self.config.workspace)
+                    validation_results.append(
+                        ValidationResult(
+                            command="validate_plain_web",
+                            success=not problems,
+                            exit_code=0 if not problems else 1,
+                            stdout="ok" if not problems else "",
+                            stderr="; ".join(problems),
+                            duration_seconds=0.0,
+                            category="code" if not problems else "introduced",
+                        )
+                    )
             elif wrote_files or intend_finish:
                 quick_checks = self.validator.discover_commands()[:2]
                 if not quick_checks and looks_like_plain_web_goal(goal):
@@ -811,7 +840,7 @@ class CodingAgent:
             has_pkg = (self.config.workspace / "package.json").is_file()
             has_index = (self.config.workspace / "index.html").is_file()
             if has_python:
-                final_check = self.validator.run_one("python -m compileall .")
+                final_check = self.validator.run_one("python3 -m compileall .")
                 self.all_validations.append(final_check)
             if has_index and not has_pkg:
                 problems = validate_plain_web(self.config.workspace)

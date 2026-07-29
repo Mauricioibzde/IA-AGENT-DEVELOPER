@@ -101,10 +101,22 @@ def _maybe_shell(command: str) -> tuple[Any, bool]:
         return command, True
 
 
+def _normalize_python_command(command: str) -> str:
+    """Prefer python3 when bare `python` is missing (common on Linux)."""
+    import shutil
+
+    text = str(command or "").strip()
+    if not text:
+        return text
+    if re.match(r"^python(\s|$)", text) and shutil.which("python") is None and shutil.which("python3"):
+        return "python3" + text[6:]
+    return text
+
+
 def run_command(args: Dict[str, Any], **context: Any) -> ToolResult:
     cfg: AgentConfig = context["config"]
     workspace = context["workspace"]
-    command = str(args.get("command", "")).strip()
+    command = _normalize_python_command(str(args.get("command", "")).strip())
     if not command:
         return ToolResult(ok=False, error="run_command requires a non-empty command")
 

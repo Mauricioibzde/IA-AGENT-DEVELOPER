@@ -2823,23 +2823,45 @@
     });
   }
 
-  function setThinkingState(el) {
+  function setThinkingState(el, label = "pensando...") {
     if (!el) return;
     el.classList.add("live", "thinking");
     el.innerHTML = `
-      <div class="thinking-indicator" aria-live="polite" aria-label="pensando">
+      <div class="thinking-indicator" aria-live="polite" aria-label="${escapeHtml(label)}">
         <svg class="thinking-brain" viewBox="0 0 24 24" fill="none" aria-hidden="true">
           <path d="M8.5 4.5c-1.7 0-3 1.4-3 3.1 0 .4.1.8.2 1.1A3.2 3.2 0 0 0 4 11.7c0 1.5 1 2.7 2.4 3.1v.2c0 1.9 1.4 3.5 3.3 3.5h.3c.6 1.1 1.8 1.8 3.1 1.8s2.5-.7 3.1-1.8h.2c1.9 0 3.4-1.6 3.4-3.5v-.1A3.3 3.3 0 0 0 22 11.5a3.2 3.2 0 0 0-2.1-3 3 3 0 0 0 .2-1.1c0-1.7-1.3-3.1-3-3.1-.6 0-1.1.2-1.6.4A3.8 3.8 0 0 0 12 3.5c-1.3 0-2.5.7-3.1 1.7-.5-.4-1.1-.7-1.4-.7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
           <path d="M12 8.5v7M9.5 10.5c.8-.6 1.7-.9 2.5-.9s1.7.3 2.5.9M9.5 13.5c.8.6 1.7.9 2.5.9s1.7-.3 2.5-.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
         </svg>
-        <span class="thinking-label">pensando...</span>
+        <span class="thinking-label">${escapeHtml(label)}</span>
       </div>`;
   }
 
   function clearThinkingState(el) {
-    if (!el || !el.classList.contains("thinking")) return;
+    if (!el) return;
     el.classList.remove("thinking");
-    el.textContent = "";
+    if (el.querySelector(".thinking-indicator")) {
+      el.innerHTML = "";
+    }
+  }
+
+  function setWorkingState(el, title, detail = "") {
+    if (!el) return;
+    el.classList.add("live");
+    el.classList.remove("thinking");
+    el.innerHTML = `
+      <div class="live-inline-status" aria-live="polite">
+        <strong>${escapeHtml(title || "Trabalhando no código")}</strong>
+        ${detail ? `<span>${escapeHtml(detail)}</span>` : `<span>Acompanhe a aba <em>Ao vivo</em> para ver linhas lidas/editadas.</span>`}
+      </div>`;
+  }
+
+  function finalizeAgentMessage(el, text, { error = false } = {}) {
+    if (!el) return;
+    clearThinkingState(el);
+    el.classList.remove("live", "thinking");
+    const body = String(text || "").trim() || "Execução concluída.";
+    setMessageContent(el, body, "agent");
+    el.classList.toggle("error", !!error || /^Erro/i.test(body));
   }
 
   function addMessage(text, role, scroll = true) {
@@ -3760,12 +3782,13 @@
 
       stopActivityTimer(activity);
       finishRunActivity(progressEl, activity, donePayload);
-      agentEl.classList.remove("live", "thinking");
 
       if (donePayload) {
         const fullReport = donePayload.report || "(sem relatório)";
         const chatSummary = donePayload.summary || fullReport;
-        setMessageContent(agentEl, chatSummary, "agent");
+        finalizeAgentMessage(agentEl, chatSummary, {
+          error: donePayload.status === "CANCELLED" || /^FAIL|FAILED|Erro/i.test(String(donePayload.status || "")),
+        });
         state.lastReport = fullReport;
         if (donePayload.status === "CANCELLED") {
           agentEl.classList.add("error");
@@ -3777,28 +3800,26 @@
           modified_files: donePayload.modified_files || [],
           summary: chatSummary,
         });
-        window.setTimeout(() => removeMessage(progressEl), 4500);
+        window.setTimeout(() => removeMessage(progressEl), 6500);
       } else if (streamError) {
         const err = new Error(String(streamError));
         err.streamError = true;
         throw err;
       } else {
-        agentEl.textContent = agentEl.textContent || "Execução finalizada sem relatório.";
-        agentEl.classList.add("error");
+        finalizeAgentMessage(agentEl, "Execução finalizada sem relatório.", { error: true });
         window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
       stopActivityTimer(activity);
       removeMessage(progressEl);
+      clearThinkingState(agentEl);
       agentEl.classList.remove("live", "thinking");
       if (e.status === 409 || e.data?.busy) {
-        agentEl.textContent = e.message || "Agente já em execução neste projeto.";
-        agentEl.classList.add("error");
+        finalizeAgentMessage(agentEl, e.message || "Agente já em execução neste projeto.", { error: true });
         addMessage("Aguarde a execução atual terminar ou cancele antes de enviar outro prompt.", "system");
       } else if (e.name === "AbortError") {
         wasAbort = true;
-        agentEl.textContent = "Cancelando...";
-        agentEl.classList.add("error");
+        finalizeAgentMessage(agentEl, "Cancelando...", { error: true });
       } else if (e.status === 503 || e.data?.ollama_offline) {
         // Offline scaffolds should pass preflight; one soft retry only (avoid loops).
         if (
@@ -3835,8 +3856,7 @@
         state.ollamaOk = false;
         updateOllamaOfflineUI();
         const err = e.message || "Ollama offline.";
-        agentEl.textContent = "Erro: " + err;
-        agentEl.classList.add("error");
+        finalizeAgentMessage(agentEl, "Erro: " + err, { error: true });
         openModelsModal();
       } else {
         const raw = String(e.message || "erro desconhecido");
@@ -3868,8 +3888,7 @@
         const err = isNetwork
           ? "Erro de conexão com o servidor. Reinicie a plataforma (porta 8787) e tente de novo. Se o modelo for grande, a 1ª resposta pode demorar alguns minutos."
           : "Erro: " + raw;
-        agentEl.textContent = err;
-        agentEl.classList.add("error");
+        finalizeAgentMessage(agentEl, err, { error: true });
         if (e.data?.missing_model) {
           addMessage(`Modelo ausente: ${e.data.model}. Baixando automaticamente...`, "system");
           openModelsModal();
@@ -3955,17 +3974,26 @@
           toolCount: 0,
           reflection: "",
         });
-        agentEl.textContent = "";
-        setThinkingState(agentEl);
+        setWorkingState(
+          agentEl,
+          `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || "trabalhando"}`,
+          "O modelo vai ler/editar arquivos — veja a aba Ao vivo."
+        );
         break;
       case "llm_chunk":
         updateActivity(activity, {
           phaseId: "think",
-          stage: "Modelo gerando a próxima ação",
-          detail: "Aguardando o Ollama decidir o que ler ou editar no projeto.",
+          stage: "Modelo decidindo a próxima ação",
+          detail: "Gerando a próxima leitura ou edição de arquivo…",
           llmChars: (activity.llmChars || 0) + (ev.text ? ev.text.length : 0),
         });
-        // Don't dump raw JSON tool-calls into the chat — the Ao vivo panel shows code instead.
+        if (!activity.liveOp) {
+          setWorkingState(
+            agentEl,
+            "Modelo pensando na próxima edição",
+            `Tarefa: ${activity.task || "em andamento"} · abra Ao vivo`
+          );
+        }
         break;
       case "file_op": {
         updateLiveCodeViewer(ev, activity);
@@ -3977,17 +4005,15 @@
             ? `${verb}: ${ev.path}${ev.error ? ` — ${ev.error}` : ""}`
             : ev.headline || "Operação em arquivo",
         });
-        if (agentEl) {
-          clearThinkingState(agentEl);
-          const st = ev.stats || {};
-          const bits = [
-            ev.headline || verb,
-            ev.path || "",
-            st.added != null ? `+${st.added}` : "",
-            st.removed != null ? `−${st.removed}` : "",
-          ].filter(Boolean);
-          agentEl.innerHTML = `<div class="live-inline-status"><strong>${escapeHtml(bits[0] || "Trabalhando no código")}</strong>${bits[1] ? `<span>${escapeHtml(bits.slice(1).join(" · "))}</span>` : ""}</div>`;
-        }
+        const st = ev.stats || {};
+        const detailBits = [
+          ev.path || "",
+          st.added != null ? `+${st.added}` : "",
+          st.removed != null ? `−${st.removed}` : "",
+          ev.error || "",
+          "aba Ao vivo",
+        ].filter(Boolean);
+        setWorkingState(agentEl, ev.headline || `${verb} código`, detailBits.join(" · "));
         if (ev.path && (ev.op === "write" || ev.op === "edit" || ev.op === "patch") && ev.status === "done") {
           markChangedFiles([ev.path]);
           scheduleFileRefresh(activity);
@@ -4006,6 +4032,11 @@
           toolCount: ev.count || 0,
           okTools: 0,
         });
+        setWorkingState(
+          agentEl,
+          `Executando: ${(ev.tools || []).slice(0, 3).join(", ") || "ferramentas"}`,
+          "Atualizando a aba Ao vivo com o código"
+        );
         break;
       case "tools":
         updateActivity(activity, {
