@@ -40,6 +40,10 @@
         </div>
         <div class="sidebar-footer">
           <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
+          <div class="sidebar-setup-pill hidden" id="sidebarSetupPill">
+            <span id="sidebarSetupLabel">Configurando...</span>
+            <span class="mini-bar"><span class="mini-bar-fill" id="sidebarSetupBar"></span></span>
+          </div>
           <p class="model-hint hidden" id="modelHint"></p>
         </div>
       </div>
@@ -200,10 +204,21 @@
   <div class="modal-overlay hidden" id="setupModal">
     <div class="modal setup-modal">
       <h3>Configurando ambiente</h3>
-      <p class="setup-subtitle">Instala Ollama (se necessário), inicia o serviço e baixa o modelo recomendado.</p>
-      <div class="pull-progress" id="setupProgress">
-        <div class="pull-bar"><div class="pull-bar-fill" id="setupBarFill"></div></div>
-        <p id="setupStatus">Verificando Ollama...</p>
+      <p class="setup-subtitle" id="setupSubtitle">Instalação e configuração automática do Ollama e modelo IA</p>
+      <div class="setup-progress-wrap">
+        <div class="setup-progress-head">
+          <span class="setup-progress-label">Progresso geral</span>
+          <span class="setup-percent" id="setupPercent">0%</span>
+        </div>
+        <div class="pull-bar setup-bar">
+          <div class="pull-bar-fill" id="setupBarFill"></div>
+        </div>
+        <p class="setup-status" id="setupStatus">Iniciando...</p>
+      </div>
+      <ul class="setup-steps" id="setupSteps" aria-label="Etapas da configuração"></ul>
+      <div class="setup-log-wrap hidden" id="setupLogWrap">
+        <div class="setup-log-title">Detalhes</div>
+        <pre class="setup-log" id="setupLog"></pre>
       </div>
     </div>
   </div>
