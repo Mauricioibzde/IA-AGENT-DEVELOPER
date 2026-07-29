@@ -436,6 +436,19 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if not model:
             return self._send_json(400, {"error": "model is required"})
 
+        from local_agent.config import AgentConfig
+        from local_agent.ollama_client import OllamaClient
+
+        cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
+        if not OllamaClient(cfg).check_available():
+            return self._send_json(
+                503,
+                {
+                    "error": "Ollama offline. Execute 'ollama serve' em outro terminal e tente novamente.",
+                    "ollama_offline": True,
+                },
+            )
+
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
         self.send_header("Cache-Control", "no-cache")

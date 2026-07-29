@@ -60,9 +60,12 @@ class OllamaModelManager:
         try:
             response = urllib.request.urlopen(req, timeout=timeout)
         except Exception as exc:
-            last["error"] = str(exc)
+            message = str(exc)
+            if "Connection refused" in message or "Errno 111" in message:
+                message = "Ollama offline — execute 'ollama serve' em outro terminal"
+            last["error"] = message
             if on_event:
-                on_event({"type": "error", "error": str(exc)})
+                on_event({"type": "error", "error": message, "ollama_offline": True})
             return last
 
         try:

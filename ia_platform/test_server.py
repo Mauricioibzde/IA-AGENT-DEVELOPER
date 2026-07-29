@@ -356,7 +356,12 @@ def test_model_pull_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -
                 on_event({"type": "progress", "model": model, "status": "pulling", "percent": 50})
             return {"ok": True, "model": model}
 
+    class FakeClient:
+        def check_available(self):
+            return True
+
     monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
     req = urllib.request.Request(
         f"{platform_url}/api/models/pull/stream",
         data=json.dumps({"model": "qwen2.5-coder:7b"}).encode(),
@@ -367,6 +372,25 @@ def test_model_pull_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -
         body = resp.read().decode("utf-8")
     assert "done" in body
     assert "qwen2.5-coder:7b" in body
+
+
+def test_model_pull_stream_ollama_offline(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def check_available(self):
+            return False
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+    req = urllib.request.Request(
+        f"{platform_url}/api/models/pull/stream",
+        data=json.dumps({"model": "qwen2.5-coder:7b"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=10)
+    assert exc.value.code == 503
+    payload = json.loads(exc.value.read().decode())
+    assert payload.get("ollama_offline") is True
 
 
 def test_run_preflight_missing_model(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

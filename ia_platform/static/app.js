@@ -25,6 +25,8 @@
     runs: [],
     selectedRunId: null,
     fileSearchTimer: null,
+    ollamaOk: false,
+    previewDevice: "desktop",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -89,6 +91,10 @@
     pullBarFill: $("pullBarFill"),
     pullStatus: $("pullStatus"),
     modelHint: $("modelHint"),
+    chatHero: $("chatHero"),
+    previewViewport: $("previewViewport"),
+    deviceSwitcher: $("deviceSwitcher"),
+    ollamaOfflineBanner: $("ollamaOfflineBanner"),
   };
 
   function getSelectedModel() {
@@ -209,6 +215,28 @@
     }
   }
 
+  function updateChatHeroVisibility() {
+    if (!els.chatHero) return;
+    const hasConversation = els.chatMessages.querySelectorAll(".msg.user, .msg.agent").length > 0;
+    els.chatHero.classList.toggle("hidden", hasConversation || state.running);
+  }
+
+  function updateOllamaOfflineUI() {
+    els.ollamaOfflineBanner?.classList.toggle("hidden", state.ollamaOk);
+    document.querySelectorAll('[data-action="pull"]').forEach((btn) => {
+      const model = btn.dataset.model;
+      const entry = (state.modelRecommendations?.catalog || []).find((e) => e.ollama_name === model);
+      const installed = entry?.installed;
+      if (!state.ollamaOk) {
+        btn.disabled = true;
+        btn.title = "Ollama offline — execute ollama serve";
+      } else {
+        btn.disabled = !!installed;
+        btn.removeAttribute("title");
+      }
+    });
+  }
+
   async function clearChat() {
     if (!state.current) return;
     if (!window.confirm("Limpar toda a conversa deste projeto?")) return;
@@ -220,6 +248,8 @@
       els.chatMessages.innerHTML = "";
       state.lastReport = "";
       els.reportViewer.textContent = "Nenhuma execução ainda.";
+      addMessage(`Projeto "${state.current.name}" aberto. O agente edita arquivos em projects/${state.current.name}.`, "system", false);
+      updateChatHeroVisibility();
     } catch (e) {
       addMessage("Erro ao limpar chat: " + e.message, "system");
     }
@@ -229,13 +259,16 @@
     try {
       const d = await api("/api/health");
       state.models = d.models || [];
+      state.ollamaOk = !!(d.ollama && d.agent);
       updateModelOptions(state.models);
       applyRecommendedModel(d.recommended_model, state.models);
-      const ok = d.ollama && d.agent;
       const modelLabel = getSelectedModel() ? ` · ${getSelectedModel()}` : " · auto";
-      els.healthStatus.innerHTML = `<span class="status-dot ${ok ? "ok" : "err"}"></span>${ok ? "Ollama pronto" : "Ollama offline?"}${modelLabel}`;
+      els.healthStatus.innerHTML = `<span class="status-dot ${state.ollamaOk ? "ok" : "err"}"></span>${state.ollamaOk ? "Ollama pronto" : "Ollama offline?"}${modelLabel}`;
+      updateOllamaOfflineUI();
     } catch {
+      state.ollamaOk = false;
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
+      updateOllamaOfflineUI();
     }
   }
 
@@ -280,7 +313,7 @@
       <p class="model-meta">Ollama: <code>${escapeHtml(entry.ollama_name)}</code> · ~${entry.size_gb} GB · RAM ${entry.ram_gb} GB · VRAM ${entry.vram_gb} GB</p>
       <div class="model-actions">
         <button type="button" class="btn btn-primary btn-sm" data-action="use" data-model="${escapeHtml(entry.ollama_name)}">Usar</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${escapeHtml(entry.ollama_name)}" ${entry.installed ? "disabled" : ""}>Baixar</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${escapeHtml(entry.ollama_name)}" ${entry.installed || !state.ollamaOk ? "disabled" : ""}${!state.ollamaOk && !entry.installed ? ' title="Ollama offline — execute ollama serve"' : ""}>Baixar</button>
       </div>
     `;
   }
@@ -319,11 +352,13 @@
       .map((entry) => `<div class="model-card">${modelCardHtml(entry, false)}</div>`)
       .join("");
     bindModelCardActions(els.modelsCatalog);
+    updateOllamaOfflineUI();
   }
 
   function openModelsModal() {
     els.modelsModal.classList.remove("hidden");
     els.pullProgress.classList.add("hidden");
+    updateOllamaOfflineUI();
     loadModelRecommendations().catch((e) => {
       els.hardwareGrid.textContent = "Erro: " + e.message;
     });
@@ -336,6 +371,12 @@
 
   async function pullModel(model) {
     if (state.pullingModel) return;
+    if (!state.ollamaOk) {
+      els.pullProgress.classList.remove("hidden");
+      els.pullStatus.textContent = "Ollama offline — execute 'ollama serve' em outro terminal e tente novamente.";
+      updateOllamaOfflineUI();
+      return;
+    }
     state.pullingModel = true;
     els.pullProgress.classList.remove("hidden");
     els.pullBarFill.style.width = "0%";
@@ -347,7 +388,15 @@
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ model }),
       });
-      if (!res.ok || !res.body) throw new Error("Falha ao iniciar download");
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        if (res.status === 503 || errData.ollama_offline) {
+          state.ollamaOk = false;
+          updateOllamaOfflineUI();
+          throw new Error(errData.error || "Ollama offline — execute 'ollama serve' em outro terminal.");
+        }
+        throw new Error(errData.error || "Falha ao iniciar download");
+      }
 
       const reader = res.body.getReader();
       const decoder = new TextDecoder();
@@ -372,6 +421,10 @@
             els.pullStatus.textContent = ev.ok ? `Modelo ${model} pronto!` : `Falha: ${ev.error || "desconhecido"}`;
           }
           if (ev.type === "error") {
+            if (ev.ollama_offline) {
+              state.ollamaOk = false;
+              updateOllamaOfflineUI();
+            }
             els.pullStatus.textContent = "Erro: " + (ev.error || "download falhou");
           }
         }
@@ -642,9 +695,11 @@
     els.chatMessages.innerHTML = "";
     if (!messages.length) {
       addMessage(`Projeto "${state.current.name}" aberto. O agente edita arquivos em projects/${state.current.name}.`, "system", false);
+      updateChatHeroVisibility();
       return;
     }
     messages.forEach((m) => addMessage(m.text, m.role, false));
+    updateChatHeroVisibility();
   }
 
   async function loadChat() {
@@ -676,6 +731,7 @@
     setMessageContent(el, text, role);
     els.chatMessages.appendChild(el);
     if (scroll) els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    if (role === "user" || role === "agent") updateChatHeroVisibility();
     return el;
   }
 
@@ -703,6 +759,7 @@
 
     addMessage(prompt, "user");
     els.promptInput.value = "";
+    updateChatHeroVisibility();
     state.running = true;
     state.runId = null;
     state.abortController = new AbortController();
@@ -819,6 +876,7 @@
       els.btnSend.disabled = false;
       els.btnCancel?.classList.add("hidden");
       els.btnCancel.disabled = false;
+      updateChatHeroVisibility();
       if (wasAbort) {
         await new Promise((r) => setTimeout(r, 400));
         await loadChat().catch(() => {});
@@ -931,6 +989,18 @@
     const html = state.files.find((f) => /^index\.html?$/i.test(f.name));
     if (html) return html.path;
     return state.files.find((f) => /\.html?$/i.test(f.name))?.path || null;
+  }
+
+  function setPreviewDevice(device) {
+    if (!device) return;
+    state.previewDevice = device;
+    if (els.previewViewport) {
+      els.previewViewport.classList.remove("device-desktop", "device-tablet", "device-mobile");
+      els.previewViewport.classList.add(`device-${device}`);
+    }
+    els.deviceSwitcher?.querySelectorAll(".device-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.device === device);
+    });
   }
 
   function updatePreview(explicitPath) {
@@ -1229,6 +1299,21 @@
     tab.addEventListener("click", () => switchTab(tab.dataset.tab));
   });
 
+  document.querySelectorAll(".quick-card").forEach((card) => {
+    card.addEventListener("click", () => {
+      const prompt = card.dataset.prompt;
+      if (!prompt || !state.current || state.running) return;
+      els.promptInput.value = prompt;
+      els.promptInput.focus();
+    });
+  });
+
+  els.deviceSwitcher?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".device-btn");
+    if (!btn?.dataset.device) return;
+    setPreviewDevice(btn.dataset.device);
+  });
+
   function bindTemplateCards(container) {
     container.querySelectorAll(".template-card").forEach((card) => {
       card.addEventListener("click", () => {
@@ -1255,6 +1340,7 @@
 
   async function init() {
     syncSidebarToggle();
+    setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 15000);
     try {

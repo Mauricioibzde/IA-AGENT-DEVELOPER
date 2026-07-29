@@ -4,29 +4,51 @@
   <meta charset="UTF-8" />
   <meta name="viewport" content="width=device-width, initial-scale=1" />
   <title>Forge — IA Agent Developer</title>
+  <link rel="preconnect" href="https://fonts.googleapis.com" />
+  <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
+  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
   <div class="app">
     <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
-        <div class="logo">Forge <span>AI</span></div>
+        <div class="logo">
+          <span class="logo-icon" aria-hidden="true"></span>
+          Forge <span>AI</span>
+        </div>
       </div>
       <div class="sidebar-actions">
-        <button type="button" class="btn btn-primary" id="btnNewProject">+ Novo projeto</button>
-        <button type="button" class="btn btn-ghost btn-sidebar" id="btnModels">Modelos IA</button>
+        <button type="button" class="btn btn-primary btn-gradient" id="btnNewProject">+ Novo projeto</button>
+        <button type="button" class="btn btn-ghost btn-sidebar" id="btnModels">
+          <span class="btn-icon-svg" aria-hidden="true">◇</span> Modelos IA
+        </button>
       </div>
+      <div class="sidebar-section-label">Seus projetos</div>
       <div class="project-list" id="projectList"></div>
-      <div class="sidebar-footer">
-        <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
-        <p class="model-hint hidden" id="modelHint"></p>
+      <div class="sidebar-bottom">
+        <div class="sidebar-tip" id="sidebarTip">
+          <strong>Dica do dia</strong>
+          <p>Use o template React + Vite e peça ao agente para personalizar a landing page.</p>
+        </div>
+        <div class="sidebar-user">
+          <div class="user-avatar">F</div>
+          <div class="user-info">
+            <div class="user-name">Forge</div>
+            <div class="user-plan">Plataforma local</div>
+          </div>
+        </div>
+        <div class="sidebar-footer">
+          <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
+          <p class="model-hint hidden" id="modelHint"></p>
+        </div>
       </div>
     </aside>
     <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
     <div class="main">
-      <!-- Empty state (no project selected) -->
       <section class="empty-state" id="emptyView">
+        <div class="hero-glow empty-glow"></div>
         <h3>Gere apps por conversa</h3>
         <p>Crie um projeto ou escolha um template para começar.</p>
         <div class="template-grid" id="templateGrid">
@@ -53,57 +75,91 @@
         </div>
       </section>
 
-      <!-- Workspace (project selected) -->
       <section class="view-workspace hidden" id="workspaceView">
         <header class="topbar">
-          <button type="button" class="btn btn-ghost btn-icon sidebar-toggle hidden" id="btnToggleSidebar" title="Projetos">☰</button>
-          <h2 id="projectTitle">Projeto</h2>
+          <div class="topbar-left">
+            <button type="button" class="btn btn-ghost btn-icon sidebar-toggle hidden" id="btnToggleSidebar" title="Projetos">☰</button>
+            <div class="project-heading">
+              <h2 id="projectTitle">Projeto</h2>
+              <span class="project-badge" id="projectBadge">Projeto ativo</span>
+            </div>
+          </div>
           <div class="topbar-controls">
-            <select id="modeSelect" title="Modo de execução">
+            <select id="modeSelect" title="Modo de execução" class="control-select">
               <option value="execute">Executar</option>
               <option value="plan">Só plano</option>
               <option value="dry">Dry-run</option>
             </select>
-            <select id="modelSelect" title="Modelo IA">
+            <select id="modelSelect" title="Modelo IA" class="control-select model-select">
               <option value="__auto__">Auto (recomendado)</option>
               <optgroup label="Instalados" id="modelGroupInstalled"></optgroup>
               <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
               <option value="__custom__">Outro...</option>
             </select>
-            <input id="modelCustomInput" type="text" class="hidden" placeholder="Nome do modelo Ollama" />
-            <input id="maxStepsInput" type="number" value="12" min="1" max="50" title="Max steps" style="width:4.5rem" />
-            <button type="button" class="btn btn-ghost" id="btnClearChat" title="Limpar conversa">Limpar chat</button>
-            <button type="button" class="btn btn-ghost" id="btnRefreshFiles">Atualizar</button>
-            <button type="button" class="btn btn-ghost" id="btnDeploy" title="Deploy Vercel">Deploy</button>
+            <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
+            <div class="steps-control" title="Max steps">
+              <span class="steps-icon" aria-hidden="true">✦</span>
+              <input id="maxStepsInput" type="number" value="12" min="1" max="50" class="control-input steps-input" />
+            </div>
+            <button type="button" class="btn btn-ghost btn-icon-text" id="btnClearChat" title="Limpar conversa">Limpar</button>
+            <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar">↻ Atualizar</button>
+            <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">🚀 Deploy</button>
           </div>
         </header>
 
         <div class="workspace-body">
           <div class="chat-area">
+            <div class="chat-hero" id="chatHero">
+              <div class="hero-glow"></div>
+              <div class="hero-icon" aria-hidden="true">✦</div>
+              <h3 class="hero-title">Como posso ajudar no seu projeto hoje?</h3>
+              <div class="quick-actions">
+                <button type="button" class="quick-card" data-prompt="Explique a estrutura deste projeto e sugira melhorias.">
+                  <span class="quick-icon">💬</span>
+                  <span class="quick-label">Perguntar algo</span>
+                </button>
+                <button type="button" class="quick-card" data-prompt="Gere o código inicial para a funcionalidade que descrever a seguir.">
+                  <span class="quick-icon">&lt;/&gt;</span>
+                  <span class="quick-label">Gerar código</span>
+                </button>
+                <button type="button" class="quick-card" data-prompt="Analise os arquivos principais do projeto e liste problemas ou oportunidades.">
+                  <span class="quick-icon">📄</span>
+                  <span class="quick-label">Analisar arquivos</span>
+                </button>
+                <button type="button" class="quick-card" data-prompt="Crie conteúdo de landing page moderno para este app (headline, benefícios e CTA).">
+                  <span class="quick-icon">🚀</span>
+                  <span class="quick-label">Gerar conteúdo</span>
+                </button>
+              </div>
+            </div>
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-area">
-              <textarea id="promptInput" rows="2" placeholder="Descreva o que quer criar ou alterar no app..."></textarea>
-              <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar</button>
-              <button type="button" class="btn btn-primary" id="btnSend">Enviar</button>
+              <div class="chat-input-wrap">
+                <textarea id="promptInput" rows="2" placeholder="Descreva no chat o que quer mudar nesta landing page..."></textarea>
+                <button type="button" class="btn-send" id="btnSend" title="Enviar">➤</button>
+              </div>
+              <div class="chat-input-actions">
+                <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar execução</button>
+              </div>
             </div>
           </div>
 
           <aside class="right-panel" id="rightPanel">
             <div class="panel-tabs" id="panelTabs">
-              <div class="panel-tab active" data-tab="files">Arquivos</div>
-              <div class="panel-tab" data-tab="preview">Preview</div>
+              <div class="panel-tab" data-tab="files">Arquivos</div>
+              <div class="panel-tab active" data-tab="preview">Preview</div>
               <div class="panel-tab" data-tab="report">Relatório</div>
             </div>
-            <div class="panel-content" id="panelFiles">
+            <div class="panel-content hidden" id="panelFiles">
               <div class="file-search-row">
                 <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
               </div>
               <ul class="file-tree" id="fileTree"></ul>
               <pre class="file-viewer hidden" id="fileViewer"></pre>
             </div>
-            <div class="panel-content hidden" id="panelPreview">
+            <div class="panel-content" id="panelPreview">
               <div class="preview-toolbar">
-                <select id="previewMode" title="Modo de preview">
+                <select id="previewMode" title="Modo de preview" class="control-select">
                   <option value="static">Estático</option>
                   <option value="dev">npm run dev</option>
                 </select>
@@ -112,8 +168,15 @@
                 <span class="dev-status" id="devStatus"></span>
               </div>
               <pre class="dev-error-log hidden" id="devErrorLog"></pre>
-              <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
+              <div class="preview-viewport device-desktop" id="previewViewport">
+                <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
+              </div>
               <p class="preview-hint" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
+              <div class="device-switcher" id="deviceSwitcher">
+                <button type="button" class="device-btn active" data-device="desktop" title="Desktop">🖥</button>
+                <button type="button" class="device-btn" data-device="tablet" title="Tablet">📱</button>
+                <button type="button" class="device-btn" data-device="mobile" title="Mobile">📲</button>
+              </div>
             </div>
             <div class="panel-content hidden" id="panelReport">
               <div class="run-history" id="runHistory">
@@ -126,7 +189,7 @@
         </div>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Painéis do projeto">
           <button type="button" class="mobile-tab" data-tab="files">Arquivos</button>
-          <button type="button" class="mobile-tab" data-tab="preview">Preview</button>
+          <button type="button" class="mobile-tab active" data-tab="preview">Preview</button>
           <button type="button" class="mobile-tab" data-tab="report">Relatório</button>
         </nav>
         <div class="mobile-backdrop hidden" id="mobileBackdrop"></div>
@@ -137,6 +200,10 @@
   <div class="modal-overlay hidden" id="modelsModal">
     <div class="modal modal-wide models-modal">
       <h3>Modelos IA — Ollama</h3>
+      <div class="ollama-offline-banner hidden" id="ollamaOfflineBanner">
+        <strong>Ollama offline.</strong> Abra um terminal e execute <code>ollama serve</code> antes de baixar modelos.
+        Alternativa: <code>ollama pull qwen2.5-coder:7b</code> no terminal.
+      </div>
       <div class="models-layout">
         <section class="models-hardware" id="hardwarePanel">
           <h4>Seu hardware</h4>
@@ -167,7 +234,7 @@
       <p class="deploy-spinner hidden" id="deploySpinner">Deploy em andamento… pode levar alguns minutos.</p>
       <pre class="deploy-log" id="deployLog">Preparando...</pre>
       <div class="modal-actions">
-        <a class="btn btn-primary hidden" id="btnOpenDeployUrl" href="#" target="_blank" rel="noopener">Abrir site</a>
+        <a class="btn btn-primary btn-gradient hidden" id="btnOpenDeployUrl" href="#" target="_blank" rel="noopener">Abrir site</a>
         <button type="button" class="btn btn-ghost" id="btnCloseDeploy">Fechar</button>
       </div>
     </div>
@@ -203,7 +270,7 @@
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btnCancelProject">Cancelar</button>
-        <button type="button" class="btn btn-primary" id="btnCreateProject">Criar</button>
+        <button type="button" class="btn btn-primary btn-gradient" id="btnCreateProject">Criar</button>
       </div>
     </div>
   </div>
