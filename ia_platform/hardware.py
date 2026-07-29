@@ -491,3 +491,94 @@ def detect_hardware() -> Dict[str, Any]:
             "Se você abrir 127.0.0.1 via túnel/remoto, estes números são da máquina remota — não do PC do navegador."
         ),
     }
+
+
+def apply_user_hardware_profile(
+    detected: Dict[str, Any],
+    settings: Optional[Dict[str, Any]] = None,
+) -> Dict[str, Any]:
+    """Merge detected server hardware with an optional manual 'Meu PC' profile.
+
+    Manual profiles drive recommendations and Auto model choice. Inference still
+    runs wherever Ollama is actually hosted.
+    """
+    from ia_platform.user_settings import load_settings
+
+    cfg = settings if settings is not None else load_settings()
+    mode = str(cfg.get("hardware_mode") or "detected").strip().lower()
+    out = dict(detected or {})
+    out["profile_mode"] = "detected"
+    out["detected_hardware"] = {
+        "ram_total_gb": detected.get("ram_total_gb"),
+        "ram_available_gb": detected.get("ram_available_gb"),
+        "vram_total_gb": detected.get("vram_total_gb"),
+        "vram_free_gb": detected.get("vram_free_gb"),
+        "has_gpu": detected.get("has_gpu"),
+        "tier": detected.get("tier"),
+        "effective_memory_gb": detected.get("effective_memory_gb"),
+        "source": detected.get("source"),
+        "hostname": detected.get("hostname"),
+        "os": detected.get("os"),
+    }
+
+    if mode != "manual":
+        out["note"] = (
+            "Recomendações usam o hardware detectado do servidor Forge. "
+            "Se o seu PC for mais potente, defina o perfil “Meu PC” em Modelos IA."
+        )
+        return out
+
+    profile = cfg.get("hardware_profile") or {}
+    ram = float(profile.get("ram_total_gb") or 0)
+    vram = float(profile.get("vram_total_gb") or 0)
+    if ram <= 0 and vram <= 0:
+        out["note"] = "Perfil manual incompleto — usando hardware detectado do servidor."
+        return out
+
+    has_gpu = profile.get("has_gpu")
+    if has_gpu is None:
+        has_gpu = vram > 0
+    has_gpu = bool(has_gpu)
+    cpu_cores = profile.get("cpu_cores") or detected.get("cpu_cores") or 4
+    try:
+        cpu_cores = int(cpu_cores)
+    except (TypeError, ValueError):
+        cpu_cores = int(detected.get("cpu_cores") or 4)
+
+    ram_available = ram  # user declares usable capacity for recommendations
+    vram_free = vram if has_gpu else 0.0
+    tier = _compute_tier(ram_available, vram if has_gpu else 0.0, cpu_cores)
+    gpu_name = str(profile.get("gpu_name") or "").strip()
+    gpus: List[Dict[str, Any]] = []
+    if has_gpu:
+        gpus = [
+            {
+                "name": gpu_name or "GPU (perfil do usuário)",
+                "vram_total_gb": vram,
+                "vram_free_gb": vram_free,
+                "source": "user_profile",
+            }
+        ]
+
+    out.update(
+        {
+            "ram_total_gb": round(ram, 1),
+            "ram_available_gb": round(ram_available, 1),
+            "has_gpu": has_gpu,
+            "gpus": gpus,
+            "vram_total_gb": round(vram, 1) if has_gpu else 0.0,
+            "vram_free_gb": round(vram_free, 1) if has_gpu else 0.0,
+            "cpu_cores": cpu_cores,
+            "tier": tier,
+            "effective_memory_gb": round(max(ram_available * 0.65, (vram_free * 0.85 if has_gpu else 0.0)), 1),
+            "scope": "user_profile",
+            "profile_mode": "manual",
+            "hardware_preset": cfg.get("hardware_preset") or "",
+            "note": (
+                "Recomendações usam o perfil “Meu PC” que você informou. "
+                "O chat só usa essa memória de verdade se o Ollama estiver rodando nesse mesmo PC "
+                "(não em um container/túnel remoto fraco)."
+            ),
+        }
+    )
+    return out

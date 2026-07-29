@@ -2149,6 +2149,88 @@ body.mode-execute-flash #modeSelect {
   margin: 0 0 10px;
 }
 
+.hardware-profile {
+  margin: 0 0 12px;
+  padding: 12px 14px;
+  border-radius: var(--radius);
+  border: 1px solid rgba(52, 81, 178, 0.22);
+  background: rgba(52, 81, 178, 0.06);
+}
+
+.hardware-profile-hint {
+  font-size: 0.78rem;
+  color: var(--muted);
+  line-height: 1.45;
+  margin: 0 0 10px;
+}
+
+.hardware-profile-modes {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px 16px;
+  margin-bottom: 10px;
+}
+
+.hw-mode {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font-size: 0.84rem;
+  cursor: pointer;
+}
+
+.hardware-profile-fields .field-label {
+  display: block;
+  margin-bottom: 8px;
+  font-size: 0.78rem;
+}
+
+.hardware-profile-fields input[type="number"],
+.hardware-profile-fields input[type="text"],
+.hardware-profile-fields select {
+  display: block;
+  width: 100%;
+  margin-top: 4px;
+  padding: 7px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--panel, #fff);
+  color: inherit;
+}
+
+.hw-profile-grid {
+  display: grid;
+  grid-template-columns: repeat(2, minmax(0, 1fr));
+  gap: 8px 12px;
+  margin: 6px 0 8px;
+}
+
+.hw-check {
+  display: flex !important;
+  align-items: center;
+  gap: 8px;
+  margin-top: 22px;
+}
+
+.hw-check input {
+  width: auto !important;
+  margin: 0 !important;
+}
+
+.hardware-profile-actions {
+  margin-top: 8px;
+}
+
+.hardware-profile-fields.is-disabled {
+  opacity: 0.55;
+  pointer-events: none;
+}
+
+@media (max-width: 720px) {
+  .hw-profile-grid { grid-template-columns: 1fr; }
+  .hw-check { margin-top: 0; }
+}
+
 .hardware-mismatch {
   font-size: 0.8rem;
   line-height: 1.45;

@@ -345,8 +345,34 @@ def _name_fits_hardware(name: str, hardware: Dict[str, Any]) -> bool:
 
 
 def _fits_hardware(entry: ModelEntry, hardware: Dict[str, Any]) -> bool:
-    effective = float(hardware.get("effective_memory_gb") or 0)
+    """Return True if the model can plausibly run given RAM and/or GPU VRAM.
+
+    Ollama can keep layers in RAM while offloading others to GPU, so a machine
+    with lots of RAM and a modest GPU may still run larger coder models.
+    """
+    ram_avail = float(
+        hardware.get("ram_available_gb")
+        or hardware.get("ram_total_gb")
+        or 0
+    )
+    vram_free = float(
+        hardware.get("vram_free_gb")
+        or hardware.get("vram_total_gb")
+        or 0
+    )
     has_gpu = bool(hardware.get("has_gpu"))
+    effective = float(hardware.get("effective_memory_gb") or 0)
+
+    # Enough system RAM alone (CPU / heavy RAM path).
+    if ram_avail >= entry.ram_gb * 0.95:
+        return True
+    # Enough dedicated VRAM alone.
+    if has_gpu and entry.vram_gb and vram_free >= entry.vram_gb * 0.95:
+        return True
+    # Hybrid offload: partial VRAM + remaining layers in RAM.
+    if has_gpu and (vram_free + ram_avail * 0.55) >= entry.ram_gb * 0.9:
+        return True
+    # Back-compat for callers that only set effective_memory_gb.
     required = entry.vram_gb if has_gpu and entry.vram_gb else entry.ram_gb
     return effective >= required * 0.95
 

@@ -17,5 +17,6 @@ app_demo/
 demo_py/
 *.tmp
 .env
+.forge/
 .agent/
 *.bak

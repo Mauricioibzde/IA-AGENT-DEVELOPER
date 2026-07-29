@@ -20,6 +20,8 @@
     models: [],
     modelRecommendations: null,
     recommendedModel: null,
+    userSettings: null,
+    profileMode: "detected",
     pullingModel: false,
     pullingModelName: null,
     devStatus: null,
@@ -161,6 +163,16 @@
     localRunCommands: $("localRunCommands"),
     btnCopyLocalRun: $("btnCopyLocalRun"),
     btnRefreshHardware: $("btnRefreshHardware"),
+    hwModeDetected: $("hwModeDetected"),
+    hwModeManual: $("hwModeManual"),
+    hwProfileFields: $("hwProfileFields"),
+    hwPreset: $("hwPreset"),
+    hwRam: $("hwRam"),
+    hwVram: $("hwVram"),
+    hwCores: $("hwCores"),
+    hwHasGpu: $("hwHasGpu"),
+    hwGpuName: $("hwGpuName"),
+    btnSaveHwProfile: $("btnSaveHwProfile"),
     primaryModelCard: $("primaryModelCard"),
     modelsCatalog: $("modelsCatalog"),
     pullProgress: $("pullProgress"),
@@ -230,6 +242,7 @@
   };
 
   const LAST_PROJECT_KEY = "forge_last_project";
+  const MODEL_PREF_KEY = "forge_preferred_model";
 
   const SETUP_DISMISS_KEY = "forge_setup_dismissed";
 
@@ -481,7 +494,7 @@
 
   function modelOptionLabel(name, catalog) {
     if (modelFitsHardware(name, catalog)) return name;
-    return `${name} (instalado · não cabe na RAM)`;
+    return `${name} (exige mais memória*)`;
   }
 
   function warnIfModelTooLarge(selected) {
@@ -489,11 +502,114 @@
     if (modelFitsHardware(selected)) return;
     const entry = catalogEntryForModel(selected);
     const need = entry?.ram_gb ? `~${entry.ram_gb} GB RAM` : "mais memória";
+    const profileHint =
+      state.profileMode === "manual"
+        ? "Pelo perfil “Meu PC” atual este modelo ainda parece exigente."
+        : "O Forge está medindo o <strong>servidor</strong> (pode ser um túnel/container). Defina o perfil “Meu PC” se a sua máquina for maior.";
     showToast(
-      `<strong>${escapeHtml(selected)}</strong> está instalado, mas provavelmente <strong>não cabe</strong> neste PC (precisa ${escapeHtml(String(need))}). Use Auto ou um modelo menor.`,
-      "err",
-      7000
+      `<strong>${escapeHtml(selected)}</strong> pode exigir ${escapeHtml(String(need))}. ${profileHint} Você ainda pode usá-lo se o Ollama rodar no PC certo.`,
+      "info",
+      8000
     );
+  }
+
+  function rememberModelPreference(model) {
+    try {
+      if (!model) localStorage.removeItem(MODEL_PREF_KEY);
+      else localStorage.setItem(MODEL_PREF_KEY, model);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function readModelPreference() {
+    try {
+      return localStorage.getItem(MODEL_PREF_KEY) || "";
+    } catch (_) {
+      return "";
+    }
+  }
+
+  function syncHwProfileFieldsEnabled() {
+    const manual = !!els.hwModeManual?.checked;
+    els.hwProfileFields?.classList.toggle("is-disabled", !manual);
+  }
+
+  function fillHardwarePresets(presets) {
+    if (!els.hwPreset) return;
+    const current = els.hwPreset.value;
+    const opts = ['<option value="">Personalizado…</option>'].concat(
+      (presets || []).map(
+        (p) =>
+          `<option value="${escapeHtml(p.id)}">${escapeHtml(p.label || p.id)}</option>`
+      )
+    );
+    els.hwPreset.innerHTML = opts.join("");
+    if (current && [...els.hwPreset.options].some((o) => o.value === current)) {
+      els.hwPreset.value = current;
+    }
+  }
+
+  function applyPresetToFields(presetId, presets) {
+    const preset = (presets || state.userSettings?.presets || []).find((p) => p.id === presetId);
+    if (!preset) return;
+    if (els.hwRam) els.hwRam.value = preset.ram_total_gb ?? "";
+    if (els.hwVram) els.hwVram.value = preset.vram_total_gb ?? "";
+    if (els.hwCores) els.hwCores.value = preset.cpu_cores ?? "";
+    if (els.hwHasGpu) els.hwHasGpu.checked = !!preset.has_gpu;
+  }
+
+  function renderHardwareSettings(settings) {
+    if (!settings) return;
+    state.userSettings = settings;
+    fillHardwarePresets(settings.presets || []);
+    const mode = settings.hardware_mode === "manual" ? "manual" : "detected";
+    if (els.hwModeManual) els.hwModeManual.checked = mode === "manual";
+    if (els.hwModeDetected) els.hwModeDetected.checked = mode !== "manual";
+    const profile = settings.hardware_profile || {};
+    if (els.hwPreset) els.hwPreset.value = settings.hardware_preset || "";
+    if (els.hwRam) els.hwRam.value = profile.ram_total_gb ?? "";
+    if (els.hwVram) els.hwVram.value = profile.vram_total_gb ?? "";
+    if (els.hwCores) els.hwCores.value = profile.cpu_cores ?? "";
+    if (els.hwHasGpu) els.hwHasGpu.checked = !!profile.has_gpu;
+    if (els.hwGpuName) els.hwGpuName.value = profile.gpu_name || "";
+    syncHwProfileFieldsEnabled();
+  }
+
+  async function saveHardwareProfile() {
+    const mode = els.hwModeManual?.checked ? "manual" : "detected";
+    const payload = {
+      hardware_mode: mode,
+      hardware_preset: els.hwPreset?.value || "",
+      hardware_profile: {
+        ram_total_gb: els.hwRam?.value ? Number(els.hwRam.value) : null,
+        vram_total_gb: els.hwVram?.value ? Number(els.hwVram.value) : null,
+        cpu_cores: els.hwCores?.value ? Number(els.hwCores.value) : null,
+        has_gpu: !!els.hwHasGpu?.checked,
+        gpu_name: els.hwGpuName?.value?.trim() || "",
+      },
+    };
+    if (mode === "manual" && !(payload.hardware_profile.ram_total_gb > 0)) {
+      showToast("Informe a RAM do seu PC (ex.: 40) para o perfil manual.", "err");
+      return;
+    }
+    if (els.btnSaveHwProfile) els.btnSaveHwProfile.disabled = true;
+    try {
+      const data = await api("/api/settings", { method: "POST", body: JSON.stringify(payload) });
+      renderHardwareSettings(data.settings);
+      state.profileMode = data.settings?.hardware_mode || mode;
+      showToast(
+        mode === "manual"
+          ? "Perfil “Meu PC” salvo. Catálogo e Auto atualizados."
+          : "Usando hardware detectado do servidor.",
+        "ok"
+      );
+      await loadModelRecommendations({ refresh: true });
+    } catch (err) {
+      showToast(err.message || "Falha ao salvar perfil", "err");
+    } finally {
+      if (els.btnSaveHwProfile) els.btnSaveHwProfile.disabled = false;
+    }
   }
 
   function getSelectedModel() {
@@ -596,15 +712,17 @@
     populateModelSelect(installed || state.models || [], state.modelRecommendations?.catalog || [], recommended);
 
     const list = installed || state.models || [];
-    const isInstalled = recommended && list.some((m) => m === recommended || m.startsWith(String(recommended).split(":")[0] + ":"));
+    const isInstalled = recommended && list.includes(recommended);
     const current = getSelectedModel();
+    const preferred = readModelPreference();
     const isAuto = !els.modelSelect || els.modelSelect.value === "__auto__";
 
-    if (isAuto && recommended && isInstalled) {
-      setModelSelection(recommended);
-    } else if (isAuto && list.length) {
-      const coder = list.find((m) => /coder|qwen|deepseek/i.test(m));
-      if (coder) setModelSelection(coder);
+    // Never force-replace an explicit user choice. Prefer saved preference, else keep Auto.
+    if (preferred && list.includes(preferred)) {
+      if (!current || isAuto) setModelSelection(preferred);
+    } else if (isAuto) {
+      // Stay on Auto — server picks a fitting model at request time.
+      setModelSelection(null);
     }
 
     if (els.modelHint) {
@@ -612,7 +730,8 @@
         els.modelHint.textContent = `Recomendado: ${recommended} — clique em Modelos IA para baixar.`;
         els.modelHint.classList.remove("hidden");
       } else if (recommended) {
-        els.modelHint.textContent = `Modelo recomendado: ${recommended}`;
+        const src = state.profileMode === "manual" ? "pelo perfil Meu PC" : "pelo hardware detectado";
+        els.modelHint.textContent = `Sugestão ${src}: ${recommended} — você pode escolher outro modelo livremente.`;
         els.modelHint.classList.remove("hidden");
       } else {
         els.modelHint.classList.add("hidden");
@@ -1239,7 +1358,12 @@
     const when = hw.detected_at
       ? new Date(hw.detected_at * 1000).toLocaleTimeString("pt-BR", { hour: "2-digit", minute: "2-digit", second: "2-digit" })
       : "—";
+    const profileLabel =
+      hw.profile_mode === "manual" || hw.scope === "user_profile"
+        ? "Meu PC (manual)"
+        : "Servidor detectado";
     const stats = [
+      ["Perfil", profileLabel],
       ["Host", hw.hostname || "—"],
       ["ID", hw.fingerprint || "—"],
       ["Tier", hw.tier || "?"],
@@ -1267,7 +1391,7 @@
       entry.fits
         ? '<span class="model-tag ok">compatível</span>'
         : entry.installed
-          ? '<span class="model-tag warn">instalado · não cabe na RAM</span>'
+          ? '<span class="model-tag warn">exige mais memória*</span>'
           : '<span class="model-tag warn">pode não caber</span>',
       entry.recommended ? '<span class="model-tag accent">recomendado</span>' : "",
     ].join("");
@@ -1541,14 +1665,15 @@
             return;
           }
           setModelSelection(model);
+          rememberModelPreference(model);
           warnIfModelTooLarge(model);
           if (modelFitsHardware(model)) {
             showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> selecionado.`, "ok");
             showToast(`Modelo selecionado: ${escapeHtml(model)}`, "ok");
           } else {
             showModelFeedback(
-              `<strong>${escapeHtml(model)}</strong> está instalado, mas pode não caber na memória deste PC.`,
-              "err"
+              `<strong>${escapeHtml(model)}</strong> selecionado. Se o Ollama rodar no seu PC potente, pode funcionar mesmo com aviso de memória.`,
+              "info"
             );
           }
           return;
@@ -1566,6 +1691,8 @@
     const client = renderClientHardware();
     const data = await api(`/api/models/recommendations${refresh ? "?refresh=1" : ""}`);
     state.modelRecommendations = data;
+    state.profileMode = data.profile_mode || data.hardware?.profile_mode || "detected";
+    if (data.settings) renderHardwareSettings(data.settings);
     state.models = (data.catalog || []).filter((e) => e.installed).map((e) => e.ollama_name);
     populateModelSelect(
       data.catalog?.filter((e) => e.installed).map((e) => e.ollama_name) || state.models,
@@ -4619,8 +4746,9 @@
       return;
     }
     const selected = getSelectedModel();
+    rememberModelPreference(selected);
     if (!selected) {
-      showToast("Modelo: Auto (recomendado)", "ok");
+      showToast("Modelo: Auto (escolhe conforme o perfil de hardware)", "ok");
       return;
     }
     if (!modelFitsHardware(selected)) {
@@ -4684,10 +4812,12 @@
     const val = els.composerModelSelect.value;
     if (!val) {
       if (els.modelSelect) els.modelSelect.value = "__auto__";
-      showToast("Modelo: Auto (recomendado)", "ok");
+      rememberModelPreference(null);
+      showToast("Modelo: Auto (escolhe conforme o perfil de hardware)", "ok");
       return;
     }
     setModelSelection(val);
+    rememberModelPreference(val);
     if (!modelFitsHardware(val)) {
       warnIfModelTooLarge(val);
       return;
@@ -4716,6 +4846,17 @@
       .finally(() => {
         if (els.btnRefreshHardware) els.btnRefreshHardware.disabled = false;
       });
+  });
+  els.hwModeDetected?.addEventListener("change", syncHwProfileFieldsEnabled);
+  els.hwModeManual?.addEventListener("change", syncHwProfileFieldsEnabled);
+  els.hwPreset?.addEventListener("change", () => {
+    if (!els.hwPreset.value) return;
+    if (els.hwModeManual) els.hwModeManual.checked = true;
+    syncHwProfileFieldsEnabled();
+    applyPresetToFields(els.hwPreset.value, state.userSettings?.presets);
+  });
+  els.btnSaveHwProfile?.addEventListener("click", () => {
+    saveHardwareProfile().catch(() => {});
   });
   els.btnCopyLocalRun?.addEventListener("click", async () => {
     const text = els.localRunCommands?.textContent || "";

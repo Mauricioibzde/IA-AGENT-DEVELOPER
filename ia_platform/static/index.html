@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=7" />
+  <link rel="stylesheet" href="/static/app.css?v=8" />
 </head>
 <body>
   <div class="app">
@@ -404,6 +404,50 @@
           <p class="hardware-note" id="hardwareNote">
             Recomendações de modelo usam o hardware do <strong>servidor Forge</strong> (onde o Python/Ollama rodam), não automaticamente o PC do navegador.
           </p>
+          <div class="hardware-profile" id="hardwareProfilePanel">
+            <h5 class="hardware-sub">Perfil para recomendações</h5>
+            <p class="hardware-profile-hint">
+              Escolha livremente qualquer modelo instalado. O perfil abaixo só guia o <strong>Auto</strong> e os selos “cabe / não cabe”.
+              Se o Forge/Ollama estiverem num túnel remoto, rode-os no seu PC para usar a RAM/GPU reais.
+            </p>
+            <div class="hardware-profile-modes" role="radiogroup" aria-label="Fonte do perfil">
+              <label class="hw-mode">
+                <input type="radio" name="hwProfileMode" id="hwModeDetected" value="detected" checked />
+                Detectado no servidor
+              </label>
+              <label class="hw-mode">
+                <input type="radio" name="hwProfileMode" id="hwModeManual" value="manual" />
+                Meu PC (manual)
+              </label>
+            </div>
+            <div class="hardware-profile-fields" id="hwProfileFields">
+              <label class="field-label" for="hwPreset">Atalho</label>
+              <select id="hwPreset">
+                <option value="">Personalizado…</option>
+              </select>
+              <div class="hw-profile-grid">
+                <label class="field-label" for="hwRam">RAM (GB)
+                  <input id="hwRam" type="number" min="4" max="256" step="1" placeholder="40" />
+                </label>
+                <label class="field-label" for="hwVram">VRAM GPU (GB)
+                  <input id="hwVram" type="number" min="0" max="128" step="1" placeholder="8" />
+                </label>
+                <label class="field-label" for="hwCores">Núcleos CPU
+                  <input id="hwCores" type="number" min="1" max="128" step="1" placeholder="12" />
+                </label>
+                <label class="hw-check field-label" for="hwHasGpu">
+                  <input id="hwHasGpu" type="checkbox" />
+                  Tenho GPU dedicada
+                </label>
+              </div>
+              <label class="field-label" for="hwGpuName">Nome da GPU (opcional)
+                <input id="hwGpuName" type="text" placeholder="ex.: RTX 3060 8GB / Radeon" />
+              </label>
+              <div class="hardware-profile-actions">
+                <button type="button" class="btn btn-primary btn-sm" id="btnSaveHwProfile">Salvar perfil e atualizar modelos</button>
+              </div>
+            </div>
+          </div>
           <div class="hardware-mismatch hidden" id="hardwareMismatch"></div>
           <div class="local-run-guide hidden" id="localRunGuide">
             <h5>Rodar Forge neste PC (Windows)</h5>
@@ -498,6 +542,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=7"></script>
+  <script src="/static/app.js?v=8"></script>
 </body>
 </html>

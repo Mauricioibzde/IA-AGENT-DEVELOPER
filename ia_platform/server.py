@@ -38,6 +38,7 @@ from ia_platform.ollama_service import ollama_service
 from ia_platform.project_templates import PROJECT_TEMPLATES, get_template_files
 from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
+from ia_platform.user_settings import load_settings, save_settings, settings_public
 
 STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
@@ -62,6 +63,15 @@ def _cached_hardware(*, force: bool = False) -> Dict[str, Any]:
     hw = detect_hardware()
     _HARDWARE_CACHE = (now, hw)
     return hw
+
+
+def _recommendation_hardware(*, force: bool = False) -> Dict[str, Any]:
+    """Hardware used for model recommendations / Auto — may apply user 'Meu PC' profile."""
+    from ia_platform.hardware import apply_user_hardware_profile
+    from ia_platform.user_settings import load_settings
+
+    detected = _cached_hardware(force=force)
+    return apply_user_hardware_profile(detected, load_settings())
 
 
 def _want_refresh(qs: Optional[Dict[str, List[str]]] = None) -> bool:
@@ -216,6 +226,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_setup_status()
         if path == "/api/system/hardware":
             return self._handle_hardware(qs)
+        if path == "/api/settings":
+            return self._handle_get_settings()
         if path == "/api/models/recommendations":
             return self._handle_model_recommendations(qs)
         if path == "/api/models/installed":
@@ -285,6 +297,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_model_pull_stream()
         if path == "/api/ollama/ensure":
             return self._handle_ollama_ensure()
+        if path == "/api/settings":
+            return self._handle_put_settings()
         if path == "/api/ollama/setup/stream":
             return self._handle_ollama_setup_stream()
         if path == "/api/setup/stream":
@@ -411,7 +425,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
         client = OllamaClient(cfg)
         ollama_online = client.check_available(timeout=2)
         installed = client.list_models() if ollama_online else []
-        hw = _cached_hardware()
+        hw = _recommendation_hardware()
         setup_model = recommend_setup_model(hw, installed)
         mgr = self._ollama_manager()
         has_setup_model = mgr.has_model(setup_model)
@@ -505,7 +519,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     install_url="https://nodejs.org",
                 )
 
-            hw = _cached_hardware()
+            hw = _recommendation_hardware()
             mgr = self._ollama_manager()
             installed = mgr.list_names()
             setup_model = recommend_setup_model(hw, installed)
@@ -578,7 +592,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
         models = client.list_models() if ollama_ok else []
         recommended_name = None
         if ollama_ok:
-            hw = _cached_hardware()
+            hw = _recommendation_hardware()
             recommended_name = recommend_setup_model(hw, models)
         self._send_json(
             200,
@@ -609,7 +623,37 @@ class PlatformHandler(BaseHTTPRequestHandler):
         refresh = _want_refresh(qs)
         if refresh:
             _invalidate_hardware_cache()
-        return self._send_json(200, {"hardware": _cached_hardware(force=refresh)})
+        detected = _cached_hardware(force=refresh)
+        effective = _recommendation_hardware(force=False)
+        return self._send_json(
+            200,
+            {
+                "hardware": effective,
+                "detected": detected,
+                "settings": settings_public(load_settings()),
+            },
+        )
+
+    def _handle_get_settings(self) -> None:
+        return self._send_json(200, {"settings": settings_public(load_settings())})
+
+    def _handle_put_settings(self) -> None:
+        data = self._read_json()
+        try:
+            saved = save_settings(data if isinstance(data, dict) else {})
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        # Recommendations depend on profile — clear detected cache pairing is fine;
+        # effective hardware is recomputed from settings each time.
+        hw = _recommendation_hardware(force=True)
+        return self._send_json(
+            200,
+            {
+                "ok": True,
+                "settings": settings_public(saved),
+                "hardware": hw,
+            },
+        )
 
     def _handle_models_installed(self) -> None:
         mgr = self._ollama_manager()
@@ -618,10 +662,13 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def _handle_model_recommendations(self, qs: Optional[Dict[str, List[str]]] = None) -> None:
         if _want_refresh(qs):
             _invalidate_hardware_cache()
-        hw = _cached_hardware(force=True)
+        hw = _recommendation_hardware(force=_want_refresh(qs))
         installed = self._ollama_manager().list_names()
-        return self._send_json(200, recommend_models(hw, installed))
-
+        payload = recommend_models(hw, installed)
+        payload["detected_hardware"] = hw.get("detected_hardware") or _cached_hardware()
+        payload["settings"] = settings_public(load_settings())
+        payload["profile_mode"] = hw.get("profile_mode") or "detected"
+        return self._send_json(200, payload)
     def _handle_model_pull_stream(self) -> None:
         data = self._read_json()
         model = str(data.get("model") or data.get("name") or "").strip()
@@ -1183,7 +1230,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         mgr = self._ollama_manager()
         installed = mgr.list_names() if not offline else []
-        hardware = _cached_hardware()
+        hardware = _recommendation_hardware()
         if offline and allow_offline_scaffold:
             # Deterministic HTML/CSS/JS path — no model required.
             models = {
@@ -1390,7 +1437,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             mgr = self._ollama_manager()
             models = {
                 **models,
-                "coder": resolve_model_for_chat(None, mgr.list_names(), _cached_hardware()),
+                "coder": resolve_model_for_chat(None, mgr.list_names(), _recommendation_hardware()),
             }
 
         if run_manager.is_workspace_busy(workspace):
