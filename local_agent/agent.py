@@ -250,6 +250,11 @@ class CodingAgent:
             self.seen_signatures.add(signature)
 
             # Execute tools.
+            self._event(
+                "tools_start",
+                count=len(calls),
+                tools=[str(c.get("tool") or c.get("name") or c.get("action") or "?") for c in calls],
+            )
             results, finished = self.executor.run_calls(calls)
             last_results_json = self._format_tool_results(results)
             last_diffs = "\n".join(self.executor.step_diffs[-3:])
@@ -279,6 +284,12 @@ class CodingAgent:
                 self.context_manager.invalidate_many(changed_paths)
                 self.index.build()
                 self.memory.update_project_summary(self.index.summary(limit=20)[:1500])
+                self._event(
+                    "files_changed",
+                    paths=changed_paths[:12],
+                    created=list(dict.fromkeys(self.executor.created_files))[-8:],
+                    modified=list(dict.fromkeys(self.executor.modified_files))[-8:],
+                )
 
             if finished:
                 final_answer = results[-1]["result"].get("answer", "")
@@ -292,17 +303,27 @@ class CodingAgent:
             validation_results: List[ValidationResult] = []
 
             if task.validation_commands:
+                self._event("validation_start", commands=task.validation_commands[:3])
                 validation_results = [self.validator.run_one(cmd) for cmd in task.validation_commands]
             elif wrote_files:
                 quick_checks = self.validator.discover_commands()[:2]
                 if quick_checks:
+                    self._event("validation_start", commands=quick_checks)
                     validation_results = [self.validator.run_one(cmd) for cmd in quick_checks]
 
             if step_had_failures and not validation_results:
+                self._event("validation_start", commands=["auto"])
                 validation_results = self.validator.run_all()[:2]
 
             self.all_validations.extend(validation_results)
             validation_summary = self.validator.summarize(validation_results)
+            if validation_results:
+                self._event(
+                    "validation",
+                    count=len(validation_results),
+                    ok=sum(1 for v in validation_results if v.success),
+                    summary=validation_summary[:240],
+                )
             last_validation = validation_summary
             for item in validation_results:
                 if not item.success and item.category == "introduced":

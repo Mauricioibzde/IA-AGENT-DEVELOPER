@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from typing import List, Optional
 
 from .models import Task
@@ -24,43 +25,92 @@ Apply a patch:
 Finish:
 {"tool":"final","args":{"answer":"Done. Created src/main.py with the API handler."}}"""
 
+SENIOR_STANDARDS = """\
+SENIOR ENGINEERING STANDARDS (always apply):
+Identity: You are a senior full-stack engineer across frontend AND backend.
+Languages you must handle well: JavaScript/TypeScript (React/Vite/Node), HTML/CSS,
+Python (APIs, scripts, FastAPI/Flask patterns), Go, Rust, Java/Kotlin when present,
+SQL, shell. Match the project's stack; do not force Python onto a frontend-only app.
+
+Architecture & structure:
+- Separate concerns (UI / domain / data / API). Prefer clear folders (src/, components/,
+  api/, services/, tests/) over dumping everything in one file.
+- Keep modules small and cohesive. Name files/functions by intent.
+- Prefer composition over copy-paste. Extract shared helpers when duplication appears.
+- Configuration via env/.env.example — never hardcode secrets, tokens, or passwords.
+
+Frontend quality:
+- Accessible HTML (semantic tags, labels, contrast, keyboard-friendly controls).
+- Responsive layouts (mobile-first). Consistent spacing, typography, hierarchy.
+- No broken imports, missing mounts, or dead placeholder stubs in production paths.
+- React: proper components, keys in lists, controlled inputs when needed, CSS modules
+  or dedicated CSS files. Always include package.json + vite.config + mounted root.
+- Prefer polished, production-looking UI over lorem/demo junk.
+
+Backend quality:
+- Explicit input validation and clear error responses (status codes + messages).
+- Idempotent-safe writes where relevant. Sensible logging without leaking secrets.
+- REST/JSON APIs: consistent routes, CORS only when needed, health endpoint when useful.
+- Persist data safely; avoid SQL injection / path traversal / command injection.
+- Add smoke tests or compile/build checks for critical paths.
+
+Security & reliability:
+- Never write credentials into source. Use .env.example with placeholder values.
+- Sanitize paths and user input. No shell interpolation of untrusted strings.
+- Fail loudly with actionable errors; do not swallow exceptions silently.
+- After edits: validate (tests, lint, build, compile) appropriate to the stack.
+
+Code craft:
+- Readable names, early returns, minimal nesting, no dead code.
+- Comments only for non-obvious intent — never narrate obvious lines.
+- Prefer edit_file/apply_patch for surgical changes; write_file for new files.
+- Leave the project runnable/previewable when the goal is a web app."""
+
 CORE_RULES = """\
 RULES:
 1. ALWAYS read a file before editing it. Never guess file contents.
 2. Use relative paths only. Never escape the workspace.
-3. After modifying a file, validate (run tests, lint, or compileall).
+3. After modifying a file, validate with the RIGHT stack command (tests/lint/build/compile).
 4. If a tool fails, analyze the error and try a DIFFERENT approach.
 5. Never repeat the exact same tool call that already failed.
 6. Return only JSON tool calls. No prose explanations mixed in.
 7. When the task is complete and validated, return the final tool.
 8. For complex edits prefer edit_file or apply_patch over write_file.
-9. Keep edits minimal and focused — change only what is needed.
-10. If you need more context, read more files before deciding."""
+9. Keep edits minimal and focused — change only what is needed for the goal.
+10. If you need more context, read more files before deciding.
+11. For web UI apps prefer React + Vite (scaffold_project template=react) or solid HTML/CSS.
+12. Never leave a React app without package.json, vite.config, index.html, and a mounted main entry.
+13. Apply SENIOR ENGINEERING STANDARDS: clean architecture, FE+BE quality, security, tests.
+14. Choose validation by stack: Python→pytest/compileall; Node/React→npm test|build;
+    Go→go test ./...; Rust→cargo check; Java→mvn/gradle test when present.
+15. Do not invent dependencies you cannot install; prefer stdlib or already-listed deps."""
 
 
 def system_prompt(workspace: str) -> str:
     return (
-        "You are an expert autonomous coding agent operating locally via Ollama.\n"
-        "You analyze code, plan changes, execute tools, validate results, and self-correct.\n"
+        "You are Forge's senior autonomous coding agent (local Ollama).\n"
+        "You are a polyglot full-stack specialist: strong frontend AND backend.\n"
+        "You plan, implement, validate, and self-correct like a senior engineer on a team.\n"
         f"Workspace root: {workspace}\n\n"
+        f"{SENIOR_STANDARDS}\n\n"
         f"{CORE_RULES}\n"
     )
 
 
 def planner_prompt(goal: str, project_summary: str) -> str:
     return (
-        "You are the PLANNER. Your job is to create a structured execution plan.\n"
+        "You are the PLANNER for a senior full-stack coding agent.\n"
         "Do NOT modify files. Return ONLY a JSON object.\n\n"
         "Required JSON schema:\n"
         "{\n"
         '  "goal": "string — the user objective",\n'
-        '  "summary": "string — brief strategy description",\n'
+        '  "summary": "string — brief strategy (architecture + stack choice)",\n'
         '  "risks": ["string — potential risks"],\n'
         '  "tasks": [\n'
         "    {\n"
         '      "id": "task-N",\n'
         '      "title": "short title",\n'
-        '      "description": "what to do and how to validate",\n'
+        '      "description": "what to do, senior practices to apply, and how to validate",\n'
         '      "dependencies": ["task-ids this depends on"],\n'
         '      "relevant_files": ["paths to read/modify"],\n'
         '      "validation_commands": ["commands to verify success"],\n'
@@ -69,14 +119,18 @@ def planner_prompt(goal: str, project_summary: str) -> str:
         "  ]\n"
         "}\n\n"
         "Planning guidelines:\n"
-        "- Start with a read/analysis task to understand existing code.\n"
+        "- Start with a read/analysis task to understand existing code and stack.\n"
         "- Split large changes into small focused tasks (1-3 files each).\n"
-        "- Each task should have at least one validation command.\n"
-        "- For Python projects: use 'python -m compileall .' or 'python -m pytest -q'.\n"
-        "- For Node projects: use 'npm test' or 'npm run lint'.\n"
-        "- Mark dependencies so tasks run in the right order.\n"
+        "- Each mutating task needs a stack-correct validation command.\n"
+        "- Python: 'python -m compileall .' or 'python -m pytest -q'.\n"
+        "- Node/React/Vite: prefer 'npm run build' (or 'npm test' / lint if present).\n"
+        "- Go: 'go test ./...' ; Rust: 'cargo check' ; Java: project test command if present.\n"
+        "- Do NOT use python compileall for frontend-only (HTML/CSS/JSX) goals.\n"
+        "- New web apps: scaffold react (Vite) OR complete HTML/CSS landing — previewable UI.\n"
+        "- APIs: include validation, clear errors, and a health/smoke check when useful.\n"
+        "- Prefer maintainable structure (components/services/tests) over one giant file.\n"
         "- Include a final validation/review task.\n"
-        "- Identify files that will likely need reading via relevant_files.\n\n"
+        "- Identify files via relevant_files.\n\n"
         f"User goal:\n{goal}\n\n"
         f"Project summary:\n{project_summary}\n"
     )
@@ -94,8 +148,9 @@ def executor_prompt(
     no_progress: bool = False,
 ) -> str:
     parts = [
-        "You are the EXECUTOR. Return JSON tool call(s) ONLY.\n",
+        "You are the EXECUTOR — a senior full-stack engineer. Return JSON tool call(s) ONLY.\n",
         f"Workspace root: {workspace}\n",
+        f"\n{SENIOR_STANDARDS}\n",
         f"\n{CORE_RULES}\n",
         f"\nTool call examples:\n{TOOL_CALL_EXAMPLES}\n",
         f"\nAvailable tools:\n{tools.descriptions_for_prompt()}\n",
@@ -115,11 +170,12 @@ def executor_prompt(
         parts.append(f"\n## Recent diffs\n{recent_diffs}\n")
     parts.append(f"\n## Context\n{context}\n")
     parts.append(
-        "\nThink step by step:\n"
-        "1. What information do I need? → read files first\n"
-        "2. What is the minimal change? → edit only what's needed\n"
-        "3. How do I validate? → run tests/compile after editing\n"
-        "4. Am I done? → return final tool when validated\n"
+        "\nThink step by step (senior bar):\n"
+        "1. What files do I need? → read first\n"
+        "2. What is the cleanest maintainable change?\n"
+        "3. Frontend/backend concerns separated? Security ok?\n"
+        "4. Validate with the correct stack command\n"
+        "5. Done? → return final tool\n"
         "\nReturn your tool call(s) now:\n"
     )
     return "".join(parts)
@@ -132,7 +188,8 @@ def reflector_prompt(
     previous_attempts: int,
 ) -> str:
     return (
-        "You are the REFLECTION agent. Analyze the results and decide next action.\n"
+        "You are the REFLECTION agent for a senior coding workflow.\n"
+        "Analyze results against correctness, maintainability, and validation.\n"
         "Return ONLY JSON with these keys:\n"
         "- status: continue | retry | replan | rollback | ask_user | finish | abort\n"
         "- analysis: what happened and why (be specific)\n"
@@ -142,12 +199,13 @@ def reflector_prompt(
         "- risk_level: low | medium | high\n"
         "- evidence: specific error messages or output lines supporting your analysis\n\n"
         "Decision guidelines:\n"
-        "- 'finish': all tools succeeded AND validation passed\n"
+        "- 'finish': tools succeeded AND validation passed AND result is production-quality enough for the goal\n"
         "- 'continue': partial progress, more tools needed for this task\n"
-        "- 'retry': a fixable error occurred — describe a DIFFERENT fix approach\n"
-        "- 'replan': the task decomposition was wrong, need new tasks\n"
-        "- 'rollback': changes made things worse, restore backup\n"
-        "- 'abort': unrecoverable error after multiple attempts\n\n"
+        "- 'retry': fixable error — describe a DIFFERENT fix approach\n"
+        "- 'replan': task decomposition was wrong\n"
+        "- 'rollback': changes made things worse\n"
+        "- 'abort': unrecoverable after multiple attempts\n"
+        "- Prefer retry/replan over finish if code is stubby, broken, insecure, or unvalidated\n\n"
         f"Task: {task.id} — {task.title}\n"
         f"Description: {task.description}\n"
         f"Attempts so far: {previous_attempts}/{task.max_attempts}\n\n"
@@ -160,20 +218,65 @@ def final_report_prompt(goal: str, facts: str) -> str:
     return (
         "Write a concise final engineering report matching the user's language.\n"
         "Use only the provided facts. Be honest about failures.\n"
+        "Mention stack choices and validation briefly when relevant.\n"
         f"Goal: {goal}\nFacts:\n{facts}\n"
     )
 
 
+def _goal_looks_frontend(goal: str) -> bool:
+    g = goal.lower()
+    return bool(
+        re.search(
+            r"\b(react|vite|html|css|landing|frontend|front-end|ui|ux|página|pagina|website|site|dashboard)\b",
+            g,
+        )
+    )
+
+
+def _goal_looks_backend(goal: str) -> bool:
+    g = goal.lower()
+    return bool(
+        re.search(
+            r"\b(api|backend|back-end|endpoint|fastapi|flask|express|django|server|rest|graphql|database|sql)\b",
+            g,
+        )
+    )
+
+
 def minimal_safe_plan(goal: str) -> dict:
+    frontend = _goal_looks_frontend(goal)
+    backend = _goal_looks_backend(goal)
+    if frontend and not backend:
+        validate = ["npm run build"]
+        execute_desc = (
+            f"{goal}\nApply senior frontend practices: semantic HTML/accessible UI or "
+            "React+Vite with proper mount, polished layout, no stubs."
+        )
+    elif backend and not frontend:
+        validate = ["python -m compileall ."]
+        execute_desc = (
+            f"{goal}\nApply senior backend practices: validation, clear errors, "
+            "no secrets in code, smoke/health check when useful."
+        )
+    else:
+        validate = []
+        execute_desc = (
+            f"{goal}\nApply senior full-stack practices for the detected stack; "
+            "validate with the appropriate build/test command."
+        )
+
     return {
         "goal": goal,
-        "summary": "Plano mínimo seguro gerado localmente após falha de JSON do modelo.",
+        "summary": "Plano mínimo seguro (fallback) com barra de qualidade sênior.",
         "risks": ["Model failed to produce a valid plan — using conservative fallback"],
         "tasks": [
             {
                 "id": "task-1",
-                "title": "Analisar estrutura",
-                "description": "Ler arquivos relevantes do workspace para entender a base de código",
+                "title": "Analisar estrutura e stack",
+                "description": (
+                    "Ler arquivos relevantes do workspace, detectar frontend/backend "
+                    "e linguagens em uso antes de alterar código."
+                ),
                 "dependencies": [],
                 "relevant_files": [],
                 "validation_commands": [],
@@ -181,20 +284,23 @@ def minimal_safe_plan(goal: str) -> dict:
             },
             {
                 "id": "task-2",
-                "title": "Executar solicitação",
-                "description": goal,
+                "title": "Implementar com qualidade sênior",
+                "description": execute_desc,
                 "dependencies": ["task-1"],
                 "relevant_files": [],
-                "validation_commands": ["python -m compileall ."],
+                "validation_commands": list(validate),
                 "risk_level": "medium",
             },
             {
                 "id": "task-3",
                 "title": "Validar resultado",
-                "description": "Validar arquivos e comandos afetados. Verificar se testes passam.",
+                "description": (
+                    "Validar arquivos afetados com o comando correto da stack. "
+                    "Garantir que o app/API fica executável e sem regressões óbvias."
+                ),
                 "dependencies": ["task-2"],
                 "relevant_files": [],
-                "validation_commands": ["python -m compileall ."],
+                "validation_commands": list(validate),
                 "risk_level": "low",
             },
         ],

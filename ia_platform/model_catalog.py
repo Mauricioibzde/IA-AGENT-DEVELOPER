@@ -178,14 +178,66 @@ def resolve_models_for_run(
     return {"coder": coder, "planner": planner, "reflection": reflection}
 
 
+def resolve_model_for_chat(
+    requested: Optional[str], installed: List[str], hardware: Optional[Dict[str, Any]] = None
+) -> str:
+    """Prefer conversational / instruct models for Chat mode (avoid *-base)."""
+    hardware = hardware or {}
+    if requested and str(requested).strip():
+        name = str(requested).strip()
+        if not name.lower().endswith("-base"):
+            return name
+
+    preferred = [
+        "llama3.2:3b",
+        "llama3.2",
+        "llama3.1:8b",
+        "llama3.1",
+        "mistral:7b",
+        "mistral",
+        "qwen2.5:7b",
+        "qwen2.5",
+        "qwen2.5-coder:7b",
+        "qwen2.5-coder:3b",
+        "codellama:latest",
+        "codellama:7b",
+    ]
+    for candidate in preferred:
+        hit = _installed_model_name(candidate, installed)
+        if hit and not hit.lower().endswith("-base"):
+            return hit
+
+    scored: List[tuple[int, str]] = []
+    for name in installed:
+        lower = name.lower()
+        if "embed" in lower or lower.endswith("-base"):
+            continue
+        score = 0
+        if any(tag in lower for tag in ("llama3.2", "llama3.1", "mistral", "qwen2.5")):
+            score += 40
+        if "coder" in lower:
+            score += 10
+        if any(tag in lower for tag in (":3b", "3b", "1.5b", "tiny", "mini")):
+            score += 15
+        if any(tag in lower for tag in (":7b", "7b", "8b")):
+            score += 8
+        scored.append((score, name))
+    if scored:
+        scored.sort(key=lambda item: (-item[0], item[1]))
+        return scored[0][1]
+
+    return _resolve_coder_model(None, installed, hardware)
+
+
 def _resolve_coder_model(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     if requested and str(requested).strip():
         return str(requested).strip()
 
     rec = recommend_models(hardware, installed)
     primary = rec["primary"]["ollama_name"]
-    if _is_model_installed(primary, installed):
-        return primary
+    installed_primary = _installed_model_name(primary, installed)
+    if installed_primary:
+        return installed_primary
 
     for name in installed:
         lower = name.lower()
@@ -198,10 +250,17 @@ def _resolve_coder_model(requested: Optional[str], installed: List[str], hardwar
 
 
 def _is_model_installed(ollama_name: str, installed: List[str]) -> bool:
+    return _installed_model_name(ollama_name, installed) is not None
+
+
+def _installed_model_name(ollama_name: str, installed: List[str]) -> Optional[str]:
     if ollama_name in installed:
-        return True
+        return ollama_name
     base = ollama_name.split(":")[0]
-    return any(name.split(":")[0] == base for name in installed)
+    for name in installed:
+        if name.split(":")[0] == base:
+            return name
+    return None
 
 
 def _fits_hardware(entry: ModelEntry, hardware: Dict[str, Any]) -> bool:
@@ -258,14 +317,26 @@ def recommend_setup_model(
     if candidates:
         candidates.sort(key=lambda item: item[0], reverse=True)
         chosen = candidates[0][1].ollama_name
-        if _is_model_installed(chosen, installed):
-            return chosen
+        installed_chosen = _installed_model_name(chosen, installed)
+        if installed_chosen:
+            return installed_chosen
         for _score_val, entry in candidates:
-            if _is_model_installed(entry.ollama_name, installed):
-                return entry.ollama_name
+            installed_entry = _installed_model_name(entry.ollama_name, installed)
+            if installed_entry:
+                return installed_entry
         return chosen
 
-    return recommend_models(hardware, installed)["primary"]["ollama_name"]
+    exact_installed = [
+        entry
+        for entry in MODEL_CATALOG
+        if entry.ollama_name in installed and "coder" in entry.tags
+    ]
+    if exact_installed:
+        exact_installed.sort(key=lambda entry: (TIER_ORDER.get(entry.tier, 2), entry.size_gb))
+        return exact_installed[0].ollama_name
+
+    fallback = recommend_models(hardware, installed)["primary"]["ollama_name"]
+    return _installed_model_name(fallback, installed) or fallback
 
 
 def recommend_models(

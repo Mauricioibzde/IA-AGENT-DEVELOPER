@@ -36,9 +36,18 @@ LANG_BY_EXT = {
     ".yml": "yaml",
     ".yaml": "yaml",
     ".css": "css",
+    ".scss": "css",
     ".html": "html",
     ".sh": "shell",
     ".ps1": "powershell",
+    ".go": "go",
+    ".rs": "rust",
+    ".java": "java",
+    ".kt": "kotlin",
+    ".cs": "csharp",
+    ".php": "php",
+    ".rb": "ruby",
+    ".sql": "sql",
 }
 
 CONFIG_NAMES = {
@@ -206,6 +215,23 @@ class ProjectIndex:
             self.detected_commands["test"].append("python -m pytest -q")
             self.detected_commands["lint"].extend(["python -m compileall .", "ruff check ."])
             self.detected_commands["build"].append("python -m compileall .")
+
+        if (self.workspace / "go.mod").exists() or any(f.language == "go" for f in self.files):
+            self.detected_commands["test"].append("go test ./...")
+            self.detected_commands["build"].append("go build ./...")
+            self.detected_commands["lint"].append("go vet ./...")
+
+        if (self.workspace / "Cargo.toml").exists() or any(f.language == "rust" for f in self.files):
+            self.detected_commands["test"].append("cargo test")
+            self.detected_commands["build"].append("cargo check")
+            self.detected_commands["lint"].append("cargo clippy -- -D warnings")
+
+        if (self.workspace / "pom.xml").exists():
+            self.detected_commands["test"].append("mvn -q test")
+            self.detected_commands["build"].append("mvn -q -DskipTests package")
+        elif (self.workspace / "build.gradle").exists() or (self.workspace / "build.gradle.kts").exists():
+            self.detected_commands["test"].append("gradle test")
+            self.detected_commands["build"].append("gradle build -x test")
 
         # de-dup
         for key, values in self.detected_commands.items():

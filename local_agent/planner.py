@@ -88,10 +88,38 @@ class Planner:
 
     def _ensure_validation_commands(self, plan: Plan, index: Optional[ProjectIndex] = None) -> None:
         """Ensure mutating tasks have project-aware validation commands."""
-        mutate_words = ["create", "write", "edit", "modify", "refactor", "fix", "add", "remove", "delete", "implement"]
+        mutate_words = [
+            "create",
+            "write",
+            "edit",
+            "modify",
+            "refactor",
+            "fix",
+            "add",
+            "remove",
+            "delete",
+            "implement",
+            "cri",
+            "alter",
+            "implement",
+            "adicion",
+        ]
+        goal_lower = (plan.goal or "").lower()
+        frontend_goal = bool(
+            re.search(
+                r"\b(react|vite|html|css|landing|frontend|ui|website|site|dashboard|página|pagina)\b",
+                goal_lower,
+            )
+        )
         for task in plan.tasks:
             if task.validation_commands:
-                continue
+                # Drop python compileall on frontend-only goals if model added it by habit.
+                if frontend_goal:
+                    task.validation_commands = [
+                        c for c in task.validation_commands if "compileall" not in c.lower()
+                    ]
+                if task.validation_commands:
+                    continue
             desc_lower = task.description.lower()
             if not any(word in desc_lower for word in mutate_words):
                 continue
@@ -101,7 +129,13 @@ class Planner:
                 for key in ("test", "lint", "build"):
                     detected = index.detected_commands.get(key) or []
                     if detected:
-                        cmds.append(detected[0])
+                        # Prefer Node/Go/Rust build over python when mixed and goal is FE.
+                        pick = detected[0]
+                        if frontend_goal:
+                            nodeish = [c for c in detected if c.startswith("npm")]
+                            if nodeish:
+                                pick = nodeish[0]
+                        cmds.append(pick)
                         break
                 if not cmds and index.package_scripts:
                     if "test" in index.package_scripts:
@@ -114,14 +148,25 @@ class Planner:
             if not cmds and index:
                 has_python = any(f.language == "python" for f in index.files)
                 has_node = bool(index.package_scripts) or any(
-                    f.language in {"javascript", "typescript"} for f in index.files
+                    f.language in {"javascript", "typescript", "html", "css"} for f in index.files
                 )
-                if has_python and not has_node:
+                has_go = any(f.language == "go" for f in index.files) or (index.workspace / "go.mod").exists()
+                has_rust = any(f.language == "rust" for f in index.files) or (index.workspace / "Cargo.toml").exists()
+                if frontend_goal or (has_node and not has_python):
+                    if index.package_scripts.get("build"):
+                        cmds = ["npm run build"]
+                    elif index.package_scripts.get("test"):
+                        cmds = ["npm test"]
+                elif has_go:
+                    cmds = ["go test ./..."]
+                elif has_rust:
+                    cmds = ["cargo check"]
+                elif has_python and not has_node:
                     cmds = ["python -m compileall ."]
 
             if not cmds and index:
                 has_python = any(f.language == "python" for f in index.files)
-                if has_python and not index.package_scripts:
+                if has_python and not index.package_scripts and not frontend_goal:
                     cmds = ["python -m compileall ."]
 
             task.validation_commands = cmds
@@ -130,10 +175,13 @@ class Planner:
             if "test" in desc_lower or "validate" in desc_lower:
                 if index and index.detected_commands.get("test"):
                     extra = index.detected_commands["test"][0]
-                    if extra not in task.validation_commands:
+                    if frontend_goal and not extra.startswith("npm") and "pytest" in extra:
+                        pass
+                    elif extra not in task.validation_commands:
                         task.validation_commands.append(extra)
-                elif "python -m pytest -q --tb=short" not in task.validation_commands:
-                    task.validation_commands.append("python -m pytest -q --tb=short")
+                elif not frontend_goal and "python -m pytest -q --tb=short" not in task.validation_commands:
+                    if index and any(f.language == "python" for f in index.files):
+                        task.validation_commands.append("python -m pytest -q --tb=short")
 
     def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
         content = text.strip()

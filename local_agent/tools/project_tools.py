@@ -29,31 +29,53 @@ def _scaffold_files(project_name: str, template: str) -> Dict[str, str]:
             "tests/test_main.py": "def test_smoke():\n    assert True\n",
         }
     if template == "react":
-        return {
-            "README.md": f"# {project_name}\n\nMinimal React starter placeholder.\n",
-            "package.json": json.dumps(
-                {
-                    "name": project_name,
-                    "version": "1.0.0",
-                    "private": True,
-                    "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
-                },
-                indent=2,
-            )
-            + "\n",
-            "index.html": (
-                "<!doctype html>\n<html lang=\"en\">\n  <head>\n    <meta charset=\"UTF-8\" />\n"
-                f"    <title>{project_name}</title>\n  </head>\n  <body>\n"
-                "    <div id=\"root\"></div>\n"
-                "    <script type=\"module\" src=\"/src/main.jsx\"></script>\n"
-                "  </body>\n</html>\n"
-            ),
-            "src/main.jsx": (
-                "export function App() {\n  return <h1>Hello from starter project</h1>;\n}\n\n"
-                "const root = document.getElementById('root');\n"
-                "root.textContent = 'Hello from starter project';\n"
-            ),
-        }
+        try:
+            from ia_platform.project_templates import react_vite_files
+
+            return react_vite_files(project_name)
+        except Exception:
+            # Offline / unit-test fallback — still a runnable Vite app shape.
+            return {
+                "README.md": f"# {project_name}\n\nReact + Vite starter.\n",
+                "package.json": json.dumps(
+                    {
+                        "name": project_name,
+                        "private": True,
+                        "type": "module",
+                        "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
+                        "dependencies": {"react": "^18.3.1", "react-dom": "^18.3.1"},
+                        "devDependencies": {"@vitejs/plugin-react": "^4.3.4", "vite": "^5.4.11"},
+                    },
+                    indent=2,
+                )
+                + "\n",
+                "vite.config.js": (
+                    'import { defineConfig } from "vite";\n'
+                    'import react from "@vitejs/plugin-react";\n\n'
+                    "export default defineConfig({ plugins: [react()] });\n"
+                ),
+                "index.html": (
+                    "<!doctype html>\n<html lang=\"pt-BR\">\n  <head>\n"
+                    '    <meta charset="UTF-8" />\n'
+                    f"    <title>{project_name}</title>\n  </head>\n  <body>\n"
+                    '    <div id="root"></div>\n'
+                    '    <script type="module" src="/src/main.jsx"></script>\n'
+                    "  </body>\n</html>\n"
+                ),
+                "src/main.jsx": (
+                    'import React from "react";\n'
+                    'import { createRoot } from "react-dom/client";\n'
+                    'import App from "./App.jsx";\n'
+                    'import "./index.css";\n\n'
+                    'createRoot(document.getElementById("root")).render(<App />);\n'
+                ),
+                "src/App.jsx": (
+                    'export default function App() {\n'
+                    "  return <main><h1>Hello from starter project</h1></main>;\n"
+                    "}\n"
+                ),
+                "src/index.css": "* { box-sizing: border-box; margin: 0; }\n",
+            }
     return {
         "README.md": f"# {project_name}\n",
         "package.json": json.dumps(
@@ -75,7 +97,14 @@ def scaffold_project(args: Dict[str, Any], **context: Any) -> ToolResult:
     cfg: AgentConfig = context["config"]
     project_name = str(args.get("name", "project"))
     template = str(args.get("template", "node"))
-    target_dir = resolve_in_workspace(workspace, args.get("path", project_name))
+    raw_path = str(args.get("path") or ".").strip() or "."
+    # Default: scaffold into the current workspace root (Forge project folder).
+    if raw_path in {".", "", project_name}:
+        target_dir = Path(workspace)
+        resolve_base = Path(workspace)
+    else:
+        target_dir = resolve_in_workspace(workspace, raw_path)
+        resolve_base = target_dir
     files = _scaffold_files(project_name, template)
     if cfg.dry_run:
         return ToolResult(
@@ -91,7 +120,7 @@ def scaffold_project(args: Dict[str, Any], **context: Any) -> ToolResult:
     target_dir.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
     for rel, content in files.items():
-        file_path = resolve_in_workspace(target_dir, rel)
+        file_path = resolve_in_workspace(resolve_base, rel)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(file_path, content)
         created.append(str(file_path))
@@ -127,7 +156,7 @@ def build_project_tools() -> List[ToolDefinition]:
     return [
         ToolDefinition(
             name="scaffold_project",
-            description="Create a starter project (node|python|react)",
+            description="Create a starter project (node|python|react). Prefer react for web UIs (Vite+React).",
             argument_schema={
                 "type": "object",
                 "properties": {

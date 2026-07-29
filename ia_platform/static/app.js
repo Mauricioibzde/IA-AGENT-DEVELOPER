@@ -24,6 +24,8 @@
     mobilePanelOpen: false,
     runs: [],
     selectedRunId: null,
+    recentChangedFiles: [],
+    expandedDirs: {},
     fileSearchTimer: null,
     ollamaOk: false,
     previewDevice: "desktop",
@@ -61,6 +63,8 @@
     fileViewer: $("fileViewer"),
     previewFrame: $("previewFrame"),
     previewHint: $("previewHint"),
+    previewEmpty: $("previewEmpty"),
+    btnPreviewStartDev: $("btnPreviewStartDev"),
     previewMode: $("previewMode"),
     btnDevStart: $("btnDevStart"),
     btnDevStop: $("btnDevStop"),
@@ -931,6 +935,7 @@
       });
       els.chatMessages.innerHTML = "";
       state.lastReport = "";
+      els.reportViewer.classList.remove("report-shell");
       els.reportViewer.textContent = "Nenhuma execução ainda.";
       addMessage(`Projeto "${state.current.name}" aberto. O agente edita arquivos em projects/${state.current.name}.`, "system", false);
       updateChatHeroVisibility();
@@ -1213,17 +1218,26 @@
       body: JSON.stringify({ name, template }),
     });
     await loadProjects();
-    await selectProject(d.id);
-    await persistMessage("system", "Projeto criado. Descreva o que quer construir ou melhorar.");
+    await selectProject(d.id, {
+      preferDev: !!d.has_dev_script || template === "react",
+      autoStart: !!d.has_dev_script || template === "react",
+    });
+    await persistMessage(
+      "system",
+      d.has_dev_script || template === "react"
+        ? "Projeto React criado. Preview ao vivo iniciando (npm run dev)…"
+        : "Projeto criado. Descreva o que quer construir — pedidos de app executam no projeto automaticamente."
+    );
   }
 
-  async function selectProject(id) {
+  async function selectProject(id, options = {}) {
     const project = state.projects.find((p) => p.id === id);
     if (!project) return;
     state.current = project;
     state.selectedFile = null;
     state.selectedRunId = null;
     state.lastReport = "";
+    state.recentChangedFiles = [];
     state.previewMode = "static";
     els.previewMode.value = "static";
     els.fileViewer.classList.add("hidden");
@@ -1237,7 +1251,29 @@
     await loadRunHistory();
     await loadFiles();
     await refreshDevStatus();
+    await maybeEnableDevPreview({ preferDev: options.preferDev, autoStart: !!options.autoStart });
     updatePreview();
+  }
+
+  async function maybeEnableDevPreview({ preferDev = false, autoStart = false } = {}) {
+    const hasScript = !!state.devStatus?.has_dev_script;
+    if (!hasScript) return false;
+    state.previewMode = "dev";
+    if (els.previewMode) els.previewMode.value = "dev";
+    renderDevControls();
+    if (autoStart || preferDev) {
+      setPreviewEmptyVisible(
+        true,
+        state.devStatus?.running
+          ? "Preview ao vivo pronto."
+          : "Este projeto usa Vite. Inicie o preview ao vivo para ver o app."
+      );
+    }
+    if (autoStart && !state.devStatus?.running && state.devStatus?.npm_available) {
+      await startDevServer();
+      return true;
+    }
+    return hasScript;
   }
 
   function showEmptyView() {
@@ -1348,10 +1384,12 @@
         const goal = escapeHtml((run.goal || run.summary || "Execução").slice(0, 80));
         const status = escapeHtml(run.status || "?");
         const cls = runStatusClass(run.status);
+        const changed = [...(run.created_files || []), ...(run.modified_files || [])];
+        const count = changed.length;
         return `<li data-run-id="${escapeHtml(run.id)}" class="${active.trim()}">
           <div class="run-status ${cls}">${status}</div>
-          <div>${goal}</div>
-          <div class="run-meta">${formatRunTime(run.ts)}</div>
+          <div class="run-goal">${goal}</div>
+          <div class="run-meta">${formatRunTime(run.ts)}${count ? ` · ${count} arquivo(s)` : ""}</div>
         </li>`;
       })
       .join("");
@@ -1360,13 +1398,55 @@
     });
   }
 
+  function renderRunArtifacts(run) {
+    if (!els.reportViewer) return;
+    const created = run?.created_files || [];
+    const modified = run?.modified_files || [];
+    const changed = Array.from(new Set([...created, ...modified]));
+    const report = run?.report || run?.summary || state.lastReport || "Nenhuma execução ainda.";
+
+    let html = "";
+    if (changed.length) {
+      html += `
+        <div class="run-artifacts">
+          <div class="run-artifacts-title">Arquivos desta execução</div>
+          <div class="run-artifacts-list">
+            ${changed
+              .slice(0, 16)
+              .map((path) => {
+                const createdMark = created.includes(path) ? "criado" : "editado";
+                return `<button type="button" class="run-artifact" data-path="${escapeHtml(path)}">
+                  <span>${escapeHtml(path)}</span>
+                  <em>${createdMark}</em>
+                </button>`;
+              })
+              .join("")}
+          </div>
+        </div>`;
+    }
+    html += `<div class="report-body">${renderMarkdown(report)}</div>`;
+    els.reportViewer.innerHTML = html;
+    els.reportViewer.classList.add("report-viewer", "report-shell");
+    els.reportViewer.querySelectorAll(".run-artifact").forEach((btn) => {
+      btn.addEventListener("click", async () => {
+        if (!btn.dataset.path) return;
+        markChangedFiles([btn.dataset.path]);
+        await openFile(btn.dataset.path, {
+          switchToFiles: !/\.html?$/i.test(btn.dataset.path),
+          preferPreview: /\.html?$/i.test(btn.dataset.path),
+        });
+      });
+    });
+  }
+
   function selectRun(runId) {
     const run = (state.runs || []).find((r) => r.id === runId);
     if (!run) return;
     state.selectedRunId = runId;
     state.lastReport = run.report || run.summary || "";
-    setMessageContent(els.reportViewer, state.lastReport, "agent");
+    markChangedFiles([...(run.created_files || []), ...(run.modified_files || [])]);
     renderRunHistory();
+    renderRunArtifacts(run);
     switchTab("report");
   }
 
@@ -1390,23 +1470,12 @@
   }
 
   async function searchProjectFiles(query) {
-    if (!state.current || !query.trim()) {
+    if (!state.current) return;
+    if (!query.trim()) {
       await loadFiles();
       return;
     }
-    try {
-      const d = await api(
-        `/api/projects/${encodeURIComponent(state.current.id)}/search?q=${encodeURIComponent(query.trim())}`
-      );
-      state.files = (d.matches || []).map((m) => ({
-        path: m.path,
-        name: m.path.split("/").pop(),
-        type: "file",
-      }));
-      renderFileTree();
-    } catch (e) {
-      els.fileTree.innerHTML = `<li class="file-error">${escapeHtml(e.message)}</li>`;
-    }
+    renderFileTree();
   }
 
   function openMobilePanel() {
@@ -1462,18 +1531,238 @@
     });
   }
 
+  function setThinkingState(el) {
+    if (!el) return;
+    el.classList.add("live", "thinking");
+    el.innerHTML = `
+      <div class="thinking-indicator" aria-live="polite" aria-label="pensando">
+        <svg class="thinking-brain" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+          <path d="M8.5 4.5c-1.7 0-3 1.4-3 3.1 0 .4.1.8.2 1.1A3.2 3.2 0 0 0 4 11.7c0 1.5 1 2.7 2.4 3.1v.2c0 1.9 1.4 3.5 3.3 3.5h.3c.6 1.1 1.8 1.8 3.1 1.8s2.5-.7 3.1-1.8h.2c1.9 0 3.4-1.6 3.4-3.5v-.1A3.3 3.3 0 0 0 22 11.5a3.2 3.2 0 0 0-2.1-3 3 3 0 0 0 .2-1.1c0-1.7-1.3-3.1-3-3.1-.6 0-1.1.2-1.6.4A3.8 3.8 0 0 0 12 3.5c-1.3 0-2.5.7-3.1 1.7-.5-.4-1.1-.7-1.4-.7Z" stroke="currentColor" stroke-width="1.5" stroke-linejoin="round"/>
+          <path d="M12 8.5v7M9.5 10.5c.8-.6 1.7-.9 2.5-.9s1.7.3 2.5.9M9.5 13.5c.8.6 1.7.9 2.5.9s1.7-.3 2.5-.9" stroke="currentColor" stroke-width="1.5" stroke-linecap="round"/>
+        </svg>
+        <span class="thinking-label">pensando...</span>
+      </div>`;
+  }
+
+  function clearThinkingState(el) {
+    if (!el || !el.classList.contains("thinking")) return;
+    el.classList.remove("thinking");
+    el.textContent = "";
+  }
+
   function addMessage(text, role, scroll = true) {
     const el = document.createElement("div");
     el.className = "msg " + role + (role === "agent" && /^Erro/i.test(text) ? " error" : "");
-    setMessageContent(el, text, role);
+    if (/\blive\b/.test(role) && !String(text || "").trim()) {
+      setThinkingState(el);
+    } else {
+      setMessageContent(el, text, role);
+    }
     els.chatMessages.appendChild(el);
     if (scroll) els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-    if (role === "user" || role === "agent") updateChatHeroVisibility();
+    if (role === "user" || role.startsWith("agent")) updateChatHeroVisibility();
     return el;
   }
 
   function removeMessage(el) {
     if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  const ACTIVITY_PHASES = [
+    { id: "prepare", label: "Preparar" },
+    { id: "plan", label: "Planejar" },
+    { id: "think", label: "Modelo" },
+    { id: "work", label: "Executar" },
+    { id: "check", label: "Validar" },
+    { id: "done", label: "Final" },
+  ];
+
+  function createRunActivity(prompt) {
+    return {
+      prompt,
+      startedAt: Date.now(),
+      stage: "Preparando",
+      detail: "Conferindo ambiente, projeto e modelo selecionado.",
+      phaseId: "prepare",
+      model: getSelectedModel() || state.recommendedModel || "auto",
+      runId: null,
+      step: 0,
+      maxSteps: parseInt(els.maxStepsInput?.value || "12", 10),
+      task: "",
+      planSummary: "",
+      taskCount: null,
+      tools: [],
+      okTools: 0,
+      toolCount: 0,
+      reflection: "",
+      llmChars: 0,
+      files: [],
+      finished: false,
+      events: [],
+      timer: null,
+      fileRefreshTimer: null,
+    };
+  }
+
+  function formatDuration(ms) {
+    const total = Math.max(0, Math.floor(ms / 1000));
+    const min = Math.floor(total / 60);
+    const sec = total % 60;
+    return min ? `${min}m ${String(sec).padStart(2, "0")}s` : `${sec}s`;
+  }
+
+  function estimateRemaining(activity) {
+    if (activity.finished) return "concluído";
+    if (!activity.step || !activity.maxSteps) return "calculando";
+    const elapsed = Date.now() - activity.startedAt;
+    const progress = Math.min(0.92, Math.max(0.08, activity.step / activity.maxSteps));
+    const totalEstimate = elapsed / progress;
+    const remaining = Math.max(0, totalEstimate - elapsed);
+    if (remaining < 5000) return "menos de 5s";
+    return "~" + formatDuration(remaining);
+  }
+
+  function activityPhaseMeta(activity) {
+    const stage = String(activity?.stage || "").toLowerCase();
+    if (activity?.finished || /conclu|finaliz/.test(stage)) return { cls: "ok", label: "concluído", phaseId: "done" };
+    if (/erro|falha/.test(stage)) return { cls: "err", label: "precisa de atenção", phaseId: activity?.phaseId || "work" };
+    if (/cancel/.test(stage)) return { cls: "warn", label: "cancelando", phaseId: "done" };
+    if (/plano|planej|criando plano/.test(stage)) return { cls: "think", label: "planejando", phaseId: "plan" };
+    if (/modelo|gerando/.test(stage)) return { cls: "think", label: "modelo pensando", phaseId: "think" };
+    if (/ferrament/.test(stage)) return { cls: "work", label: "executando", phaseId: "work" };
+    if (/valid|avaliando|reflet/.test(stage)) return { cls: "check", label: "checando", phaseId: "check" };
+    if (/iniciado|prepar/.test(stage)) return { cls: "work", label: "preparando", phaseId: "prepare" };
+    return { cls: "work", label: "trabalhando", phaseId: activity?.phaseId || "work" };
+  }
+
+  function renderActivityPhases(phaseId) {
+    const currentIdx = Math.max(0, ACTIVITY_PHASES.findIndex((p) => p.id === phaseId));
+    return ACTIVITY_PHASES.map((phase, idx) => {
+      let status = "pending";
+      if (idx < currentIdx) status = "done";
+      else if (idx === currentIdx) status = "active";
+      return `<li class="activity-phase activity-phase--${status}">${escapeHtml(phase.label)}</li>`;
+    }).join("");
+  }
+
+  function addActivityEvent(activity, label, detail) {
+    const cleanLabel = String(label || "Evento").trim();
+    const cleanDetail = String(detail || "").trim();
+    const last = activity.events[activity.events.length - 1];
+    if (last && last.label === cleanLabel && last.detail === cleanDetail) return;
+    activity.events.push({
+      time: Date.now(),
+      label: cleanLabel,
+      detail: cleanDetail,
+    });
+    activity.events = activity.events.slice(-8);
+  }
+
+  function updateActivity(activity, patch = {}) {
+    Object.assign(activity, patch);
+    if (patch.stage || patch.detail) {
+      addActivityEvent(activity, patch.stage || activity.stage, patch.detail || activity.detail);
+    }
+  }
+
+  function scheduleFileRefresh(activity) {
+    if (!activity || activity.fileRefreshTimer) return;
+    activity.fileRefreshTimer = window.setTimeout(() => {
+      activity.fileRefreshTimer = null;
+      loadFiles().catch(() => {});
+    }, 700);
+  }
+
+  function renderRunActivity(progressEl, activity) {
+    if (!progressEl || !activity) return;
+    const elapsed = formatDuration(Date.now() - activity.startedAt);
+    const remaining = estimateRemaining(activity);
+    const stepPct = activity.finished
+      ? 100
+      : activity.maxSteps
+        ? Math.min(100, Math.round((activity.step / activity.maxSteps) * 100))
+        : 0;
+    const phase = activityPhaseMeta(activity);
+    activity.phaseId = phase.phaseId;
+    const tools = activity.tools.length ? activity.tools.join(", ") : "nenhuma ainda";
+    const files = activity.files.length ? activity.files.slice(-6).join(", ") : "";
+    const recent = activity.events
+      .slice()
+      .reverse()
+      .map((event) => {
+        const ago = formatDuration(Date.now() - event.time);
+        return `<li><span>${escapeHtml(ago)}</span><strong>${escapeHtml(event.label)}</strong>${event.detail ? `<em>${escapeHtml(event.detail)}</em>` : ""}</li>`;
+      })
+      .join("");
+
+    progressEl.innerHTML = `
+      <div class="agent-activity agent-activity--${phase.cls}">
+        <div class="activity-head">
+          <div>
+            <div class="activity-kicker">${escapeHtml(phase.label)}</div>
+            <div class="activity-title">${escapeHtml(activity.stage)}</div>
+          </div>
+          <div class="activity-time">
+            <strong>${escapeHtml(elapsed)}</strong>
+            <span>${activity.finished ? "tempo total" : `restante ${escapeHtml(remaining)}`}</span>
+          </div>
+        </div>
+        <ol class="activity-phases">${renderActivityPhases(phase.phaseId)}</ol>
+        <div class="activity-detail">${escapeHtml(activity.detail || "Aguardando próxima ação...")}</div>
+        <div class="activity-bar"><span style="width:${stepPct}%"></span></div>
+        <div class="activity-grid">
+          <div><span>Modelo</span><strong>${escapeHtml(activity.model || "auto")}</strong></div>
+          <div><span>Passo</span><strong>${activity.step || 0}/${activity.maxSteps || "?"}</strong></div>
+          <div><span>Ferramentas</span><strong>${activity.okTools || 0}/${activity.toolCount || 0}</strong></div>
+        </div>
+        ${activity.task ? `<div class="activity-current"><span>Tarefa atual</span>${escapeHtml(activity.task)}</div>` : ""}
+        ${activity.planSummary ? `<div class="activity-current"><span>Plano</span>${escapeHtml(activity.planSummary)}${activity.taskCount ? ` (${activity.taskCount} tarefas)` : ""}</div>` : ""}
+        <div class="activity-current"><span>Últimas ferramentas</span>${escapeHtml(tools)}</div>
+        ${files ? `<div class="activity-current"><span>Arquivos alterados</span>${escapeHtml(files)}</div>` : ""}
+        ${activity.reflection ? `<div class="activity-current"><span>Leitura do agente</span>${escapeHtml(activity.reflection)}</div>` : ""}
+        <ol class="activity-log">${recent}</ol>
+      </div>
+    `;
+  }
+
+  function startActivityTimer(progressEl, activity) {
+    renderRunActivity(progressEl, activity);
+    activity.timer = window.setInterval(() => renderRunActivity(progressEl, activity), 1000);
+  }
+
+  function stopActivityTimer(activity) {
+    if (activity?.timer) {
+      window.clearInterval(activity.timer);
+      activity.timer = null;
+    }
+    if (activity?.fileRefreshTimer) {
+      window.clearTimeout(activity.fileRefreshTimer);
+      activity.fileRefreshTimer = null;
+    }
+  }
+
+  function finishRunActivity(progressEl, activity, donePayload) {
+    if (!activity) return;
+    stopActivityTimer(activity);
+    const created = donePayload?.created_files || [];
+    const modified = donePayload?.modified_files || [];
+    const changed = [...created, ...modified].filter(Boolean);
+    if (changed.length) {
+      activity.files = Array.from(new Set([...(activity.files || []), ...changed])).slice(-12);
+    }
+    const cancelled = donePayload?.status === "CANCELLED";
+    updateActivity(activity, {
+      finished: true,
+      phaseId: "done",
+      stage: cancelled ? "Execução cancelada" : "Execução concluída",
+      detail: cancelled
+        ? "O agente parou a pedido do usuário."
+        : changed.length
+          ? `Pronto. ${changed.length} arquivo(s) alterado(s).`
+          : "Pronto. Relatório final disponível abaixo.",
+      step: activity.maxSteps || activity.step,
+    });
+    renderRunActivity(progressEl, activity);
   }
 
   async function cancelRun() {
@@ -1505,6 +1794,228 @@
       return;
     }
 
+    const mode = els.modeSelect?.value || "chat";
+    if (mode === "chat") {
+      if (looksLikeCodeRequest(prompt)) {
+        if (els.modeSelect) els.modeSelect.value = "execute";
+        syncModeControls();
+        addMessage(
+          "Pedido de desenvolvimento — executando no projeto (como no Lovable). Use Chat só para perguntas.",
+          "system"
+        );
+        return sendAgentPrompt(prompt, "execute");
+      }
+      return sendChatPrompt(prompt);
+    }
+    if (looksLikeConversationOnly(prompt)) {
+      if (els.modeSelect) els.modeSelect.value = "chat";
+      syncModeControls();
+      addMessage(
+        "Isso parece só uma conversa — mudei para Chat (rápido). Use Executar código quando quiser alterar arquivos.",
+        "system"
+      );
+      return sendChatPrompt(prompt);
+    }
+    return sendAgentPrompt(prompt, mode);
+  }
+
+  function looksLikeConversationOnly(text) {
+    const t = String(text || "").trim();
+    if (!t) return false;
+    if (looksLikeCodeRequest(t)) return false;
+    const lower = t.toLowerCase();
+    if (t.length <= 80) {
+      if (/^(oi|ol[aá]|iae|e a[ií]|hey|hi|hello|bom dia|boa tarde|boa noite)\b/i.test(lower)) return true;
+      if (/^(tudo bem|como vai|obrigad[oa]|valeu|ok|beleza|valeu)\b/i.test(lower)) return true;
+      if (/\b(pergunt|d[uú]vida|s[oó] (quero )?pergunt|conversar|me explica|o que (é|e)|voc[eê] (é|e|pode))\b/i.test(lower)) {
+        return true;
+      }
+    }
+    return t.length <= 40 && !/[./\\]|\.(html|css|js|ts|py|tsx)\b/i.test(t);
+  }
+
+  function looksLikeCodeRequest(text) {
+    const t = String(text || "").toLowerCase();
+    if (t.length < 8) return false;
+    return /\b(cri(e|ar)|faz(er)?|implement|adicion|alter|edit|corrig|refator|build|landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|melhor(e|ar)|redesen|layout|ui|ux)\b/i.test(
+      t
+    );
+  }
+
+  function addExecuteHandoff(prompt, reason) {
+    const el = document.createElement("div");
+    el.className = "msg system next-steps";
+    el.innerHTML = `
+      <div class="next-steps-card">
+        <div class="next-steps-title">${escapeHtml(reason || "Quer que o agente edite o projeto?")}</div>
+        <div class="next-steps-actions">
+          <button type="button" class="btn btn-primary btn-gradient btn-sm handoff-execute">Executar este pedido</button>
+          <button type="button" class="btn btn-ghost btn-sm handoff-stay">Continuar no Chat</button>
+        </div>
+      </div>`;
+    el.querySelector(".handoff-execute")?.addEventListener("click", () => {
+      if (els.modeSelect) els.modeSelect.value = "execute";
+      syncModeControls();
+      els.promptInput.value = prompt;
+      removeMessage(el);
+      sendPrompt();
+    });
+    el.querySelector(".handoff-stay")?.addEventListener("click", () => removeMessage(el));
+    els.chatMessages.appendChild(el);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    return el;
+  }
+
+  async function sendChatPrompt(prompt) {
+    state.pendingPrompt = null;
+    addMessage(prompt, "user");
+    els.promptInput.value = "";
+    updateChatHeroVisibility();
+    state.running = true;
+    state.runId = null;
+    state.abortController = new AbortController();
+    els.btnSend.disabled = true;
+    els.btnCancel?.classList.remove("hidden");
+    els.btnCancel.disabled = true;
+
+    const wantsCode = looksLikeCodeRequest(prompt);
+    // Build intents are auto-routed in sendPrompt; handoff only if somehow still in chat.
+    if (wantsCode) {
+      addExecuteHandoff(
+        prompt,
+        "Isso parece um pedido para criar/editar código. No Chat eu só converso — para alterar arquivos, execute:"
+      );
+    }
+
+    const statusEl = addMessage("Respondendo…", "progress");
+    const agentEl = addMessage("", "agent live");
+    let wasAbort = false;
+    let fullText = "";
+
+    try {
+      await persistMessage("user", prompt);
+      const res = await fetch("/api/chat/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        signal: state.abortController.signal,
+        body: JSON.stringify({
+          prompt,
+          workspace: state.current.path,
+          model: getSelectedModel() || "",
+        }),
+      });
+
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        const err = new Error(errData.error || "Falha no chat");
+        err.data = errData;
+        err.status = res.status;
+        throw err;
+      }
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let donePayload = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const ev = parseSseBlock(block);
+          if (!ev) continue;
+          if (ev.type === "started" && ev.run_id) {
+            state.runId = ev.run_id;
+            els.btnCancel.disabled = false;
+            statusEl.textContent = `Chat · ${ev.model || "auto"} · primeira resposta pode demorar se o modelo estiver a carregar…`;
+          } else if (ev.type === "chat_chunk" && ev.text) {
+            if (statusEl.isConnected) statusEl.textContent = `Chat · respondendo…`;
+            clearThinkingState(agentEl);
+            fullText += ev.text;
+            agentEl.textContent = fullText;
+            els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+          } else if (ev.type === "error") {
+            throw Object.assign(new Error(ev.error || ev.message || "Erro no chat"), { data: ev });
+          } else if (ev.type === "cancelled") {
+            statusEl.textContent = "Chat cancelado";
+          } else if (ev.type === "done") {
+            donePayload = ev;
+          }
+        }
+      }
+
+      removeMessage(statusEl);
+      agentEl.classList.remove("live", "thinking");
+      const finalText = (donePayload?.summary || donePayload?.report || fullText || "").trim();
+      if (donePayload?.status === "CANCELLED") {
+        agentEl.textContent = finalText || "Chat cancelado.";
+        agentEl.classList.add("error");
+      } else if (finalText) {
+        setMessageContent(agentEl, finalText, "agent");
+        if (
+          !wantsCode &&
+          /executar c[oó]digo|modo executar|mudar o seletor|para criar\/editar/i.test(finalText)
+        ) {
+          addExecuteHandoff(prompt, "O assistente sugeriu executar o pedido no projeto:");
+        }
+      } else {
+        agentEl.textContent = "Sem resposta do modelo.";
+      }
+    } catch (e) {
+      removeMessage(statusEl);
+      agentEl.classList.remove("live", "thinking");
+      if (e.status === 409 || e.data?.busy) {
+        agentEl.textContent = e.message || "Já existe uma execução neste projeto.";
+        agentEl.classList.add("error");
+      } else if (e.name === "AbortError") {
+        wasAbort = true;
+        agentEl.textContent = "Chat cancelado.";
+        agentEl.classList.add("error");
+      } else if (e.status === 503 || e.data?.ollama_offline) {
+        const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
+        if (ready) {
+          els.promptInput.value = prompt;
+          state.running = false;
+          removeMessage(agentEl);
+          return sendChatPrompt(prompt);
+        }
+        agentEl.textContent = "Erro: Ollama offline.";
+        agentEl.classList.add("error");
+        openModelsModal();
+      } else {
+        const raw = String(e.message || "erro desconhecido");
+        const isNetwork =
+          e.name === "TypeError" ||
+          /failed to fetch|networkerror|network error|load failed|fetch/i.test(raw);
+        agentEl.textContent = isNetwork
+          ? "Erro de conexão com o servidor. Reinicie a plataforma e tente de novo."
+          : /404|n[aã]o encontrado|model.*not found/i.test(raw)
+            ? "Modelo indisponível no Ollama. Mude para Auto (recomendado) ou outro modelo instalado e tente de novo."
+            : "Erro: " + raw;
+        agentEl.classList.add("error");
+        await persistMessage("agent", agentEl.textContent).catch(() => {});
+      }
+    } finally {
+      state.running = false;
+      state.runId = null;
+      state.abortController = null;
+      els.btnSend.disabled = false;
+      els.btnCancel?.classList.add("hidden");
+      els.btnCancel.disabled = false;
+      updateChatHeroVisibility();
+      syncModeControls();
+      if (wasAbort) {
+        await new Promise((r) => setTimeout(r, 400));
+        await loadChat().catch(() => {});
+      }
+      els.promptInput.focus();
+    }
+  }
+
+  async function sendAgentPrompt(prompt, mode) {
     state.pendingPrompt = null;
     addMessage(prompt, "user");
     els.promptInput.value = "";
@@ -1518,8 +2029,9 @@
     els.btnCancel?.classList.remove("hidden");
     els.btnCancel.disabled = true;
 
-    const mode = els.modeSelect.value;
-    const progressEl = addMessage("Iniciando agente...", "progress");
+    const progressEl = addMessage("", "progress");
+    const activity = createRunActivity(prompt);
+    startActivityTimer(progressEl, activity);
     const agentEl = addMessage("", "agent live");
     let wasAbort = false;
 
@@ -1566,38 +2078,38 @@
             donePayload = ev;
             continue;
           }
-          handleStreamEvent(ev, progressEl, agentEl);
+          handleStreamEvent(ev, progressEl, agentEl, activity);
         }
       }
 
-      removeMessage(progressEl);
-      agentEl.classList.remove("live");
+      stopActivityTimer(activity);
+      finishRunActivity(progressEl, activity, donePayload);
+      agentEl.classList.remove("live", "thinking");
 
       if (donePayload) {
-        const summary = donePayload.report || "(sem relatório)";
-        setMessageContent(agentEl, summary, "agent");
-        state.lastReport = summary;
-        setMessageContent(els.reportViewer, summary, "agent");
+        const fullReport = donePayload.report || "(sem relatório)";
+        const chatSummary = donePayload.summary || fullReport;
+        setMessageContent(agentEl, chatSummary, "agent");
+        state.lastReport = fullReport;
         if (donePayload.status === "CANCELLED") {
           agentEl.classList.add("error");
-        } else if (donePayload.created_files?.length || donePayload.modified_files?.length) {
-          const changed = [...(donePayload.created_files || []), ...(donePayload.modified_files || [])];
-          const note = `Arquivos alterados: ${changed.join(", ")}`;
-          addMessage(note, "system");
-          await persistMessage("system", note);
         }
-        await loadProjects();
-        await loadFiles();
-        await loadRunHistory();
-        await refreshDevStatus();
-        updatePreview();
-        switchTab("report");
+        await syncWorkspaceAfterRun(donePayload);
+        renderRunArtifacts({
+          report: fullReport,
+          created_files: donePayload.created_files || [],
+          modified_files: donePayload.modified_files || [],
+          summary: chatSummary,
+        });
+        window.setTimeout(() => removeMessage(progressEl), 4500);
       } else {
         agentEl.textContent = agentEl.textContent || "Execução finalizada sem relatório.";
+        window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
+      stopActivityTimer(activity);
       removeMessage(progressEl);
-      agentEl.classList.remove("live");
+      agentEl.classList.remove("live", "thinking");
       if (e.status === 409 || e.data?.busy) {
         agentEl.textContent = e.message || "Agente já em execução neste projeto.";
         agentEl.classList.add("error");
@@ -1613,7 +2125,7 @@
           state.running = false;
           removeMessage(agentEl);
           removeMessage(progressEl);
-          return sendPrompt();
+          return sendAgentPrompt(prompt, mode);
         }
         state.ollamaOk = false;
         updateOllamaOfflineUI();
@@ -1622,7 +2134,13 @@
         agentEl.classList.add("error");
         openModelsModal();
       } else {
-        const err = "Erro: " + e.message;
+        const raw = String(e.message || "erro desconhecido");
+        const isNetwork =
+          e.name === "TypeError" ||
+          /failed to fetch|networkerror|network error|load failed|fetch/i.test(raw);
+        const err = isNetwork
+          ? "Erro de conexão com o servidor. Reinicie a plataforma (porta 8787) e tente de novo. Se o modelo for grande, a 1ª resposta pode demorar alguns minutos."
+          : "Erro: " + raw;
         agentEl.textContent = err;
         agentEl.classList.add("error");
         if (e.data?.missing_model) {
@@ -1635,13 +2153,14 @@
               state.running = false;
               removeMessage(agentEl);
               removeMessage(progressEl);
-              return sendPrompt();
+              return sendAgentPrompt(prompt, mode);
             }
           }
         }
         await persistMessage("agent", err).catch(() => {});
       }
     } finally {
+      stopActivityTimer(activity);
       state.running = false;
       state.runId = null;
       state.abortController = null;
@@ -1650,6 +2169,7 @@
       els.btnCancel?.classList.add("hidden");
       els.btnCancel.disabled = false;
       updateChatHeroVisibility();
+      syncModeControls();
       if (wasAbort) {
         await new Promise((r) => setTimeout(r, 400));
         await loadChat().catch(() => {});
@@ -1658,58 +2178,176 @@
     }
   }
 
-  function handleStreamEvent(ev, progressEl, agentEl) {
+  function handleStreamEvent(ev, progressEl, agentEl, activity) {
     switch (ev.type) {
       case "started":
         if (ev.run_id) {
           state.runId = ev.run_id;
           if (els.btnCancel) els.btnCancel.disabled = false;
         }
-        progressEl.textContent = "Agente iniciado...";
+        updateActivity(activity, {
+          runId: ev.run_id || activity.runId,
+          phaseId: "prepare",
+          stage: "Agente iniciado",
+          detail: `Run ${ev.run_id || ""} aberto. Preparando leitura do projeto e contexto da conversa.`.trim(),
+        });
         break;
       case "cancelled":
-        progressEl.textContent = "Cancelando...";
-        break;
-      case "plan":
-        progressEl.textContent = `Plano: ${ev.summary || "criado"} (${ev.task_count || "?"} tarefas)`;
-        break;
-      case "step":
-        progressEl.textContent = `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id}`;
-        agentEl.textContent = "";
-        break;
-      case "tools":
-        progressEl.textContent = `Ferramentas: ${(ev.tools || []).join(", ")} (${ev.ok || 0}/${ev.count || 0} ok)`;
-        break;
-      case "reflection":
-        progressEl.textContent = `Reflexão: ${ev.status} — ${(ev.analysis || "").slice(0, 120)}`;
+        updateActivity(activity, {
+          phaseId: "done",
+          stage: "Cancelando",
+          detail: "Pedido de cancelamento enviado. Aguardando o agente parar no próximo ponto seguro.",
+        });
         break;
       case "planning":
-        progressEl.textContent = ev.message || "Criando plano...";
+        updateActivity(activity, {
+          phaseId: "plan",
+          stage: "Criando plano",
+          detail: ev.message || "Lendo o projeto e montando uma sequência segura de tarefas.",
+        });
+        break;
+      case "plan":
+        updateActivity(activity, {
+          phaseId: "plan",
+          stage: "Plano criado",
+          detail: "O agente terminou de decidir a estratégia e vai executar as tarefas uma por uma.",
+          planSummary: ev.summary || "Plano criado",
+          taskCount: ev.task_count || null,
+        });
+        break;
+      case "step":
+        updateActivity(activity, {
+          phaseId: "think",
+          stage: "Executando tarefa",
+          detail: `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id || "tarefa"}`,
+          step: ev.step || activity.step,
+          maxSteps: ev.max_steps || activity.maxSteps,
+          task: ev.task_title || ev.task_id || "",
+          tools: [],
+          okTools: 0,
+          toolCount: 0,
+          reflection: "",
+        });
+        agentEl.textContent = "";
+        setThinkingState(agentEl);
         break;
       case "llm_chunk":
-        progressEl.textContent = "Gerando chamada de ferramentas...";
+        updateActivity(activity, {
+          phaseId: "think",
+          stage: "Modelo gerando a próxima ação",
+          detail: "Aguardando o Ollama responder com as ferramentas que o agente deve usar.",
+          llmChars: (activity.llmChars || 0) + (ev.text ? ev.text.length : 0),
+        });
         if (ev.text && agentEl) {
+          clearThinkingState(agentEl);
           state.llmPreviewChars = Math.min(state.llmPreviewChars + ev.text.length, 2000);
           agentEl.textContent = (agentEl.textContent + ev.text).slice(-2000);
         }
         break;
+      case "tools_start":
+        updateActivity(activity, {
+          phaseId: "work",
+          stage: "Executando ferramentas",
+          detail: `${ev.count || 0} chamada(s) em andamento: ${(ev.tools || []).join(", ") || "preparando"}.`,
+          tools: ev.tools || [],
+          toolCount: ev.count || 0,
+          okTools: 0,
+        });
+        break;
+      case "tools":
+        updateActivity(activity, {
+          phaseId: "work",
+          stage: "Ferramentas executadas",
+          detail: `${ev.ok || 0} de ${ev.count || 0} chamadas concluíram com sucesso.`,
+          tools: ev.tools || [],
+          okTools: ev.ok || 0,
+          toolCount: ev.count || 0,
+        });
+        break;
+      case "files_changed": {
+        const paths = [...(ev.paths || []), ...(ev.created || []), ...(ev.modified || [])].filter(Boolean);
+        const unique = Array.from(new Set([...(activity.files || []), ...paths])).slice(-12);
+        markChangedFiles(paths);
+        updateActivity(activity, {
+          phaseId: "work",
+          stage: "Arquivos atualizados",
+          detail: paths.length
+            ? `Alterações em: ${paths.slice(0, 4).join(", ")}${paths.length > 4 ? "…" : ""}`
+            : "Arquivos do projeto foram atualizados.",
+          files: unique,
+        });
+        scheduleFileRefresh(activity);
+        if (paths.some(isUiPath)) {
+          window.setTimeout(() => updatePreview(paths.find((p) => /\.html?$/i.test(p)) || findPreviewPath()), 800);
+        }
+        break;
+      }
+      case "validation_start":
+        updateActivity(activity, {
+          phaseId: "check",
+          stage: "Validando alterações",
+          detail: `Rodando: ${(ev.commands || []).join(", ") || "validações automáticas"}.`,
+        });
+        break;
+      case "validation":
+        updateActivity(activity, {
+          phaseId: "check",
+          stage: "Validação concluída",
+          detail: `${ev.ok || 0} de ${ev.count || 0} validações passaram.`,
+          reflection: ev.summary || activity.reflection,
+        });
+        break;
+      case "reflection":
+        updateActivity(activity, {
+          phaseId: "check",
+          stage: "Avaliando resultado",
+          detail: `Decisão: ${ev.status || "continue"}`,
+          reflection: (ev.analysis || "").slice(0, 180),
+        });
+        break;
       case "error":
-        progressEl.textContent = "Erro: " + (ev.message || ev.error || "desconhecido");
+        updateActivity(activity, {
+          stage: "Erro encontrado",
+          detail: ev.message || ev.error || "Erro desconhecido durante a execução.",
+        });
         break;
       default:
         break;
     }
+    renderRunActivity(progressEl, activity);
   }
 
   // ── Files ──
 
-  function fileIcon(type, name) {
-    if (type === "dir") return "📁";
-    if (/\.html?$/i.test(name)) return "🌐";
-    if (/\.(css|scss)$/i.test(name)) return "🎨";
-    if (/\.(js|ts|jsx|tsx)$/i.test(name)) return "⚡";
-    if (/\.py$/i.test(name)) return "🐍";
-    return "📄";
+  function fileKind(name) {
+    if (/\.html?$/i.test(name)) return { label: "HTML", cls: "html" };
+    if (/\.(css|scss)$/i.test(name)) return { label: "CSS", cls: "css" };
+    if (/\.(js|mjs|cjs)$/i.test(name)) return { label: "JS", cls: "js" };
+    if (/\.(ts|tsx|jsx)$/i.test(name)) return { label: "TS", cls: "ts" };
+    if (/\.py$/i.test(name)) return { label: "PY", cls: "py" };
+    if (/\.json$/i.test(name)) return { label: "JSON", cls: "json" };
+    if (/\.md$/i.test(name)) return { label: "MD", cls: "md" };
+    return { label: "FILE", cls: "file" };
+  }
+
+  function markChangedFiles(paths) {
+    const clean = (paths || []).map((p) => String(p || "").replace(/\\/g, "/")).filter(Boolean);
+    state.recentChangedFiles = Array.from(new Set([...(state.recentChangedFiles || []), ...clean])).slice(-24);
+    clean.forEach((path) => {
+      const parts = path.split("/");
+      for (let i = 1; i < parts.length; i += 1) {
+        state.expandedDirs[parts.slice(0, i).join("/")] = true;
+      }
+    });
+  }
+
+  function isRecentlyChanged(path) {
+    const norm = String(path || "").replace(/\\/g, "/");
+    return (state.recentChangedFiles || []).some((p) => p === norm || p.endsWith("/" + norm) || norm.endsWith("/" + p));
+  }
+
+  function isUiPath(path) {
+    return /\.(html?|css|scss|js|jsx|ts|tsx|vue)$/i.test(path || "");
   }
 
   async function loadFiles() {
@@ -1724,37 +2362,156 @@
     }
   }
 
+  function buildFileTree(files) {
+    const root = { name: "", path: "", dirs: {}, files: [] };
+    files.forEach((file) => {
+      const parts = String(file.path || "").replace(/\\/g, "/").split("/").filter(Boolean);
+      if (!parts.length) return;
+      let node = root;
+      for (let i = 0; i < parts.length - 1; i += 1) {
+        const part = parts[i];
+        const dirPath = parts.slice(0, i + 1).join("/");
+        if (!node.dirs[part]) {
+          node.dirs[part] = { name: part, path: dirPath, dirs: {}, files: [] };
+        }
+        node = node.dirs[part];
+      }
+      node.files.push({
+        ...file,
+        name: parts[parts.length - 1],
+        path: parts.join("/"),
+      });
+    });
+    return root;
+  }
+
+  function isDirExpanded(path) {
+    if (!path) return true;
+    if (Object.prototype.hasOwnProperty.call(state.expandedDirs, path)) {
+      return !!state.expandedDirs[path];
+    }
+    return path.split("/").length <= 2;
+  }
+
+  function toggleDir(path) {
+    state.expandedDirs[path] = !isDirExpanded(path);
+    renderFileTree();
+  }
+
+  function renderTreeNode(node, depth, container) {
+    const dirNames = Object.keys(node.dirs).sort((a, b) => a.localeCompare(b));
+    dirNames.forEach((name) => {
+      const dir = node.dirs[name];
+      const expanded = isDirExpanded(dir.path);
+      const hasChangedChild = (state.recentChangedFiles || []).some(
+        (p) => p === dir.path || p.startsWith(dir.path + "/")
+      );
+      const li = document.createElement("li");
+      li.className = `file-dir${expanded ? " open" : ""}${hasChangedChild ? " changed" : ""}`;
+      li.style.paddingLeft = `${10 + depth * 14}px`;
+      li.innerHTML = `
+        <button type="button" class="file-dir-toggle" aria-expanded="${expanded}">
+          <span class="file-dir-chevron">${expanded ? "▾" : "▸"}</span>
+          <span class="file-dir-name">${escapeHtml(dir.name)}</span>
+        </button>`;
+      li.querySelector(".file-dir-toggle").addEventListener("click", (event) => {
+        event.stopPropagation();
+        toggleDir(dir.path);
+      });
+      container.appendChild(li);
+      if (expanded) renderTreeNode(dir, depth + 1, container);
+    });
+
+    node.files
+      .slice()
+      .sort((a, b) => {
+        const aNew = isRecentlyChanged(a.path) ? 0 : 1;
+        const bNew = isRecentlyChanged(b.path) ? 0 : 1;
+        if (aNew !== bNew) return aNew - bNew;
+        return a.name.localeCompare(b.name);
+      })
+      .forEach((f) => {
+        const kind = fileKind(f.name);
+        const changed = isRecentlyChanged(f.path);
+        const li = document.createElement("li");
+        li.dataset.path = f.path;
+        li.style.paddingLeft = `${10 + depth * 14}px`;
+        if (state.selectedFile === f.path) li.classList.add("selected");
+        if (changed) li.classList.add("changed");
+        li.innerHTML = `
+          <span class="file-kind file-kind--${kind.cls}">${kind.label}</span>
+          <span class="file-path">${escapeHtml(f.name)}</span>
+          ${changed ? '<span class="file-changed">novo</span>' : ""}`;
+        li.title = f.path;
+        li.addEventListener("click", () => openFile(f.path));
+        container.appendChild(li);
+      });
+  }
+
   function renderFileTree() {
     els.fileTree.innerHTML = "";
     if (!state.files.length) {
-      els.fileTree.innerHTML = '<li class="file-empty">Sem arquivos ainda</li>';
+      els.fileTree.innerHTML = `
+        <li class="file-empty">
+          <strong>Sem arquivos ainda</strong>
+          <span>Peça ao agente para criar a estrutura do projeto.</span>
+        </li>`;
       return;
     }
-    state.files.forEach((f) => {
-      const li = document.createElement("li");
-      li.dataset.path = f.path;
-      if (state.selectedFile === f.path) li.classList.add("selected");
-      li.innerHTML = `<span class="icon">${fileIcon(f.type, f.name)}</span><span>${escapeHtml(f.path)}</span>`;
-      li.addEventListener("click", () => openFile(f.path));
-      els.fileTree.appendChild(li);
-    });
+
+    const query = (els.fileSearchInput?.value || "").trim().toLowerCase();
+    const files = query
+      ? state.files.filter((f) => f.path.toLowerCase().includes(query) || f.name.toLowerCase().includes(query))
+      : state.files;
+
+    if (!files.length) {
+      els.fileTree.innerHTML = '<li class="file-empty">Nenhum arquivo corresponde à busca.</li>';
+      return;
+    }
+
+    if (query) {
+      files
+        .slice()
+        .sort((a, b) => a.path.localeCompare(b.path))
+        .forEach((f) => {
+          const kind = fileKind(f.name);
+          const changed = isRecentlyChanged(f.path);
+          const li = document.createElement("li");
+          li.dataset.path = f.path;
+          if (state.selectedFile === f.path) li.classList.add("selected");
+          if (changed) li.classList.add("changed");
+          li.innerHTML = `
+            <span class="file-kind file-kind--${kind.cls}">${kind.label}</span>
+            <span class="file-path">${escapeHtml(f.path)}</span>
+            ${changed ? '<span class="file-changed">novo</span>' : ""}`;
+          li.addEventListener("click", () => openFile(f.path));
+          els.fileTree.appendChild(li);
+        });
+      return;
+    }
+
+    const tree = buildFileTree(files);
+    renderTreeNode(tree, 0, els.fileTree);
   }
 
-  async function openFile(path) {
-    if (!state.current) return;
+  async function openFile(path, options = {}) {
+    if (!state.current || !path) return;
     state.selectedFile = path;
     renderFileTree();
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/file?path=${encodeURIComponent(path)}`);
       els.fileViewer.classList.remove("hidden");
       els.fileViewer.textContent = d.content;
-      if (/\.html?$/i.test(path)) {
+      if (options.preferPreview !== false && /\.html?$/i.test(path)) {
         switchTab("preview");
         updatePreview(path);
+      } else if (options.switchToFiles) {
+        switchTab("files");
       }
     } catch (e) {
       els.fileViewer.classList.remove("hidden");
       els.fileViewer.textContent = "Erro: " + e.message;
+      if (options.switchToFiles) switchTab("files");
     }
   }
 
@@ -1762,6 +2519,21 @@
     const html = state.files.find((f) => /^index\.html?$/i.test(f.name));
     if (html) return html.path;
     return state.files.find((f) => /\.html?$/i.test(f.name))?.path || null;
+  }
+
+  function setPreviewEmptyVisible(visible, message) {
+    if (els.previewEmpty) els.previewEmpty.classList.toggle("hidden", !visible);
+    if (els.previewHint) {
+      els.previewHint.classList.toggle("hidden", true);
+      if (message) els.previewHint.textContent = message;
+    }
+    if (visible && message && els.previewEmpty) {
+      const copy = els.previewEmpty.querySelector(".preview-empty-copy");
+      if (copy) copy.textContent = message;
+    }
+    const hasScript = !!state.devStatus?.has_dev_script;
+    const running = !!state.devStatus?.running;
+    els.btnPreviewStartDev?.classList.toggle("hidden", !(visible && hasScript && !running));
   }
 
   function setPreviewDevice(device) {
@@ -1780,22 +2552,147 @@
     if (!state.current) return;
 
     if (state.previewMode === "dev" && state.devStatus?.running && state.devStatus.url) {
-      els.previewHint.classList.add("hidden");
+      setPreviewEmptyVisible(false);
       els.previewFrame.src = state.devStatus.url + "?t=" + Date.now();
+      return;
+    }
+
+    if (state.previewMode === "dev" && state.devStatus?.has_dev_script && !state.devStatus?.running) {
+      els.previewFrame.src = "about:blank";
+      setPreviewEmptyVisible(
+        true,
+        state.devStatus?.npm_available
+          ? "Este projeto precisa do Vite. Clique em Iniciar preview ao vivo."
+          : "Instale Node.js para rodar o preview ao vivo deste app."
+      );
       return;
     }
 
     const path = explicitPath || findPreviewPath();
     if (!path) {
       els.previewFrame.src = "about:blank";
-      els.previewHint.classList.remove("hidden");
-      els.previewHint.textContent = state.devStatus?.has_dev_script
-        ? "Apps React/Vite precisam de npm run dev — clique em Iniciar dev."
+      const msg = state.devStatus?.has_dev_script
+        ? "Apps React/Vite precisam de npm run dev — clique em Iniciar preview ao vivo."
         : "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
+      setPreviewEmptyVisible(true, msg);
       return;
     }
-    els.previewHint.classList.add("hidden");
+    setPreviewEmptyVisible(false);
     els.previewFrame.src = `/preview/${encodeURIComponent(state.current.id)}/${path.split("/").map(encodeURIComponent).join("/")}?t=${Date.now()}`;
+  }
+
+  function addNextStepActions(changed, donePayload) {
+    const el = document.createElement("div");
+    el.className = "msg system next-steps";
+    const status = donePayload?.status || "";
+    const htmlPath = changed.find((p) => /\.html?$/i.test(p));
+    const actions = [];
+
+    if (htmlPath || changed.some(isUiPath)) {
+      actions.push({ action: "preview", label: "Ver preview" });
+    }
+    if (changed[0]) {
+      actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0] });
+    }
+    if (changed.length) {
+      actions.push({ action: "files", label: `Arquivos (${changed.length})` });
+    }
+    actions.push({
+      action: "prompt",
+      label: "Melhorar visual",
+      prompt: "Melhore o visual desta página: tipografia, espaçamento, cores e responsividade, sem quebrar a estrutura.",
+    });
+    actions.push({
+      action: "prompt",
+      label: "Adicionar seção",
+      prompt: "Adicione uma nova seção relevante na página principal com bom layout e texto em português.",
+    });
+
+    const title =
+      status === "CANCELLED"
+        ? "Execução cancelada"
+        : changed.length
+          ? `${changed.length} arquivo(s) atualizado(s)`
+          : "Pronto para o próximo passo";
+
+    el.innerHTML = `
+      <div class="next-steps-card">
+        <div class="next-steps-title">${escapeHtml(title)}</div>
+        ${changed.length ? `<div class="next-steps-files">${changed.slice(0, 5).map((p) => `<button type="button" class="next-file" data-path="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join("")}</div>` : ""}
+        <div class="next-steps-actions">
+          ${actions
+            .map(
+              (item) =>
+                `<button type="button" class="btn btn-ghost btn-sm next-action" data-action="${item.action}" ${
+                  item.path ? `data-path="${escapeHtml(item.path)}"` : ""
+                } ${item.prompt ? `data-prompt="${escapeHtml(item.prompt)}"` : ""}>${escapeHtml(item.label)}</button>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+
+    el.addEventListener("click", async (event) => {
+      const fileBtn = event.target.closest(".next-file");
+      if (fileBtn?.dataset.path) {
+        await openFile(fileBtn.dataset.path, { switchToFiles: true, preferPreview: false });
+        return;
+      }
+      const btn = event.target.closest(".next-action");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "preview") {
+        switchTab("preview");
+        updatePreview(htmlPath || findPreviewPath());
+      } else if (action === "files") {
+        switchTab("files");
+      } else if (action === "open-file" && btn.dataset.path) {
+        await openFile(btn.dataset.path, { switchToFiles: true, preferPreview: false });
+      } else if (action === "prompt" && btn.dataset.prompt) {
+        els.promptInput.value = btn.dataset.prompt;
+        els.promptInput.focus();
+      }
+    });
+
+    els.chatMessages.appendChild(el);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    return el;
+  }
+
+  async function syncWorkspaceAfterRun(donePayload) {
+    const created = donePayload?.created_files || [];
+    const modified = donePayload?.modified_files || [];
+    const changed = Array.from(new Set([...created, ...modified].map((p) => String(p || "").replace(/\\/g, "/")).filter(Boolean)));
+    markChangedFiles(changed);
+
+    await loadProjects();
+    await loadFiles();
+    await loadRunHistory();
+    await refreshDevStatus();
+
+    const htmlChanged = changed.find((p) => /\.html?$/i.test(p));
+    const uiChanged = changed.some(isUiPath);
+    const packageTouched = changed.some((p) => /(^|\/)package\.json$/i.test(p) || /(^|\/)vite\.config\./i.test(p));
+    const hasDev = !!state.devStatus?.has_dev_script;
+
+    if (hasDev && (packageTouched || uiChanged) && !state.devStatus?.running && state.devStatus?.npm_available) {
+      await maybeEnableDevPreview({ preferDev: true, autoStart: true });
+    } else if (hasDev) {
+      await maybeEnableDevPreview({ preferDev: true, autoStart: false });
+    }
+
+    if (donePayload?.status === "CANCELLED") {
+      switchTab("report");
+    } else if (hasDev || uiChanged || htmlChanged) {
+      switchTab("preview");
+      updatePreview(htmlChanged || findPreviewPath());
+    } else if (changed[0]) {
+      await openFile(changed[0], { switchToFiles: true, preferPreview: false });
+    } else {
+      switchTab("report");
+      updatePreview();
+    }
+
+    addNextStepActions(changed, donePayload);
   }
 
   // ── Dev server ──
@@ -2024,6 +2921,20 @@
     state.fileSearchTimer = setTimeout(() => searchProjectFiles(q), 250);
   });
 
+  document.querySelectorAll(".preview-cta").forEach((btn) => {
+    btn.addEventListener("click", () => {
+      if (!btn.dataset.prompt) return;
+      els.promptInput.value = btn.dataset.prompt;
+      els.promptInput.focus();
+      if (!state.running) sendPrompt();
+    });
+  });
+  els.btnPreviewStartDev?.addEventListener("click", () => {
+    state.previewMode = "dev";
+    if (els.previewMode) els.previewMode.value = "dev";
+    startDevServer();
+  });
+
   els.btnClearChat?.addEventListener("click", clearChat);
   els.btnCancel?.addEventListener("click", cancelRun);
   els.modelSelect?.addEventListener("change", () => {
@@ -2096,6 +3007,36 @@
 
   els.btnDevStart.addEventListener("click", startDevServer);
   els.btnDevStop.addEventListener("click", stopDevServer);
+  const MODE_PREF_KEY = "forge.mode";
+
+  function syncModeControls() {
+    const mode = els.modeSelect?.value || "chat";
+    const isChat = mode === "chat";
+    document.querySelector(".steps-control")?.classList.toggle("hidden", isChat);
+    if (els.promptInput) {
+      els.promptInput.placeholder = isChat
+        ? "Converse com o agente… (para criar código, mude para Executar código)"
+        : "Peça uma mudança, um componente ou uma correção…";
+    }
+    try {
+      localStorage.setItem(MODE_PREF_KEY, mode);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  try {
+    const savedMode = localStorage.getItem(MODE_PREF_KEY);
+    if (savedMode && els.modeSelect?.querySelector(`option[value="${savedMode}"]`)) {
+      els.modeSelect.value = savedMode;
+    }
+  } catch (_) {
+    /* ignore */
+  }
+
+  els.modeSelect?.addEventListener("change", syncModeControls);
+  syncModeControls();
+
   els.previewMode.addEventListener("change", () => {
     state.previewMode = els.previewMode.value;
     updatePreview();

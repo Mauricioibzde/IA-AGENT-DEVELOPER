@@ -24,9 +24,16 @@ from ia_platform.conversations import append_message, clear_messages, format_con
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
-from ia_platform.model_catalog import recommend_models, recommend_setup_model, resolve_model_for_run, resolve_models_for_run
+from ia_platform.model_catalog import (
+    recommend_models,
+    recommend_setup_model,
+    resolve_model_for_chat,
+    resolve_model_for_run,
+    resolve_models_for_run,
+)
 from ia_platform.ollama_models import OllamaModelManager
 from ia_platform.ollama_service import ollama_service
+from ia_platform.project_templates import PROJECT_TEMPLATES
 from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
 
@@ -48,180 +55,6 @@ def _cached_hardware() -> Dict[str, Any]:
     hw = detect_hardware()
     _HARDWARE_CACHE = (now, hw)
     return hw
-
-PROJECT_TEMPLATES: Dict[str, Dict[str, str]] = {
-    "blank": {},
-    "landing": {
-        "index.html": """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Landing Page</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <header class="hero">
-    <h1>Seu produto, lançado hoje</h1>
-    <p>Descreva no chat o que quer mudar nesta landing page.</p>
-    <a class="cta" href="#">Começar agora</a>
-  </header>
-</body>
-</html>
-""",
-        "style.css": """* { box-sizing: border-box; margin: 0; }
-body { font-family: system-ui, sans-serif; background: #0f172a; color: #f8fafc; }
-.hero { min-height: 100vh; display: flex; flex-direction: column; align-items: center; justify-content: center; text-align: center; padding: 2rem; gap: 1rem; }
-.hero h1 { font-size: clamp(2rem, 5vw, 3.5rem); }
-.hero p { color: #94a3b8; max-width: 32rem; }
-.cta { display: inline-block; margin-top: 1rem; padding: 0.75rem 1.5rem; background: #6366f1; color: #fff; text-decoration: none; border-radius: 999px; font-weight: 600; }
-""",
-    },
-    "api": {
-        "main.py": '''"""API REST simples — peça ao agente para expandir endpoints."""
-
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            body = json.dumps({"ok": True}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        self.send_response(404)
-        self.end_headers()
-
-
-if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
-''',
-        "README.md": "# API\n\nRode: `python main.py`\n\nPeça ao agente novos endpoints via chat.\n",
-    },
-    "dashboard": {
-        "index.html": """<!DOCTYPE html>
-<html lang="pt-BR">
-<head>
-  <meta charset="UTF-8" />
-  <meta name="viewport" content="width=device-width, initial-scale=1" />
-  <title>Dashboard</title>
-  <link rel="stylesheet" href="style.css" />
-</head>
-<body>
-  <div class="layout">
-    <aside class="nav"><h2>Painel</h2></aside>
-    <main>
-      <h1>Dashboard</h1>
-      <div class="cards">
-        <div class="card"><span>Usuários</span><strong>1.2k</strong></div>
-        <div class="card"><span>Receita</span><strong>R$ 8.4k</strong></div>
-        <div class="card"><span>Conversão</span><strong>3.2%</strong></div>
-      </div>
-    </main>
-  </div>
-  <script src="app.js"></script>
-</body>
-</html>
-""",
-        "style.css": """* { box-sizing: border-box; margin: 0; }
-body { font-family: system-ui, sans-serif; background: #18181b; color: #fafafa; }
-.layout { display: grid; grid-template-columns: 220px 1fr; min-height: 100vh; }
-.nav { background: #09090b; padding: 1.5rem; border-right: 1px solid #27272a; }
-main { padding: 2rem; }
-.cards { display: grid; grid-template-columns: repeat(auto-fit, minmax(160px, 1fr)); gap: 1rem; margin-top: 1.5rem; }
-.card { background: #27272a; padding: 1.25rem; border-radius: 12px; display: flex; flex-direction: column; gap: 0.5rem; }
-.card span { color: #a1a1aa; font-size: 0.85rem; }
-.card strong { font-size: 1.5rem; }
-""",
-        "app.js": "console.log('Dashboard pronto — peça melhorias no chat da plataforma.');\n",
-    },
-    "react": {
-        "package.json": json.dumps(
-            {
-                "name": "forge-react-app",
-                "private": True,
-                "type": "module",
-                "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
-                "dependencies": {"react": "^18.3.1", "react-dom": "^18.3.1"},
-                "devDependencies": {"@vitejs/plugin-react": "^4.3.4", "vite": "^5.4.11"},
-            },
-            indent=2,
-        )
-        + "\n",
-        "vite.config.js": """import { defineConfig } from "vite";
-import react from "@vitejs/plugin-react";
-
-export default defineConfig({
-  plugins: [react()],
-  server: { host: "127.0.0.1", port: Number(process.env.PORT) || 5173 },
-});
-""",
-        "index.html": """<!DOCTYPE html>
-<html lang="pt-BR">
-  <head>
-    <meta charset="UTF-8" />
-    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
-    <title>Forge React App</title>
-  </head>
-  <body>
-    <div id="root"></div>
-    <script type="module" src="/src/main.jsx"></script>
-  </body>
-</html>
-""",
-        "src/main.jsx": """import React from "react";
-import { createRoot } from "react-dom/client";
-import App from "./App.jsx";
-import "./index.css";
-
-createRoot(document.getElementById("root")).render(
-  <React.StrictMode>
-    <App />
-  </React.StrictMode>
-);
-""",
-        "src/App.jsx": """export default function App() {
-  return (
-    <main className="app">
-      <h1>React + Vite</h1>
-      <p>Peça ao agente no chat para personalizar este app.</p>
-      <button type="button" onClick={() => alert("Forge AI")}>Testar</button>
-    </main>
-  );
-}
-""",
-        "src/App.css": """.app {
-  min-height: 100vh;
-  display: flex;
-  flex-direction: column;
-  align-items: center;
-  justify-content: center;
-  gap: 1rem;
-  background: radial-gradient(circle at top, #312e81, #0f172a 55%);
-  color: #f8fafc;
-  font-family: system-ui, sans-serif;
-  text-align: center;
-  padding: 2rem;
-}
-
-button {
-  border: none;
-  border-radius: 999px;
-  padding: 0.75rem 1.25rem;
-  background: #6366f1;
-  color: white;
-  font-weight: 600;
-  cursor: pointer;
-}
-""",
-        "src/index.css": "* { box-sizing: border-box; margin: 0; }\n",
-    },
-}
-
 
 def _safe_name(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "-", name.strip())[:64]
@@ -388,6 +221,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_run()
         if path == "/api/run/stream":
             return self._handle_run_stream()
+        if path == "/api/chat/stream":
+            return self._handle_chat_stream()
         if path == "/api/run/cancel":
             return self._handle_run_cancel()
         if path == "/api/projects":
@@ -649,11 +484,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
         recommended_name = None
         if ollama_ok:
             hw = _cached_hardware()
-            if models:
-                recommendation = recommend_models(hw, models).get("primary")
-                recommended_name = recommendation.get("ollama_name") if recommendation else None
-            else:
-                recommended_name = recommend_setup_model(hw, models)
+            recommended_name = recommend_setup_model(hw, models)
         self._send_json(
             200,
             {
@@ -770,7 +601,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
             readme_path = project_dir / "README.md"
             if not readme_path.exists():
                 readme_path.write_text(readme, encoding="utf-8")
-        self._send_json(201, {"id": name, "name": name, "path": f"projects/{name}", "template": template})
+        self._send_json(
+            201,
+            {
+                "id": name,
+                "name": name,
+                "path": f"projects/{name}",
+                "template": template,
+                "has_dev_script": (project_dir / "package.json").is_file()
+                and template in {"react"},
+            },
+        )
 
     def _handle_list_project_files(self, project_id: str, recursive: bool = False) -> None:
         try:
@@ -1007,16 +848,18 @@ class PlatformHandler(BaseHTTPRequestHandler):
         run_id: Optional[str] = None,
     ) -> Dict[str, Any]:
         rendered = report.render()
+        chat_summary = self._chat_facing_summary(report)
         if project_id:
             append_message(
                 workspace,
                 "agent",
-                rendered,
+                chat_summary,
                 meta={
                     "status": report.status.value,
                     "created_files": report.created_files,
                     "modified_files": report.modified_files,
                     "run_id": run_id,
+                    "full_report": True,
                 },
             )
             record_run(
@@ -1031,12 +874,36 @@ class PlatformHandler(BaseHTTPRequestHandler):
         return {
             "ok": True,
             "status": report.status.value,
+            "summary": chat_summary,
             "report": rendered,
             "workspace": str(workspace),
             "created_files": report.created_files,
             "modified_files": report.modified_files,
             "run_id": run_id,
+            "completed_tasks": list(getattr(report, "completed_tasks", []) or []),
         }
+
+    @staticmethod
+    def _chat_facing_summary(report) -> str:
+        summary = str(getattr(report, "summary", "") or "").strip() or "Execução concluída."
+        status = getattr(getattr(report, "status", None), "value", "") or ""
+        created = list(getattr(report, "created_files", []) or [])
+        modified = list(getattr(report, "modified_files", []) or [])
+        tasks = list(getattr(report, "completed_tasks", []) or [])
+        sections = [summary]
+        if status:
+            sections.append(f"Status: **{status}**")
+        if tasks:
+            bullet = "\n".join(f"- {task}" for task in tasks[:6])
+            sections.append(f"**Tarefas concluídas**\n{bullet}")
+        if created:
+            bullet = "\n".join(f"- `{path}`" for path in created[:8])
+            sections.append(f"**Arquivos criados**\n{bullet}")
+        if modified:
+            bullet = "\n".join(f"- `{path}`" for path in modified[:8])
+            sections.append(f"**Arquivos alterados**\n{bullet}")
+        sections.append("_Detalhes técnicos estão no painel Relatório._")
+        return "\n\n".join(sections)
 
     def _send_sse(self, payload: Dict[str, Any]) -> None:
         body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
@@ -1050,6 +917,155 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(400, {"error": "run_id is required"})
         cancelled = run_manager.cancel(run_id)
         return self._send_json(200, {"ok": True, "cancelled": cancelled, "run_id": run_id})
+
+    def _chat_history_for_ollama(self, workspace: Path, limit: int = 16) -> list:
+        messages = load_messages(workspace)
+        if messages and messages[-1].get("role") == "user":
+            messages = messages[:-1]
+        history = []
+        for msg in messages[-limit:]:
+            role = str(msg.get("role") or "")
+            text = str(msg.get("text") or "").strip()
+            if not text:
+                continue
+            if role == "user":
+                history.append({"role": "user", "content": text[:4000]})
+            elif role == "agent":
+                history.append({"role": "assistant", "content": text[:4000]})
+        return history
+
+    def _handle_chat_stream(self) -> None:
+        """Fast conversational mode — no planner/tools loop."""
+        data = self._read_json()
+        prompt = str(data.get("prompt", "")).strip()
+        if not prompt:
+            return self._send_json(400, {"error": "prompt is required"})
+
+        try:
+            workspace = _resolve_workspace(data.get("workspace") or data.get("project_path"))
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        workspace.mkdir(parents=True, exist_ok=True)
+        project_id = _project_id_from_workspace(workspace)
+
+        models, _conversation, preflight_error = self._prepare_run(data, workspace)
+        if preflight_error:
+            return self._send_json(self._preflight_status(preflight_error), preflight_error)
+
+        requested = str(data.get("model") or "").strip()
+        if not requested:
+            mgr = self._ollama_manager()
+            models = {
+                **models,
+                "coder": resolve_model_for_chat(None, mgr.list_names(), _cached_hardware()),
+            }
+
+        if run_manager.is_workspace_busy(workspace):
+            return self._send_json(
+                409,
+                {
+                    "error": "Já existe uma execução neste projeto. Cancele ou aguarde.",
+                    "busy": True,
+                },
+            )
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        run_id = run_manager.acquire(str(workspace))
+        if not run_id:
+            self._send_sse({"type": "error", "error": "Workspace ocupado por outra execução."})
+            return
+
+        model = models["coder"]
+        self._send_sse({"type": "started", "run_id": run_id, "mode": "chat", "model": model})
+        try:
+            from local_agent.config import AgentConfig
+            from local_agent.ollama_client import OllamaClient
+
+            cfg = AgentConfig.from_args(workspace, model=model, no_memory=True, no_git=True)
+            cfg.run_id = run_id
+            cfg.cancel_check = lambda: run_manager.is_cancelled(run_id)
+            client = OllamaClient(cfg)
+
+            history = self._chat_history_for_ollama(workspace)
+            history.append({"role": "user", "content": prompt})
+            system = (
+                "Você é o assistente sênior do Forge — especialista full-stack "
+                "(frontend e backend) em várias linguagens: JavaScript/TypeScript/React, "
+                "HTML/CSS, Python, Node, Go, Rust, Java e SQL. "
+                "Responda em português, de forma clara e com boas práticas de engenharia. "
+                "Este é o modo Chat: explique arquitetura, trade-offs e orientação — não edite arquivos. "
+                "Se o usuário pedir para criar/editar código, diga que o Forge executa o pedido "
+                "no projeto (modo Executar) aplicando padrão sênior. "
+                f"Projeto atual: {workspace.name}."
+            )
+
+            def on_chunk(text: str) -> None:
+                if run_manager.is_cancelled(run_id):
+                    return
+                self._send_sse({"type": "chat_chunk", "text": text})
+
+            try:
+                answer = client.stream_chat(
+                    history,
+                    model=model,
+                    system=system,
+                    temperature=0.4,
+                    timeout=180,
+                    on_chunk=on_chunk,
+                    cancel_check=lambda: run_manager.is_cancelled(run_id),
+                )
+            except Exception as stream_exc:
+                msg = str(stream_exc).lower()
+                if "empty streaming" not in msg and "404" not in msg and "not found" not in msg:
+                    raise
+                # Retry once without relying on the failed stream path.
+                self._send_sse({"type": "chat_chunk", "text": ""})
+                answer = client.chat(
+                    history,
+                    model=model,
+                    system=system,
+                    temperature=0.4,
+                    timeout=180,
+                )
+                if answer:
+                    self._send_sse({"type": "chat_chunk", "text": answer})
+            if run_manager.is_cancelled(run_id):
+                self._send_sse({"type": "cancelled", "run_id": run_id})
+                self._send_sse({"type": "done", "ok": False, "status": "CANCELLED", "mode": "chat", "run_id": run_id})
+                return
+
+            if project_id:
+                append_message(workspace, "agent", answer, meta={"mode": "chat", "model": model, "run_id": run_id})
+            self._send_sse(
+                {
+                    "type": "done",
+                    "ok": True,
+                    "status": "SUCCESS",
+                    "mode": "chat",
+                    "summary": answer,
+                    "report": answer,
+                    "model": model,
+                    "run_id": run_id,
+                    "created_files": [],
+                    "modified_files": [],
+                }
+            )
+        except Exception as exc:
+            message = str(exc)
+            if "cancelled" in message.lower():
+                self._send_sse({"type": "cancelled", "run_id": run_id})
+                self._send_sse({"type": "done", "ok": False, "status": "CANCELLED", "mode": "chat", "run_id": run_id})
+            else:
+                self._send_sse({"type": "error", "error": message})
+                self._send_sse({"type": "done", "ok": False, "status": "FAILED", "mode": "chat", "error": message})
+        finally:
+            run_manager.clear(run_id)
 
     def _handle_run_stream(self) -> None:
         data = self._read_json()
@@ -1153,6 +1169,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(content)))
+        if ctype and (ctype.startswith("text/") or ctype in {"application/javascript", "text/css"}):
+            self.send_header("Cache-Control", "no-cache")
         self.end_headers()
         self.wfile.write(content)
 

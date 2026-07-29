@@ -6,7 +6,7 @@
   <title>Forge — IA Agent Developer</title>
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
-  <link href="https://fonts.googleapis.com/css2?family=Inter:wght@400;500;600;700&display=swap" rel="stylesheet" />
+  <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
   <link rel="stylesheet" href="/static/app.css" />
 </head>
 <body>
@@ -15,21 +15,21 @@
       <div class="sidebar-header">
         <div class="logo">
           <span class="logo-icon" aria-hidden="true"></span>
-          Forge <span>AI</span>
+          <span class="logo-word">Forge</span>
         </div>
       </div>
       <div class="sidebar-actions">
-        <button type="button" class="btn btn-primary btn-gradient" id="btnNewProject">+ Novo projeto</button>
+        <button type="button" class="btn btn-primary btn-gradient" id="btnNewProject">Novo projeto</button>
         <button type="button" class="btn btn-ghost btn-sidebar" id="btnModels">
-          <span class="btn-icon-svg" aria-hidden="true">◇</span> Modelos IA
+          Modelos IA
         </button>
       </div>
-      <div class="sidebar-section-label">Seus projetos</div>
+      <div class="sidebar-section-label">Projetos</div>
       <div class="project-list" id="projectList"></div>
       <div class="sidebar-bottom">
         <div class="sidebar-tip" id="sidebarTip">
           <strong>Dica do dia</strong>
-          <p>Use o template React + Vite e peça ao agente para personalizar a landing page.</p>
+          <p>Crie um projeto React + Vite; o agente aplica padrão sênior (FE/BE) e o preview sobe ao vivo.</p>
         </div>
         <div class="sidebar-user">
           <div class="user-avatar">F</div>
@@ -52,9 +52,10 @@
 
     <div class="main">
       <section class="empty-state" id="emptyView">
-        <div class="hero-glow empty-glow"></div>
-        <h3>Gere apps por conversa</h3>
-        <p>Crie um projeto ou escolha um template para começar.</p>
+        <div class="aurora-band" aria-hidden="true"></div>
+        <div class="empty-brand">Forge</div>
+        <h3>Crie apps lindos por conversa</h3>
+        <p>Escolha um ponto de partida. O agente cuida do código.</p>
         <div class="template-grid" id="templateGrid">
           <button type="button" class="template-card" data-template="landing">
             <h4>Landing Page</h4>
@@ -89,8 +90,9 @@
             </div>
           </div>
           <div class="topbar-controls">
-            <select id="modeSelect" title="Modo de execução" class="control-select">
-              <option value="execute">Executar</option>
+            <select id="modeSelect" title="Modo" class="control-select">
+              <option value="chat" selected>Chat</option>
+              <option value="execute">Executar código</option>
               <option value="plan">Só plano</option>
               <option value="dry">Dry-run</option>
             </select>
@@ -107,40 +109,43 @@
             </div>
             <button type="button" class="btn btn-ghost btn-icon-text" id="btnClearChat" title="Limpar conversa">Limpar</button>
             <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar">↻ Atualizar</button>
-            <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">🚀 Deploy</button>
+            <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">Deploy</button>
           </div>
         </header>
 
         <div class="workspace-body">
           <div class="chat-area">
             <div class="chat-hero" id="chatHero">
-              <div class="hero-glow"></div>
-              <div class="hero-icon" aria-hidden="true">✦</div>
-              <h3 class="hero-title">Como posso ajudar no seu projeto hoje?</h3>
+              <div class="aurora-band aurora-band--soft" aria-hidden="true"></div>
+              <p class="hero-kicker">Projeto aberto</p>
+              <h3 class="hero-title">O que vamos construir agora?</h3>
+              <p class="hero-sub">Descreva o app ou a mudança — pedidos de desenvolvimento executam no projeto e o preview atualiza. Use Chat só para perguntas rápidas.</p>
               <div class="quick-actions">
-                <button type="button" class="quick-card" data-prompt="Explique a estrutura deste projeto e sugira melhorias.">
-                  <span class="quick-icon">💬</span>
-                  <span class="quick-label">Perguntar algo</span>
+                <button type="button" class="quick-card" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte.">
+                  <span class="quick-icon">Web</span>
+                  <span class="quick-label">Criar landing</span>
                 </button>
-                <button type="button" class="quick-card" data-prompt="Gere o código inicial para a funcionalidade que descrever a seguir.">
-                  <span class="quick-icon">&lt;/&gt;</span>
-                  <span class="quick-label">Gerar código</span>
+                <button type="button" class="quick-card" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia.">
+                  <span class="quick-icon">UI</span>
+                  <span class="quick-label">Melhorar visual</span>
                 </button>
-                <button type="button" class="quick-card" data-prompt="Analise os arquivos principais do projeto e liste problemas ou oportunidades.">
-                  <span class="quick-icon">📄</span>
-                  <span class="quick-label">Analisar arquivos</span>
+                <button type="button" class="quick-card" data-prompt="Adicione uma seção de funcionalidades com cards e ícones simples em CSS.">
+                  <span class="quick-icon">+</span>
+                  <span class="quick-label">Nova seção</span>
                 </button>
-                <button type="button" class="quick-card" data-prompt="Crie conteúdo de landing page moderno para este app (headline, benefícios e CTA).">
-                  <span class="quick-icon">🚀</span>
-                  <span class="quick-label">Gerar conteúdo</span>
+                <button type="button" class="quick-card" data-prompt="Explique a estrutura deste projeto e sugira as próximas melhorias.">
+                  <span class="quick-icon">Ask</span>
+                  <span class="quick-label">Perguntar</span>
                 </button>
               </div>
             </div>
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-area">
               <div class="chat-input-wrap">
-                <textarea id="promptInput" rows="2" placeholder="Descreva no chat o que quer mudar nesta landing page..."></textarea>
-                <button type="button" class="btn-send" id="btnSend" title="Enviar">➤</button>
+                <textarea id="promptInput" rows="2" placeholder="Converse com o agente ou peça uma mudança no projeto..."></textarea>
+                <button type="button" class="btn-send" id="btnSend" title="Enviar" aria-label="Enviar">
+                  <span aria-hidden="true">↑</span>
+                </button>
               </div>
               <div class="chat-input-actions">
                 <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar execução</button>
@@ -174,12 +179,21 @@
               <pre class="dev-error-log hidden" id="devErrorLog"></pre>
               <div class="preview-viewport device-desktop" id="previewViewport">
                 <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
+                <div class="preview-empty" id="previewEmpty">
+                  <div class="preview-empty-title">Preview ao vivo</div>
+                  <p class="preview-empty-copy">Quando o agente criar HTML ou um app, a prévia aparece aqui.</p>
+                  <div class="preview-empty-actions">
+                    <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
+                    <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section.">Criar landing</button>
+                    <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um app React + Vite simples com página inicial e estilos.">Criar React</button>
+                  </div>
+                </div>
               </div>
-              <p class="preview-hint" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
+              <p class="preview-hint hidden" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
               <div class="device-switcher" id="deviceSwitcher">
-                <button type="button" class="device-btn active" data-device="desktop" title="Desktop">🖥</button>
-                <button type="button" class="device-btn" data-device="tablet" title="Tablet">📱</button>
-                <button type="button" class="device-btn" data-device="mobile" title="Mobile">📲</button>
+                <button type="button" class="device-btn active" data-device="desktop" title="Desktop">Desk</button>
+                <button type="button" class="device-btn" data-device="tablet" title="Tablet">Tab</button>
+                <button type="button" class="device-btn" data-device="mobile" title="Mobile">Mob</button>
               </div>
             </div>
             <div class="panel-content hidden" id="panelReport">

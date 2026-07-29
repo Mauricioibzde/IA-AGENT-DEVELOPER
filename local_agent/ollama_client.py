@@ -78,6 +78,48 @@ class OllamaClient:
         if system:
             messages = [{"role": "system", "content": system}, *messages]
 
+        try:
+            content = self._stream_chat_once(
+                messages,
+                model_name,
+                temperature,
+                timeout,
+                on_chunk=on_chunk,
+                cancel_check=cancel_check,
+            )
+        except Exception as stream_exc:
+            if cancel_check and cancel_check():
+                raise OllamaError("cancelled") from stream_exc
+            if self.logger:
+                self.logger.warn("llm_stream_fallback", message=str(stream_exc), model=model_name)
+            try:
+                # Non-stream chat (also falls back to /api/generate) when stream 404s or fails.
+                content = self._chat_once(messages, model_name, temperature, timeout)
+            except Exception as fallback_exc:
+                raise OllamaError(
+                    f"Chat falhou no modelo '{model_name}': {fallback_exc}. "
+                    "Escolha Auto ou outro modelo instalado."
+                ) from fallback_exc
+            if on_chunk and content:
+                on_chunk(content)
+
+        content = self._strip_thinking(content)
+        if cancel_check and cancel_check():
+            raise OllamaError("cancelled")
+        if not content:
+            raise OllamaError("Ollama returned an empty streaming response")
+        return content
+
+    def _stream_chat_once(
+        self,
+        messages: List[Dict[str, str]],
+        model_name: str,
+        temperature: float,
+        timeout: int,
+        *,
+        on_chunk: Optional[Callable[[str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
+    ) -> str:
         payload: Dict[str, Any] = {
             "model": model_name,
             "messages": messages,
@@ -92,6 +134,18 @@ class OllamaClient:
         )
         try:
             response = urllib.request.urlopen(req, timeout=timeout)
+        except urllib.error.HTTPError as exc:
+            detail = ""
+            try:
+                detail = exc.read().decode("utf-8", errors="replace")[:300]
+            except Exception:
+                pass
+            if exc.code == 404:
+                raise OllamaError(
+                    f"Modelo '{model_name}' não encontrado no Ollama (404). "
+                    f"Escolha outro modelo ou use Auto. {detail}".strip()
+                ) from exc
+            raise OllamaError(f"Streaming chat failed: HTTP Error {exc.code}: {exc.reason}") from exc
         except Exception as exc:
             raise OllamaError(f"Streaming chat failed: {exc}") from exc
 
@@ -119,12 +173,7 @@ class OllamaClient:
         finally:
             response.close()
 
-        content = self._strip_thinking("".join(parts))
-        if cancel_check and cancel_check():
-            raise OllamaError("cancelled")
-        if not content:
-            raise OllamaError("Ollama returned an empty streaming response")
-        return content
+        return "".join(parts)
 
     def complete(
         self,
