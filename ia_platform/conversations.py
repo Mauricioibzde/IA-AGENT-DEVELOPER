@@ -69,7 +69,7 @@ def clear_messages(project_dir: Path) -> None:
     save_messages(project_dir, [])
 
 
-def format_conversation_context(messages: List[Dict[str, Any]], limit: int = 10) -> str:
+def format_conversation_context(messages: List[Dict[str, Any]], limit: int = 16) -> str:
     """Format prior chat turns for injection into the agent context."""
     if not messages:
         return ""

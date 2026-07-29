@@ -40,6 +40,7 @@ def record_run(
     created_files: Optional[List[str]] = None,
     modified_files: Optional[List[str]] = None,
     run_id: Optional[str] = None,
+    events: Optional[List[Dict[str, Any]]] = None,
 ) -> Dict[str, Any]:
     path = _runs_file(project_dir)
     agent_dir = project_dir / ".agent"
@@ -63,6 +64,7 @@ def record_run(
         "report": report[:MAX_REPORT_CHARS],
         "created_files": list(created_files or [])[:30],
         "modified_files": list(modified_files or [])[:30],
+        "events": list(events or [])[-40:],
     }
     existing.append(entry)
     payload = {"runs": existing[-MAX_RUNS:], "updated": time.time()}

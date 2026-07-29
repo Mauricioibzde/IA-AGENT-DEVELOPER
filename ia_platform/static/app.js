@@ -21,12 +21,21 @@
     devStatus: null,
     previewMode: "static",
     deploying: false,
+    deployReady: false,
     mobilePanelOpen: false,
     runs: [],
     selectedRunId: null,
     recentChangedFiles: [],
     expandedDirs: {},
     fileSearchTimer: null,
+    projectSearchTimer: null,
+    searchMatches: null,
+    devWasRunning: false,
+    devAutoRestarted: false,
+    devPollTimer: null,
+    previewLoadTimer: null,
+    previewExpectingContent: false,
+    previewLoadRetried: false,
     ollamaOk: false,
     previewDevice: "desktop",
     healthInFlight: false,
@@ -48,6 +57,8 @@
     fileSearchInput: $("fileSearchInput"),
     runHistoryList: $("runHistoryList"),
     projectList: $("projectList"),
+    projectSearch: $("projectSearch"),
+    modeChip: $("modeChip"),
     emptyView: $("emptyView"),
     workspaceView: $("workspaceView"),
     projectTitle: $("projectTitle"),
@@ -68,6 +79,8 @@
     previewMode: $("previewMode"),
     btnDevStart: $("btnDevStart"),
     btnDevStop: $("btnDevStop"),
+    btnDevClear: $("btnDevClear"),
+    btnDevRestart: $("btnDevRestart"),
     devStatus: $("devStatus"),
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
@@ -76,6 +89,7 @@
     deployModalInner: $("deployModalInner"),
     deployBadge: $("deployBadge"),
     deploySpinner: $("deploySpinner"),
+    deployChecklist: $("deployChecklist"),
     deployLog: $("deployLog"),
     btnOpenDeployUrl: $("btnOpenDeployUrl"),
     btnCloseDeploy: $("btnCloseDeploy"),
@@ -137,6 +151,7 @@
     { id: "check", label: "Verificar ambiente" },
     { id: "install", label: "Instalar Ollama" },
     { id: "start", label: "Iniciar serviço Ollama" },
+    { id: "node", label: "Verificar Node.js" },
     { id: "hardware", label: "Analisar hardware" },
     { id: "model", label: "Baixar modelo IA" },
     { id: "config", label: "Configurar modelo" },
@@ -147,11 +162,14 @@
     check: "check",
     install: "install",
     start: "start",
+    node: "node",
     hardware: "hardware",
     model: "model",
     config: "config",
     done: "done",
   };
+
+  const LAST_PROJECT_KEY = "forge_last_project";
 
   const SETUP_DISMISS_KEY = "forge_setup_dismissed";
 
@@ -199,6 +217,7 @@
     const msg = String(message || "").toLowerCase();
     if (/instal|winget|setup\.exe|download.*ollama|brew install|install\.sh/.test(msg)) return "install";
     if (/iniciando ollama|ollama serve|serviço|iniciado automaticamente|ollama pronto|ollama já/.test(msg)) return "start";
+    if (/node\.js|npm|preview react/.test(msg)) return "node";
     if (/hardware|recomend|analisando|catalog|tier|ram/.test(msg)) return "hardware";
     if (/baixando|pull|download|modelo|manifest|gguf/.test(msg)) return "model";
     if (/configur|selecion|pronto para/.test(msg)) return "config";
@@ -731,8 +750,24 @@
 
     if (ev.type === "phase") {
       const step = SETUP_PHASE_STEP[ev.phase] || "check";
-      if (ev.skipped) setSetupStep(step, "skip");
-      else setSetupStep(step, "active");
+      if (ev.phase === "node") {
+        if (ev.npm_available === false) {
+          setSetupStep("node", "skip");
+          if (ev.install_url && els.setupInstallLink) {
+            els.setupInstallLink.href = ev.install_url;
+            els.setupInstallLink.textContent = "Instalar Node.js";
+            els.setupInstallLinkWrap?.classList.remove("hidden");
+          }
+        } else if (ev.skipped) {
+          setSetupStep("node", "skip");
+        } else {
+          setSetupStep("node", "done");
+        }
+      } else if (ev.skipped) {
+        setSetupStep(step, "skip");
+      } else {
+        setSetupStep(step, "active");
+      }
       updateSetupProgress(ev.percent ?? setupProgress.lastPercent, ev.message, null);
       if (ev.model && els.setupModelPick) {
         els.setupModelPick.textContent = `Modelo selecionado: ${ev.model}`;
@@ -1187,7 +1222,12 @@
     return new Date(ts * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
   }
 
+  function closeProjectMenu() {
+    document.querySelectorAll(".project-menu").forEach((menu) => menu.remove());
+  }
+
   function renderProjectList() {
+    closeProjectMenu();
     els.projectList.innerHTML = "";
     if (!state.projects.length) {
       els.projectList.innerHTML = '<p class="sidebar-empty">Nenhum projeto ainda</p>';
@@ -1197,17 +1237,106 @@
       const item = document.createElement("div");
       item.className = "project-item" + (state.current?.id === p.id ? " active" : "");
       item.dataset.id = p.id;
-      item.innerHTML = `<div class="name">${escapeHtml(p.name)}</div><div class="meta">${p.files} arquivos · ${formatDate(p.updated)}</div>`;
-      item.addEventListener("click", () => {
+      item.innerHTML = `
+        <div class="project-item-row">
+          <div class="project-item-main">
+            <div class="name">${escapeHtml(p.name)}</div>
+            <div class="meta">${p.files} arquivos · ${formatDate(p.updated)}</div>
+          </div>
+          <button type="button" class="project-menu-btn" title="Ações do projeto" aria-label="Ações">⋯</button>
+        </div>`;
+      item.querySelector(".project-item-main")?.addEventListener("click", () => {
         selectProject(p.id);
         closeSidebar();
+      });
+      item.querySelector(".project-menu-btn")?.addEventListener("click", (event) => {
+        event.stopPropagation();
+        openProjectMenu(p, event.currentTarget);
       });
       els.projectList.appendChild(item);
     });
   }
 
-  async function loadProjects() {
-    const d = await api("/api/projects");
+  function openProjectMenu(project, anchor) {
+    closeProjectMenu();
+    const menu = document.createElement("div");
+    menu.className = "project-menu";
+    menu.innerHTML = `
+      <button type="button" data-action="rename">Renomear</button>
+      <button type="button" data-action="duplicate">Duplicar</button>
+      <button type="button" data-action="archive" class="danger">Arquivar</button>`;
+    menu.addEventListener("click", (event) => {
+      event.stopPropagation();
+      const btn = event.target.closest("button[data-action]");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      closeProjectMenu();
+      if (action === "rename") renameProject(project.id);
+      else if (action === "duplicate") duplicateProject(project.id);
+      else if (action === "archive") archiveProject(project.id);
+    });
+    anchor.closest(".project-item")?.appendChild(menu);
+    const dismiss = (event) => {
+      if (!menu.contains(event.target) && event.target !== anchor) {
+        closeProjectMenu();
+        document.removeEventListener("click", dismiss);
+      }
+    };
+    setTimeout(() => document.addEventListener("click", dismiss), 0);
+  }
+
+  async function renameProject(id) {
+    const project = state.projects.find((p) => p.id === id);
+    const newName = window.prompt("Novo nome do projeto:", project?.name || "");
+    if (!newName?.trim()) return;
+    try {
+      const d = await api(`/api/projects/${encodeURIComponent(id)}/rename`, {
+        method: "POST",
+        body: JSON.stringify({ name: newName.trim() }),
+      });
+      await loadProjects();
+      if (state.current?.id === id) {
+        await selectProject(d.id || newName.trim());
+      }
+    } catch (e) {
+      alert("Não foi possível renomear: " + e.message);
+    }
+  }
+
+  async function duplicateProject(id) {
+    try {
+      const d = await api(`/api/projects/${encodeURIComponent(id)}/duplicate`, {
+        method: "POST",
+        body: "{}",
+      });
+      await loadProjects();
+      await selectProject(d.id);
+    } catch (e) {
+      alert("Não foi possível duplicar: " + e.message);
+    }
+  }
+
+  async function archiveProject(id) {
+    if (!window.confirm("Arquivar este projeto? Ele sairá da lista principal.")) return;
+    try {
+      await api(`/api/projects/${encodeURIComponent(id)}/archive`, {
+        method: "POST",
+        body: "{}",
+      });
+      await loadProjects();
+      if (state.current?.id === id) {
+        if (state.projects.length) await selectProject(state.projects[0].id);
+        else showEmptyView();
+      }
+    } catch (e) {
+      alert("Não foi possível arquivar: " + e.message);
+    }
+  }
+
+  async function loadProjects(q) {
+    const query = (q ?? els.projectSearch?.value ?? "").trim();
+    const url = query ? `/api/projects?q=${encodeURIComponent(query)}` : "/api/projects";
+    const d = await api(url);
     state.projects = d.projects || [];
     renderProjectList();
   }
@@ -1238,13 +1367,22 @@
     state.selectedRunId = null;
     state.lastReport = "";
     state.recentChangedFiles = [];
+    state.searchMatches = null;
     state.previewMode = "static";
+    state.devAutoRestarted = false;
+    state.previewLoadRetried = false;
     els.previewMode.value = "static";
+    if (els.fileSearchInput) els.fileSearchInput.value = "";
     els.fileViewer.classList.add("hidden");
     els.fileViewer.textContent = "";
     els.projectTitle.textContent = project.name;
     els.emptyView.classList.add("hidden");
     els.workspaceView.classList.remove("hidden");
+    try {
+      localStorage.setItem(LAST_PROJECT_KEY, id);
+    } catch {
+      /* private mode */
+    }
     renderProjectList();
     closeSidebar();
     await loadChat();
@@ -1253,6 +1391,7 @@
     await refreshDevStatus();
     await maybeEnableDevPreview({ preferDev: options.preferDev, autoStart: !!options.autoStart });
     updatePreview();
+    syncDevPolling();
   }
 
   async function maybeEnableDevPreview({ preferDev = false, autoStart = false } = {}) {
@@ -1271,13 +1410,17 @@
     }
     if (autoStart && !state.devStatus?.running && state.devStatus?.npm_available) {
       await startDevServer();
+      syncDevPolling();
       return true;
     }
+    if (hasScript && state.previewMode === "dev") syncDevPolling();
     return hasScript;
   }
 
   function showEmptyView() {
     state.current = null;
+    stopDevPolling();
+    clearPreviewLoadTimer();
     els.emptyView.classList.remove("hidden");
     els.workspaceView.classList.add("hidden");
     renderProjectList();
@@ -1398,14 +1541,42 @@
     });
   }
 
+  function formatTimelineEvent(ev) {
+    if (!ev) return "";
+    const type = String(ev.type || ev.status || "?");
+    const detail =
+      ev.summary ||
+      ev.message ||
+      ev.analysis ||
+      (ev.paths?.length ? ev.paths.join(", ") : "") ||
+      (ev.tools?.length ? `${ev.tools.length} ferramenta(s)` : "");
+    return detail ? `${type}: ${detail}` : type;
+  }
+
   function renderRunArtifacts(run) {
     if (!els.reportViewer) return;
     const created = run?.created_files || [];
     const modified = run?.modified_files || [];
     const changed = Array.from(new Set([...created, ...modified]));
     const report = run?.report || run?.summary || state.lastReport || "Nenhuma execução ainda.";
+    const events = Array.isArray(run?.events) ? run.events : [];
 
     let html = "";
+    if (events.length) {
+      html += `
+        <div class="run-timeline">
+          <div class="run-timeline-title">Linha do tempo</div>
+          <ul class="run-timeline-list">
+            ${events
+              .slice(-12)
+              .map(
+                (ev) =>
+                  `<li class="run-timeline-item"><strong>${escapeHtml(String(ev.type || ev.status || "evento"))}</strong><span>${escapeHtml(formatTimelineEvent(ev).slice(0, 160))}</span></li>`
+              )
+              .join("")}
+          </ul>
+        </div>`;
+    }
     if (changed.length) {
       html += `
         <div class="run-artifacts">
@@ -1460,7 +1631,7 @@
         state.selectedRunId = state.runs[0].id;
         const selected = state.runs[0];
         state.lastReport = selected.report || selected.summary || "";
-        setMessageContent(els.reportViewer, state.lastReport, "agent");
+        renderRunArtifacts(selected);
         renderRunHistory();
       }
     } catch {
@@ -1471,10 +1642,27 @@
 
   async function searchProjectFiles(query) {
     if (!state.current) return;
-    if (!query.trim()) {
+    const q = String(query || "").trim();
+    if (!q) {
+      state.searchMatches = null;
       await loadFiles();
       return;
     }
+    if (q.length >= 2) {
+      try {
+        const d = await api(
+          `/api/projects/${encodeURIComponent(state.current.id)}/search?q=${encodeURIComponent(q)}`
+        );
+        if (d.matches?.length) {
+          state.searchMatches = d.matches;
+          renderFileTree();
+          return;
+        }
+      } catch {
+        /* fallback to local filter */
+      }
+    }
+    state.searchMatches = null;
     renderFileTree();
   }
 
@@ -1797,15 +1985,15 @@
     const mode = els.modeSelect?.value || "chat";
     if (mode === "chat") {
       if (looksLikeCodeRequest(prompt)) {
-        if (els.modeSelect) els.modeSelect.value = "execute";
-        syncModeControls();
-        addMessage(
-          "Modo: Executar código — pedido de desenvolvimento detectado. O agente vai alterar arquivos neste projeto.",
-          "system"
+        addMessage(prompt, "user");
+        els.promptInput.value = "";
+        updateChatHeroVisibility();
+        persistMessage("user", prompt).catch(() => {});
+        addExecuteHandoff(
+          prompt,
+          "Isso parece um pedido para criar ou editar código. No Chat eu só converso — para alterar arquivos, execute:"
         );
-        document.body.classList.add("mode-execute-flash");
-        window.setTimeout(() => document.body.classList.remove("mode-execute-flash"), 1200);
-        return sendAgentPrompt(prompt, "execute");
+        return;
       }
       return sendChatPrompt(prompt);
     }
@@ -1898,15 +2086,6 @@
     els.btnCancel?.classList.remove("hidden");
     els.btnCancel.disabled = true;
 
-    const wantsCode = looksLikeCodeRequest(prompt);
-    // Build intents are auto-routed in sendPrompt; handoff only if somehow still in chat.
-    if (wantsCode) {
-      addExecuteHandoff(
-        prompt,
-        "Isso parece um pedido para criar/editar código. No Chat eu só converso — para alterar arquivos, execute:"
-      );
-    }
-
     const statusEl = addMessage("Respondendo…", "progress");
     const agentEl = addMessage("", "agent live");
     let wasAbort = false;
@@ -1975,10 +2154,7 @@
         agentEl.classList.add("error");
       } else if (finalText) {
         setMessageContent(agentEl, finalText, "agent");
-        if (
-          !wantsCode &&
-          /executar c[oó]digo|modo executar|mudar o seletor|para criar\/editar/i.test(finalText)
-        ) {
+        if (/executar c[oó]digo|modo executar|mudar o seletor|para criar\/editar/i.test(finalText)) {
           addExecuteHandoff(prompt, "O assistente sugeriu executar o pedido no projeto:");
         }
       } else {
@@ -2480,6 +2656,29 @@
     }
 
     const query = (els.fileSearchInput?.value || "").trim().toLowerCase();
+
+    if (state.searchMatches?.length) {
+      state.searchMatches.forEach((match) => {
+        const path = match.path || "";
+        const kind = fileKind(path.split("/").pop() || path);
+        const changed = isRecentlyChanged(path);
+        const symbols = (match.symbols || []).slice(0, 3).join(", ");
+        const li = document.createElement("li");
+        li.dataset.path = path;
+        if (state.selectedFile === path) li.classList.add("selected");
+        if (changed) li.classList.add("changed");
+        li.innerHTML = `
+          <span class="file-kind file-kind--${kind.cls}">${kind.label}</span>
+          <span class="file-path">${escapeHtml(path)}</span>
+          ${symbols ? `<span class="file-search-symbols">${escapeHtml(symbols)}</span>` : ""}
+          ${changed ? '<span class="file-changed">novo</span>' : ""}`;
+        li.title = path;
+        li.addEventListener("click", () => openFile(path));
+        els.fileTree.appendChild(li);
+      });
+      return;
+    }
+
     const files = query
       ? state.files.filter((f) => f.path.toLowerCase().includes(query) || f.name.toLowerCase().includes(query))
       : state.files;
@@ -2568,12 +2767,49 @@
     });
   }
 
+  function clearPreviewLoadTimer() {
+    if (state.previewLoadTimer) {
+      clearTimeout(state.previewLoadTimer);
+      state.previewLoadTimer = null;
+    }
+  }
+
+  function schedulePreviewLoadCheck() {
+    clearPreviewLoadTimer();
+    state.previewLoadTimer = setTimeout(async () => {
+      if (!state.previewExpectingContent) return;
+      await refreshDevStatus();
+      if (
+        state.previewMode === "dev" &&
+        state.devStatus?.has_dev_script &&
+        !state.previewLoadRetried &&
+        state.devStatus?.npm_available
+      ) {
+        state.previewLoadRetried = true;
+        await startDevServer();
+      }
+    }, 8000);
+  }
+
+  function bindPreviewFrameLoad() {
+    if (!els.previewFrame) return;
+    els.previewFrame.onload = () => {
+      const src = els.previewFrame.getAttribute("src") || "";
+      if (src && src !== "about:blank") {
+        state.previewExpectingContent = false;
+        clearPreviewLoadTimer();
+      }
+    };
+  }
+
   function updatePreview(explicitPath) {
     if (!state.current) return;
 
     if (state.previewMode === "dev" && state.devStatus?.running && state.devStatus.url) {
       setPreviewEmptyVisible(false);
+      state.previewExpectingContent = true;
       els.previewFrame.src = state.devStatus.url + "?t=" + Date.now();
+      schedulePreviewLoadCheck();
       return;
     }
 
@@ -2598,7 +2834,9 @@
       return;
     }
     setPreviewEmptyVisible(false);
+    state.previewExpectingContent = true;
     els.previewFrame.src = `/preview/${encodeURIComponent(state.current.id)}/${path.split("/").map(encodeURIComponent).join("/")}?t=${Date.now()}`;
+    schedulePreviewLoadCheck();
   }
 
   function addNextStepActions(changed, donePayload) {
@@ -2607,7 +2845,12 @@
     const status = donePayload?.status || "";
     const htmlPath = changed.find((p) => /\.html?$/i.test(p));
     const actions = [];
+    const hasDev = !!state.devStatus?.has_dev_script;
+    const devRunning = !!state.devStatus?.running;
 
+    if (hasDev && !devRunning) {
+      actions.push({ action: "start-dev", label: "Iniciar preview" });
+    }
     if (htmlPath || changed.some(isUiPath)) {
       actions.push({ action: "preview", label: "Ver preview" });
     }
@@ -2627,6 +2870,15 @@
       label: "Adicionar seção",
       prompt: "Adicione uma nova seção relevante na página principal com bom layout e texto em português.",
     });
+    if (status && status !== "SUCCESS" && status !== "CANCELLED") {
+      actions.push({
+        action: "prompt",
+        label: "Corrigir o erro da última execução",
+        prompt:
+          "Corrija o erro da última execução neste projeto. Leia o relatório e os logs, identifique a causa e aplique a correção mínima necessária.",
+      });
+    }
+    actions.push({ action: "deploy", label: "Deploy" });
 
     const title =
       status === "CANCELLED"
@@ -2663,6 +2915,13 @@
       if (action === "preview") {
         switchTab("preview");
         updatePreview(htmlPath || findPreviewPath());
+      } else if (action === "start-dev") {
+        state.previewMode = "dev";
+        if (els.previewMode) els.previewMode.value = "dev";
+        syncDevPolling();
+        startDevServer();
+      } else if (action === "deploy") {
+        runDeploy();
       } else if (action === "files") {
         switchTab("files");
       } else if (action === "open-file" && btn.dataset.path) {
@@ -2717,11 +2976,46 @@
 
   // ── Dev server ──
 
+  function stopDevPolling() {
+    if (state.devPollTimer) {
+      clearInterval(state.devPollTimer);
+      state.devPollTimer = null;
+    }
+  }
+
+  function syncDevPolling() {
+    stopDevPolling();
+    if (state.current && state.previewMode === "dev") {
+      state.devPollTimer = setInterval(() => {
+        if (state.current && state.previewMode === "dev") {
+          refreshDevStatus().then(() => {
+            if (state.devStatus?.running) updatePreview();
+          });
+        }
+      }, 5000);
+    }
+  }
+
+  async function clearDevError() {
+    if (!state.current) return;
+    try {
+      await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/clear-error`, {
+        method: "POST",
+        body: "{}",
+      });
+      await refreshDevStatus();
+    } catch (e) {
+      els.devStatus.textContent = e.message;
+    }
+  }
+
   function renderDevControls() {
     const s = state.devStatus || {};
     const hasScript = s.has_dev_script;
     els.btnDevStart.classList.toggle("hidden", !hasScript || s.running);
     els.btnDevStop.classList.toggle("hidden", !s.running);
+    els.btnDevClear?.classList.toggle("hidden", !hasScript || !s.last_error);
+    els.btnDevRestart?.classList.toggle("hidden", !hasScript);
     els.previewMode.querySelector('option[value="dev"]').disabled = !hasScript;
 
     if (!hasScript) {
@@ -2743,13 +3037,27 @@
   }
 
   async function refreshDevStatus() {
-    if (!state.current) return;
+    if (!state.current) return null;
+    const wasRunning = !!state.devStatus?.running;
     try {
       state.devStatus = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/status`);
     } catch {
       state.devStatus = null;
     }
+    const isRunning = !!state.devStatus?.running;
     renderDevControls();
+    if (wasRunning && !isRunning && state.previewMode === "dev" && !state.devAutoRestarted) {
+      state.devAutoRestarted = true;
+      if (state.devStatus?.has_dev_script && state.devStatus?.npm_available) {
+        await startDevServer();
+      }
+    }
+    if (isRunning) {
+      state.devAutoRestarted = false;
+      state.previewLoadRetried = false;
+    }
+    state.devWasRunning = isRunning;
+    return state.devStatus;
   }
 
   async function startDevServer() {
@@ -2766,6 +3074,7 @@
       state.previewMode = "dev";
       els.previewMode.value = "dev";
       renderDevControls();
+      syncDevPolling();
       updatePreview();
       switchTab("preview");
     } catch (e) {
@@ -2801,10 +3110,39 @@
     els.deployBadge?.classList.add("hidden");
     els.deploySpinner?.classList.add("hidden");
     els.btnOpenDeployUrl?.classList.add("hidden");
+    if (els.deployChecklist) els.deployChecklist.innerHTML = "";
+  }
+
+  function renderDeployChecklist(data) {
+    if (!els.deployChecklist) return;
+    const reqs = data?.requirements || [];
+    if (!reqs.length) {
+      els.deployChecklist.innerHTML = '<li class="deploy-check-item warn"><span class="deploy-check-icon">○</span><span>Sem dados de preflight.</span></li>';
+      return;
+    }
+    els.deployChecklist.innerHTML = reqs
+      .map(
+        (item) => `
+        <li class="deploy-check-item ${item.ok ? "ok" : "warn"}">
+          <span class="deploy-check-icon">${item.ok ? "✓" : "○"}</span>
+          <span>${escapeHtml(item.label || item.id || "Requisito")}${!item.ok && item.fix ? `<small>${escapeHtml(item.fix)}</small>` : ""}</span>
+        </li>`
+      )
+      .join("");
+    state.deployReady = !!data?.ready;
+  }
+
+  async function fetchDeployStatus() {
+    if (!state.current) return null;
+    try {
+      return await api(`/api/projects/${encodeURIComponent(state.current.id)}/deploy/status`);
+    } catch {
+      return null;
+    }
   }
 
   function openDeployModal(text) {
-    els.deployLog.textContent = text;
+    if (text) els.deployLog.textContent = text;
     els.deployModal.classList.remove("hidden");
   }
 
@@ -2849,13 +3187,19 @@
     els.btnDeploy.disabled = true;
     els.btnCloseDeploy.disabled = true;
     resetDeployModal();
+    openDeployModal("Verificando requisitos...");
+    const preflight = await fetchDeployStatus();
+    if (preflight) renderDeployChecklist(preflight);
     els.deploySpinner?.classList.remove("hidden");
-    openDeployModal("Preparando deploy...\n\nRequer VERCEL_TOKEN no ambiente para deploy automático.");
+    els.deployLog.textContent = preflight?.ready
+      ? "Requisitos OK. Iniciando deploy..."
+      : "Alguns requisitos estão pendentes — tentando deploy mesmo assim...\n\nRequer VERCEL_TOKEN no ambiente para deploy automático.";
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/deploy`, {
         method: "POST",
         body: "{}",
       });
+      if (d.requirements) renderDeployChecklist({ requirements: d.requirements, ready: d.ok });
       renderDeployResult(d);
     } catch (e) {
       resetDeployModal();
@@ -2939,6 +3283,11 @@
     clearTimeout(state.fileSearchTimer);
     const q = els.fileSearchInput.value;
     state.fileSearchTimer = setTimeout(() => searchProjectFiles(q), 250);
+  });
+
+  els.projectSearch?.addEventListener("input", () => {
+    clearTimeout(state.projectSearchTimer);
+    state.projectSearchTimer = setTimeout(() => loadProjects(), 250);
   });
 
   document.querySelectorAll(".preview-cta").forEach((btn) => {
@@ -3027,12 +3376,20 @@
 
   els.btnDevStart.addEventListener("click", startDevServer);
   els.btnDevStop.addEventListener("click", stopDevServer);
+  els.btnDevClear?.addEventListener("click", clearDevError);
+  els.btnDevRestart?.addEventListener("click", startDevServer);
   const MODE_PREF_KEY = "forge.mode";
 
   function syncModeControls() {
     const mode = els.modeSelect?.value || "chat";
     const isChat = mode === "chat";
+    const isExecute = mode === "execute";
     document.querySelector(".steps-control")?.classList.toggle("hidden", isChat);
+    if (els.modeChip) {
+      els.modeChip.textContent = isExecute ? "Executar" : "Chat";
+      els.modeChip.classList.toggle("mode-chip--execute", isExecute);
+      els.modeChip.title = isExecute ? "Modo Executar — altera arquivos no projeto" : "Modo Chat — só conversa";
+    }
     if (els.promptInput) {
       els.promptInput.placeholder = isChat
         ? "Converse com o agente… (para criar código, mude para Executar código)"
@@ -3059,8 +3416,13 @@
 
   els.previewMode.addEventListener("change", () => {
     state.previewMode = els.previewMode.value;
+    state.devAutoRestarted = false;
+    state.previewLoadRetried = false;
+    syncDevPolling();
     updatePreview();
   });
+
+  bindPreviewFrameLoad();
 
   document.querySelectorAll(".panel-tab").forEach((tab) => {
     tab.addEventListener("click", () => switchTab(tab.dataset.tab));
@@ -3132,11 +3494,16 @@
     });
     try {
       await loadProjects();
-      if (state.projects.length) {
-        await selectProject(state.projects[0].id);
-      } else {
-        showEmptyView();
+      let targetId = null;
+      try {
+        const lastId = localStorage.getItem(LAST_PROJECT_KEY);
+        if (lastId && state.projects.some((p) => p.id === lastId)) targetId = lastId;
+      } catch {
+        /* ignore */
       }
+      if (!targetId && state.projects.length) targetId = state.projects[0].id;
+      if (targetId) await selectProject(targetId);
+      else showEmptyView();
     } catch {
       showEmptyView();
     }

@@ -71,8 +71,34 @@ def manual_deploy_steps(project_name: str) -> List[str]:
     ]
 
 
+def deploy_preflight(project_dir: Path) -> Dict[str, Any]:
+    """Checklist for the deploy modal (does not expose the token value)."""
+    token = bool(os.environ.get("VERCEL_TOKEN", "").strip())
+    npm = shutil.which("npm") is not None
+    npx = shutil.which("npx") is not None
+    vercel_cli = shutil.which("vercel") is not None
+    has_build = _has_build_script(project_dir)
+    has_index = (project_dir / "index.html").is_file()
+    requirements = [
+        {"id": "token", "ok": token, "label": "VERCEL_TOKEN configurado", "fix": "Defina VERCEL_TOKEN no .env do servidor"},
+        {"id": "node", "ok": npm or npx or vercel_cli, "label": "Node/npx/vercel disponível", "fix": "Instale Node.js: https://nodejs.org"},
+        {"id": "app", "ok": has_build or has_index, "label": "App com build ou index.html", "fix": "Crie um site ou app no projeto"},
+    ]
+    return {
+        "token_configured": token,
+        "npm_available": npm,
+        "npx_available": npx,
+        "vercel_cli": vercel_cli,
+        "has_build_script": has_build,
+        "has_index_html": has_index,
+        "ready": all(r["ok"] for r in requirements),
+        "requirements": requirements,
+    }
+
+
 def deploy_project(project_dir: Path, project_name: str) -> Dict[str, Any]:
     ensure_vercel_config(project_dir)
+    preflight = deploy_preflight(project_dir)
     token = os.environ.get("VERCEL_TOKEN", "").strip()
     npx = shutil.which("npx")
     vercel = shutil.which("vercel")
@@ -81,17 +107,19 @@ def deploy_project(project_dir: Path, project_name: str) -> Dict[str, Any]:
         return {
             "ok": False,
             "manual": True,
-            "message": "VERCEL_TOKEN não configurado. Siga os passos manuais abaixo.",
+            "message": "VERCEL_TOKEN não configurado. Configure o token ou siga o deploy manual.",
             "steps": manual_deploy_steps(project_name),
             "vercel_config": str(project_dir / "vercel.json"),
+            "requirements": preflight["requirements"],
         }
 
     if not npx and not vercel:
         return {
             "ok": False,
             "manual": True,
-            "message": "CLI Vercel não encontrada. Instale Node.js ou use npx.",
+            "message": "CLI Vercel não encontrada. Instale Node.js (npx) ou a CLI vercel.",
             "steps": manual_deploy_steps(project_name),
+            "requirements": preflight["requirements"],
         }
 
     cmd: List[str]
@@ -116,9 +144,10 @@ def deploy_project(project_dir: Path, project_name: str) -> Dict[str, Any]:
     except subprocess.TimeoutExpired:
         return {
             "ok": False,
-            "manual": True,
+            "manual": False,
             "message": "Deploy excedeu o tempo limite (10 min).",
             "steps": manual_deploy_steps(project_name),
+            "requirements": preflight["requirements"],
         }
 
     output = (completed.stdout or "") + "\n" + (completed.stderr or "")
@@ -129,12 +158,14 @@ def deploy_project(project_dir: Path, project_name: str) -> Dict[str, Any]:
             "url": url,
             "message": "Deploy concluído com sucesso",
             "log_tail": output[-1500:],
+            "requirements": preflight["requirements"],
         }
 
     return {
         "ok": False,
-        "manual": completed.returncode != 0,
-        "message": "Deploy falhou ou URL não detectada.",
+        "manual": False,
+        "message": "Deploy via CLI falhou ou a URL não foi detectada. Veja o log e os requisitos.",
         "log_tail": output[-2000:],
         "steps": manual_deploy_steps(project_name),
+        "requirements": preflight["requirements"],
     }

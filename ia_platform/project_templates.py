@@ -132,6 +132,14 @@ button:hover {
         "src/index.css": """* { box-sizing: border-box; margin: 0; }
 body { min-height: 100vh; }
 """,
+        ".gitignore": """node_modules
+dist
+.DS_Store
+.env
+.env.local
+*.log
+.vite
+""",
         "README.md": f"""# {project_name}
 
 App React + Vite gerado pelo Forge.
@@ -140,6 +148,8 @@ App React + Vite gerado pelo Forge.
 npm install
 npm run dev
 ```
+
+Peça melhorias no chat da plataforma — o preview atualiza ao vivo.
 """,
     }
 
@@ -323,5 +333,18 @@ def get_template_files(template: str, project_name: str) -> Dict[str, str]:
     """Return starter files for a template, parameterized by project name."""
     if template == "react":
         return react_vite_files(project_name)
-    files = PROJECT_TEMPLATES.get(template) or {}
-    return dict(files)
+    files = dict(PROJECT_TEMPLATES.get(template) or {})
+    if template == "landing" and "index.html" in files:
+        files["index.html"] = files["index.html"].replace(
+            "<title>Landing</title>", f"<title>{project_name}</title>", 1
+        )
+        files["index.html"] = files["index.html"].replace(
+            "<h1>Seu produto, no ar hoje</h1>",
+            f"<h1>{project_name}</h1>",
+            1,
+        )
+    if template == "dashboard" and "index.html" in files:
+        files["index.html"] = files["index.html"].replace(
+            "<title>Dashboard</title>", f"<title>{project_name}</title>", 1
+        )
+    return files

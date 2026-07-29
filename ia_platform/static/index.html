@@ -25,6 +25,9 @@
         </button>
       </div>
       <div class="sidebar-section-label">Projetos</div>
+      <div class="project-search-row">
+        <input id="projectSearch" type="search" placeholder="Buscar projetos..." autocomplete="off" />
+      </div>
       <div class="project-list" id="projectList"></div>
       <div class="sidebar-bottom">
         <div class="sidebar-tip" id="sidebarTip">
@@ -90,6 +93,7 @@
             </div>
           </div>
           <div class="topbar-controls">
+            <span class="mode-chip" id="modeChip" title="Modo atual">Chat</span>
             <select id="modeSelect" title="Modo" class="control-select">
               <option value="chat" selected>Chat</option>
               <option value="execute">Executar código</option>
@@ -174,6 +178,8 @@
                 </select>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnDevStart">Iniciar dev</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevStop">Parar</button>
+                <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevClear">Limpar erro</button>
+                <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevRestart">Reiniciar</button>
                 <span class="dev-status" id="devStatus"></span>
               </div>
               <pre class="dev-error-log hidden" id="devErrorLog"></pre>
@@ -290,6 +296,7 @@
   <div class="modal-overlay hidden" id="deployModal">
     <div class="modal modal-wide deploy-modal" id="deployModalInner">
       <h3>Deploy <span class="deploy-badge hidden" id="deployBadge"></span></h3>
+      <ul class="deploy-checklist" id="deployChecklist" aria-label="Requisitos de deploy"></ul>
       <p class="deploy-spinner hidden" id="deploySpinner">Deploy em andamento… pode levar alguns minutos.</p>
       <pre class="deploy-log" id="deployLog">Preparando...</pre>
       <div class="modal-actions">

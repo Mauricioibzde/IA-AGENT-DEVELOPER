@@ -137,6 +137,19 @@ class DevServerManager:
             if session and session.process.poll() is not None:
                 self._cleanup_session(project_id, record_error=True)
                 session = None
+            # Occasionally probe HTTP so hung Vite processes are marked dead.
+            if session and session.url:
+                last = getattr(session, "_last_probe", 0.0)
+                now = time.time()
+                if now - last >= 4.0:
+                    session._last_probe = now  # type: ignore[attr-defined]
+                    try:
+                        with urllib.request.urlopen(session.url, timeout=1.2) as resp:
+                            if resp.status >= 500:
+                                raise OSError("unhealthy")
+                    except (urllib.error.URLError, TimeoutError, OSError):
+                        self._cleanup_session(project_id, record_error=True)
+                        session = None
             script = self.detect_dev_script(project_dir)
             return {
                 "npm_available": self._npm_available(),
@@ -147,6 +160,11 @@ class DevServerManager:
                 "url": session.url if session else None,
                 "last_error": self._last_errors.get(project_id),
             }
+
+    def clear_error(self, project_id: str) -> Dict[str, object]:
+        with self._lock:
+            self._last_errors.pop(project_id, None)
+        return {"ok": True, "last_error": None}
 
     def start(self, project_id: str, project_dir: Path, install: bool = True) -> Dict[str, object]:
         if not project_dir.is_dir():

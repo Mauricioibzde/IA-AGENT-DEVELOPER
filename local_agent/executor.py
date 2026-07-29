@@ -19,7 +19,7 @@ MUTATING_TOOLS = {
 }
 
 READ_TOOLS = {"read_file", "read_file_range", "list_directory", "list_dir", "search_text",
-              "search_files", "search_symbol", "get_file_info", "validate_path",
+              "search_files", "search_symbol", "search_relevant", "get_file_info", "validate_path",
               "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_changed_files"}
 
 

@@ -21,7 +21,8 @@ if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
 from ia_platform.conversations import append_message, clear_messages, format_conversation_context, load_messages
-from ia_platform.deploy import deploy_project
+from ia_platform.deploy import deploy_preflight, deploy_project
+from ia_platform.project_ops import archive_project, duplicate_project, list_projects, rename_project
 from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
 from ia_platform.model_catalog import (
@@ -40,7 +41,7 @@ from ia_platform.run_manager import run_manager
 STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
 DEFAULT_WORKSPACE = ROOT.parent / "sandbox"
-PLATFORM_VERSION = 2
+PLATFORM_VERSION = 3
 IGNORE_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".agent", ".pytest_cache"}
 
 _HARDWARE_CACHE: Optional[tuple[float, Dict[str, Any]]] = None
@@ -205,7 +206,9 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if path == "/api/models/installed":
             return self._handle_models_installed()
         if path == "/api/projects":
-            return self._handle_list_projects()
+            return self._handle_list_projects(qs)
+        if path == "/api/deploy/status":
+            return self._handle_deploy_status_global()
         if path.startswith("/preview/"):
             rest = path[len("/preview/") :].lstrip("/")
             if rest:
@@ -226,6 +229,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_get_chat(project_id)
         if project_id and sub == "dev/status":
             return self._handle_dev_status(project_id)
+        if project_id and sub == "deploy/status":
+            return self._handle_deploy_status(project_id)
         if project_id and sub == "runs":
             return self._handle_get_runs(project_id)
         if project_id and sub == "search":
@@ -267,6 +272,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_dev_stop(project_id)
         if project_id and sub == "deploy":
             return self._handle_deploy(project_id)
+        if project_id and sub == "deploy/status":
+            return self._handle_deploy_status(project_id)
+        if project_id and sub == "rename":
+            return self._handle_rename_project(project_id)
+        if project_id and sub == "duplicate":
+            return self._handle_duplicate_project(project_id)
+        if project_id and sub == "archive":
+            return self._handle_archive_project(project_id)
+        if project_id and sub == "dev/clear-error":
+            return self._handle_dev_clear_error(project_id)
         self._send_json(404, {"error": "not found"})
 
     def _ollama_host(self) -> str:
@@ -354,6 +369,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         from local_agent.config import AgentConfig
         from local_agent.ollama_client import OllamaClient
 
+        import shutil
+
         cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
         client = OllamaClient(cfg)
         ollama_online = client.check_available(timeout=2)
@@ -365,6 +382,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         ready = ollama_online and (has_setup_model or bool(installed))
         system = platform.system()
         auto_install = system in {"Windows", "Linux", "Darwin"}
+        npm_available = shutil.which("npm") is not None
+        node_available = shutil.which("node") is not None
 
         self._send_json(
             200,
@@ -381,6 +400,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "install_url": ollama_service.install_url_for_platform(),
                 "needs_ollama": not ollama_online,
                 "needs_model": ollama_online and not has_setup_model and not installed,
+                "npm_available": npm_available,
+                "node_available": node_available,
+                "needs_node": not npm_available,
+                "node_install_url": "https://nodejs.org",
             },
         )
 
@@ -432,6 +455,20 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
             phase("start", "Serviço Ollama online.", 45)
 
+            import shutil
+
+            npm_ok = shutil.which("npm") is not None
+            if npm_ok:
+                phase("node", "Node.js/npm disponíveis para preview React.", 50, npm_available=True)
+            else:
+                phase(
+                    "node",
+                    "Node.js/npm não encontrados — preview React precisa de Node (https://nodejs.org).",
+                    50,
+                    npm_available=False,
+                    install_url="https://nodejs.org",
+                )
+
             hw = _cached_hardware()
             mgr = self._ollama_manager()
             installed = mgr.list_names()
@@ -440,7 +477,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             phase(
                 "hardware",
                 f"Recomendado: {setup_model} — {gpu_note}, tier {hw.get('tier', '?')}.",
-                52,
+                58,
                 model=setup_model,
                 hardware=hw.get("tier"),
             )
@@ -497,6 +534,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def _handle_health(self) -> None:
         from local_agent.config import AgentConfig
         from local_agent.ollama_client import OllamaClient
+        import shutil
 
         cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
         client = OllamaClient(cfg)
@@ -516,10 +554,15 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "recommended_model": recommended_name,
                 "projects_root": str(PROJECTS_ROOT),
                 "platform_version": PLATFORM_VERSION,
+                "npm_available": shutil.which("npm") is not None,
+                "node_available": shutil.which("node") is not None,
                 "features": {
                     "ollama_setup_stream": True,
                     "ollama_auto_install": True,
                     "full_setup_stream": True,
+                    "project_ops": True,
+                    "deploy_preflight": True,
+                    "dev_recovery": True,
                 },
             },
         )
@@ -580,24 +623,54 @@ class PlatformHandler(BaseHTTPRequestHandler):
         except Exception as exc:
             emit({"type": "error", "error": str(exc)})
 
-    def _handle_list_projects(self) -> None:
-        PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
-        projects = []
-        for entry in sorted(PROJECTS_ROOT.iterdir(), key=lambda p: p.stat().st_mtime, reverse=True):
-            if not entry.is_dir() or entry.name.startswith("."):
-                continue
-            files = list(entry.rglob("*"))
-            file_count = sum(1 for f in files if f.is_file() and not any(p in IGNORE_DIRS for p in f.parts))
-            projects.append(
-                {
-                    "id": entry.name,
-                    "name": entry.name,
-                    "path": f"projects/{entry.name}",
-                    "files": file_count,
-                    "updated": entry.stat().st_mtime,
-                }
-            )
+    def _handle_list_projects(self, qs: Optional[Dict[str, List[str]]] = None) -> None:
+        qs = qs or {}
+        query = str((qs.get("q") or [""])[0]).strip()
+        include_archived = str((qs.get("archived") or ["0"])[0]).lower() in {"1", "true", "yes"}
+        projects = list_projects(PROJECTS_ROOT, query=query, include_archived=include_archived)
         self._send_json(200, {"projects": projects})
+
+    def _handle_rename_project(self, project_id: str) -> None:
+        data = self._read_json()
+        new_name = str(data.get("name") or "").strip()
+        if not new_name:
+            return self._send_json(400, {"error": "name is required"})
+        try:
+            result = rename_project(PROJECTS_ROOT, project_id, new_name, _safe_name)
+            return self._send_json(200, result)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+
+    def _handle_duplicate_project(self, project_id: str) -> None:
+        try:
+            result = duplicate_project(PROJECTS_ROOT, project_id, _safe_name)
+            return self._send_json(201, result)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+
+    def _handle_archive_project(self, project_id: str) -> None:
+        try:
+            result = archive_project(PROJECTS_ROOT, project_id)
+            return self._send_json(200, result)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+
+    def _handle_dev_clear_error(self, project_id: str) -> None:
+        result = dev_manager.clear_error(project_id)
+        return self._send_json(200, {"project": project_id, **result})
+
+    def _handle_deploy_status(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        return self._send_json(200, {"project": project_id, **deploy_preflight(base)})
+
+    def _handle_deploy_status_global(self) -> None:
+        # Global preflight without a project (token/node only).
+        return self._send_json(200, deploy_preflight(PROJECTS_ROOT))
 
     def _handle_create_project(self) -> None:
         data = self._read_json()
@@ -852,7 +925,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
             prior = messages[:-1]
         else:
             prior = messages
-        conversation = format_conversation_context(prior, limit=10)
+        conversation = format_conversation_context(prior, limit=16)
+        # Inject long-term project memory when available.
+        try:
+            from local_agent.memory import AgentMemory
+
+            mem = AgentMemory(workspace, enabled=True)
+            summary = mem.relevant_summary()
+            if summary:
+                conversation = (f"Memória do projeto:\n{summary[:1800]}\n\n" + conversation).strip()
+        except Exception:
+            pass
         return models, conversation, None
 
     def _preflight_status(self, preflight_error: Dict[str, Any]) -> int:
@@ -867,6 +950,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
         report,
         *,
         run_id: Optional[str] = None,
+        events: Optional[List[Dict[str, Any]]] = None,
     ) -> Dict[str, Any]:
         rendered = report.render()
         chat_summary = self._chat_facing_summary(report)
@@ -881,6 +965,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "modified_files": report.modified_files,
                     "run_id": run_id,
                     "full_report": True,
+                    "events": list(events or [])[-20:],
                 },
             )
             record_run(
@@ -891,7 +976,22 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 created_files=report.created_files,
                 modified_files=report.modified_files,
                 run_id=run_id,
+                events=events,
             )
+            try:
+                from local_agent.memory import AgentMemory
+
+                mem = AgentMemory(workspace, enabled=True)
+                mem.record_decision(chat_summary[:300])
+                if report.created_files or report.modified_files:
+                    mem.update_project_summary(
+                        f"Last run {report.status.value}: "
+                        f"created={len(report.created_files or [])} "
+                        f"modified={len(report.modified_files or [])}"
+                    )
+                mem.save()
+            except Exception:
+                pass
         return {
             "ok": True,
             "status": report.status.value,
@@ -902,6 +1002,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             "modified_files": report.modified_files,
             "run_id": run_id,
             "completed_tasks": list(getattr(report, "completed_tasks", []) or []),
+            "events": list(events or [])[-40:],
         }
 
     @staticmethod
@@ -1015,6 +1116,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
             history = self._chat_history_for_ollama(workspace)
             history.append({"role": "user", "content": prompt})
+            memory_note = ""
+            try:
+                from local_agent.memory import AgentMemory
+
+                mem = AgentMemory(workspace, enabled=True)
+                summary = mem.relevant_summary()
+                if summary:
+                    memory_note = f"\nContexto do projeto:\n{summary[:1200]}\n"
+            except Exception:
+                pass
             system = (
                 "Você é o assistente sênior do Forge — especialista full-stack "
                 "(frontend e backend) em várias linguagens: JavaScript/TypeScript/React, "
@@ -1024,6 +1135,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "Se o usuário pedir para criar/editar código, diga que o Forge executa o pedido "
                 "no projeto (modo Executar) aplicando padrão sênior. "
                 f"Projeto atual: {workspace.name}."
+                f"{memory_note}"
             )
 
             def on_chunk(text: str) -> None:
@@ -1133,9 +1245,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
             config = self._build_agent_config(data, workspace, models)
             config.run_id = run_id
             config.cancel_check = lambda: run_manager.is_cancelled(run_id)
-            agent = CodingAgent(config, event_sink=self._send_sse)
+            timeline: List[Dict[str, Any]] = []
+
+            def _sink(ev: Dict[str, Any]) -> None:
+                if isinstance(ev, dict):
+                    timeline.append({k: ev.get(k) for k in ("type", "status", "analysis", "tools", "summary", "message", "paths") if k in ev})
+                self._send_sse(ev)
+
+            agent = CodingAgent(config, event_sink=_sink)
             report = agent.run(prompt, conversation_context=conversation)
-            result = self._finalize_run(workspace, project_id, report, run_id=run_id)
+            result = self._finalize_run(workspace, project_id, report, run_id=run_id, events=timeline)
             self._send_sse({"type": "done", **result})
         except Exception as exc:
             self._send_sse({"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]})
