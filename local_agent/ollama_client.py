@@ -1,12 +1,13 @@
-"""Ollama HTTP client with chat/generate fallback and retries."""
+"""Ollama HTTP client with chat/generate fallback, retries, and streaming support."""
 
 from __future__ import annotations
 
 import json
+import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, List, Optional
+from typing import Any, Dict, Iterator, List, Optional
 
 from .config import AgentConfig
 from .logging_config import AgentLogger
@@ -21,6 +22,7 @@ class OllamaClient:
         self.config = config
         self.logger = logger
         self.call_count = 0
+        self.total_chars_received = 0
 
     def chat(
         self,
@@ -29,30 +31,112 @@ class OllamaClient:
         temperature: float = 0.1,
         timeout: int = 180,
         retries: int = 2,
+        *,
+        system: Optional[str] = None,
     ) -> str:
         model_name = model or self.config.coder_model
         self.call_count += 1
         if self.call_count > self.config.max_model_calls:
             raise OllamaError(f"Model call budget exceeded ({self.config.max_model_calls})")
 
+        if system:
+            messages = [{"role": "system", "content": system}, *messages]
+
         last_error: Exception | None = None
         for attempt in range(retries + 1):
             try:
-                return self._chat_once(messages, model_name, temperature, timeout)
-            except Exception as exc:  # noqa: BLE001 - retry boundary
+                content = self._chat_once(messages, model_name, temperature, timeout)
+                self.total_chars_received += len(content)
+                return self._strip_thinking(content)
+            except Exception as exc:  # noqa: BLE001
                 last_error = exc
                 if self.logger:
-                    self.logger.warn("llm_retry", message=str(exc), attempt=attempt + 1)
+                    self.logger.warn("llm_retry", message=str(exc), attempt=attempt + 1, model=model_name)
                 time.sleep(min(2 ** attempt, 4))
-        raise OllamaError(f"Ollama request failed: {last_error}")
+        raise OllamaError(f"Ollama request failed after {retries + 1} attempts: {last_error}")
 
-    def complete(self, prompt: str, model: Optional[str] = None, temperature: float = 0.1, timeout: int = 180) -> str:
+    def complete(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        timeout: int = 180,
+        *,
+        system: Optional[str] = None,
+    ) -> str:
         return self.chat(
             [{"role": "user", "content": prompt}],
             model=model,
             temperature=temperature,
             timeout=timeout,
+            system=system,
         )
+
+    def stream_complete(
+        self,
+        prompt: str,
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        timeout: int = 300,
+    ) -> Iterator[str]:
+        """Yield response chunks for real-time terminal output."""
+        model_name = model or self.config.coder_model
+        self.call_count += 1
+        if self.call_count > self.config.max_model_calls:
+            raise OllamaError(f"Model call budget exceeded ({self.config.max_model_calls})")
+
+        payload = {
+            "model": model_name,
+            "prompt": prompt,
+            "stream": True,
+            "options": {"temperature": temperature},
+        }
+        req = urllib.request.Request(
+            f"{self.config.ollama_host}/api/generate",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            response = urllib.request.urlopen(req, timeout=timeout)
+        except Exception as exc:
+            raise OllamaError(f"Streaming request failed: {exc}") from exc
+
+        try:
+            for line in response:
+                text = line.decode("utf-8", errors="replace").strip()
+                if not text:
+                    continue
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                chunk = data.get("response", "")
+                if chunk:
+                    self.total_chars_received += len(chunk)
+                    yield chunk
+                if data.get("done"):
+                    break
+        finally:
+            response.close()
+
+    def check_available(self) -> bool:
+        """Return True if Ollama is reachable."""
+        try:
+            req = urllib.request.Request(f"{self.config.ollama_host}/api/tags")
+            with urllib.request.urlopen(req, timeout=5):
+                return True
+        except Exception:
+            return False
+
+    def list_models(self) -> List[str]:
+        try:
+            req = urllib.request.Request(f"{self.config.ollama_host}/api/tags")
+            with urllib.request.urlopen(req, timeout=10) as response:
+                data = json.loads(response.read().decode("utf-8"))
+            return [m.get("name", "") for m in data.get("models", []) if m.get("name")]
+        except Exception:
+            return []
 
     def _chat_once(
         self,
@@ -62,7 +146,7 @@ class OllamaClient:
         timeout: int,
     ) -> str:
         host = self.config.ollama_host
-        chat_payload = {
+        chat_payload: Dict[str, Any] = {
             "model": model,
             "messages": messages,
             "stream": False,
@@ -93,6 +177,13 @@ class OllamaClient:
             self.logger.debug("llm_generate", message=f"{len(content)} chars", model=model)
         return content
 
+    @staticmethod
+    def _strip_thinking(text: str) -> str:
+        """Remove <think>...</think> blocks that some models produce."""
+        import re
+        cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.S)
+        return cleaned.strip() or text.strip()
+
     def _post(self, url: str, payload: Dict[str, Any], timeout: int) -> Dict[str, Any]:
         req = urllib.request.Request(
             url,
@@ -109,3 +200,11 @@ class OllamaClient:
         if not isinstance(data, dict):
             raise OllamaError("Unexpected Ollama payload type")
         return data
+
+    @property
+    def stats(self) -> Dict[str, Any]:
+        return {
+            "call_count": self.call_count,
+            "total_chars_received": self.total_chars_received,
+            "budget_remaining": max(0, self.config.max_model_calls - self.call_count),
+        }

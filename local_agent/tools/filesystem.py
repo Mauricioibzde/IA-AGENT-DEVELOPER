@@ -1,7 +1,8 @@
-"""Filesystem tools with workspace sandboxing."""
+"""Line-targeted file editing, search, and filesystem tools."""
 
 from __future__ import annotations
 
+import re
 import shutil
 from pathlib import Path
 from typing import Any, Dict, List
@@ -35,7 +36,9 @@ def read_file(args: Dict[str, Any], **context: Any) -> ToolResult:
             data={"path": str(path), "size": size},
         )
     content = path.read_text(encoding="utf-8")
-    return ToolResult(ok=True, data={"path": str(path), "content": content, "size": size})
+    lines = content.splitlines()
+    numbered = "\n".join(f"{i+1}: {line}" for i, line in enumerate(lines))
+    return ToolResult(ok=True, data={"path": str(path), "content": numbered, "size": size, "total_lines": len(lines)})
 
 
 def read_file_range(args: Dict[str, Any], **context: Any) -> ToolResult:
@@ -74,7 +77,85 @@ def write_file(args: Dict[str, Any], **context: Any) -> ToolResult:
         return ToolResult(ok=True, dry_run=True, data={"action": "write_file", "path": str(path)})
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, content)
-    return ToolResult(ok=True, data={"path": str(path)})
+    return ToolResult(ok=True, data={"path": str(path), "size": len(content)})
+
+
+def edit_file(args: Dict[str, Any], **context: Any) -> ToolResult:
+    """Line-targeted edit: replace old text with new at/near a specific line.
+
+    If 'line' is given, the search for 'old' starts at that line for precision.
+    If 'old' is empty but 'new' and 'line' are given, inserts new text after that line.
+    """
+    workspace = _ctx_workspace(context)
+    cfg = _cfg(context)
+    path = resolve_in_workspace(workspace, args.get("path"))
+    if not path.exists():
+        return ToolResult(ok=False, error=f"File not found: {path}")
+
+    original = path.read_text(encoding="utf-8")
+    lines = original.splitlines(keepends=True)
+    old = str(args.get("old", ""))
+    new = str(args.get("new", ""))
+    target_line = int(args.get("line", 0))
+
+    if not old and target_line > 0 and new:
+        # Insert mode: insert new text after target_line.
+        insert_idx = min(target_line, len(lines))
+        new_text = new if new.endswith("\n") else new + "\n"
+        lines.insert(insert_idx, new_text)
+        updated = "".join(lines)
+    elif old:
+        if target_line > 0:
+            # Search near the target line for more precision.
+            window = 15
+            start = max(0, target_line - window - 1)
+            end = min(len(lines), target_line + window)
+            region = "".join(lines[start:end])
+            if old in region:
+                count = region.count(old)
+                if count > 1:
+                    return ToolResult(ok=False, error=f"Ambiguous match near line {target_line}: {count} occurrences")
+                before = "".join(lines[:start])
+                after = "".join(lines[end:])
+                updated = before + region.replace(old, new, 1) + after
+            elif old in original:
+                count = original.count(old)
+                if count > 1:
+                    return ToolResult(ok=False, error=f"Ambiguous match: {count} occurrences in file")
+                updated = original.replace(old, new, 1)
+            else:
+                return ToolResult(ok=False, error=f"Text not found near line {target_line}")
+        else:
+            count = original.count(old)
+            if count == 0:
+                return ToolResult(ok=False, error="Text not found in file")
+            if count > 1:
+                return ToolResult(ok=False, error=f"Ambiguous match: {count} occurrences. Provide 'line' or more context.")
+            updated = original.replace(old, new, 1)
+    else:
+        return ToolResult(ok=False, error="edit_file requires 'old' text or 'line' + 'new' for insertion")
+
+    if cfg.dry_run:
+        return ToolResult(ok=True, dry_run=True, data={"action": "edit_file", "path": str(path)})
+
+    # Backup and write.
+    backup = path.with_suffix(path.suffix + ".bak")
+    backup.write_text(original, encoding="utf-8")
+    atomic_write_text(path, updated)
+
+    # Compute simple diff summary.
+    orig_lines = original.splitlines()
+    new_lines = updated.splitlines()
+    added = len(new_lines) - len(orig_lines)
+    return ToolResult(
+        ok=True,
+        data={
+            "path": str(path),
+            "backup": str(backup),
+            "lines_delta": added,
+            "total_lines": len(new_lines),
+        },
+    )
 
 
 def append_file(args: Dict[str, Any], **context: Any) -> ToolResult:
@@ -119,8 +200,7 @@ def delete_file(args: Dict[str, Any], **context: Any) -> ToolResult:
     if not path.exists():
         return ToolResult(ok=False, error=f"Path not found: {path}")
     if path.is_dir():
-        return ToolResult(ok=False, error="delete_file refuses directories; use a dedicated tool")
-    # optional backup
+        return ToolResult(ok=False, error="delete_file refuses directories")
     backup = path.with_suffix(path.suffix + ".bak")
     backup.write_bytes(path.read_bytes())
     path.unlink()
@@ -187,7 +267,7 @@ def validate_path(args: Dict[str, Any], **context: Any) -> ToolResult:
 
 
 def replace_in_file(args: Dict[str, Any], **context: Any) -> ToolResult:
-    """Legacy less-safe replace retained for compatibility."""
+    """Legacy global text replace retained for compatibility."""
     workspace = _ctx_workspace(context)
     cfg = _cfg(context)
     path = resolve_in_workspace(workspace, args.get("path"))
@@ -215,7 +295,7 @@ def build_filesystem_tools() -> List[ToolDefinition]:
     return [
         ToolDefinition(
             name="read_file",
-            description="Read a UTF-8 text file from the workspace",
+            description="Read a UTF-8 text file with line numbers",
             argument_schema={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
             risk_level=RiskLevel.LOW,
             mutating=False,
@@ -224,14 +304,10 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="read_file_range",
-            description="Read a line range from a text file",
+            description="Read specific line range from a file",
             argument_schema={
                 "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "start_line": {"type": "integer"},
-                    "end_line": {"type": "integer"},
-                },
+                "properties": {"path": {"type": "string"}, "start_line": {"type": "integer"}, "end_line": {"type": "integer"}},
                 "required": ["path"],
             },
             risk_level=RiskLevel.LOW,
@@ -241,7 +317,7 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="write_file",
-            description="Create or overwrite a text file",
+            description="Create or overwrite a file",
             argument_schema={
                 "type": "object",
                 "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
@@ -251,6 +327,24 @@ def build_filesystem_tools() -> List[ToolDefinition]:
             mutating=True,
             requires_confirmation=False,
             handler=write_file,
+        ),
+        ToolDefinition(
+            name="edit_file",
+            description="Precise line-targeted edit: replace 'old' with 'new' near 'line', or insert 'new' after 'line'",
+            argument_schema={
+                "type": "object",
+                "properties": {
+                    "path": {"type": "string"},
+                    "line": {"type": "integer"},
+                    "old": {"type": "string"},
+                    "new": {"type": "string"},
+                },
+                "required": ["path"],
+            },
+            risk_level=RiskLevel.MEDIUM,
+            mutating=True,
+            requires_confirmation=False,
+            handler=edit_file,
         ),
         ToolDefinition(
             name="append_file",
@@ -294,7 +388,7 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="move_file",
-            description="Move/rename a file inside workspace",
+            description="Move/rename a file",
             argument_schema={
                 "type": "object",
                 "properties": {"src": {"type": "string"}, "dst": {"type": "string"}},
@@ -307,7 +401,7 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="copy_file",
-            description="Copy a file inside workspace",
+            description="Copy a file",
             argument_schema={
                 "type": "object",
                 "properties": {"src": {"type": "string"}, "dst": {"type": "string"}},
@@ -320,7 +414,7 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="get_file_info",
-            description="Get file metadata",
+            description="Get file metadata (size, type, binary)",
             argument_schema={"type": "object", "properties": {"path": {"type": "string"}}, "required": ["path"]},
             risk_level=RiskLevel.LOW,
             mutating=False,
@@ -329,7 +423,7 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="validate_path",
-            description="Validate that a path exists inside workspace",
+            description="Check if a path exists and its type",
             argument_schema={"type": "object", "properties": {"path": {"type": "string"}}},
             risk_level=RiskLevel.LOW,
             mutating=False,
@@ -338,14 +432,10 @@ def build_filesystem_tools() -> List[ToolDefinition]:
         ),
         ToolDefinition(
             name="replace_in_file",
-            description="Legacy global text replace (less safe than apply_patch)",
+            description="Legacy global text replace (prefer edit_file or apply_patch)",
             argument_schema={
                 "type": "object",
-                "properties": {
-                    "path": {"type": "string"},
-                    "old": {"type": "string"},
-                    "new": {"type": "string"},
-                },
+                "properties": {"path": {"type": "string"}, "old": {"type": "string"}, "new": {"type": "string"}},
                 "required": ["path", "old", "new"],
             },
             risk_level=RiskLevel.MEDIUM,
@@ -353,40 +443,9 @@ def build_filesystem_tools() -> List[ToolDefinition]:
             requires_confirmation=False,
             handler=replace_in_file,
         ),
-        # aliases
-        ToolDefinition(
-            name="create_file",
-            description="Alias for write_file",
-            argument_schema={
-                "type": "object",
-                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                "required": ["path"],
-            },
-            risk_level=RiskLevel.MEDIUM,
-            mutating=True,
-            requires_confirmation=False,
-            handler=write_file,
-        ),
-        ToolDefinition(
-            name="list_dir",
-            description="Alias for list_directory",
-            argument_schema={"type": "object", "properties": {"path": {"type": "string"}}},
-            risk_level=RiskLevel.LOW,
-            mutating=False,
-            requires_confirmation=False,
-            handler=list_directory,
-        ),
-        ToolDefinition(
-            name="append_to_file",
-            description="Alias for append_file",
-            argument_schema={
-                "type": "object",
-                "properties": {"path": {"type": "string"}, "content": {"type": "string"}},
-                "required": ["path"],
-            },
-            risk_level=RiskLevel.MEDIUM,
-            mutating=True,
-            requires_confirmation=False,
-            handler=append_file,
-        ),
+        # Aliases
+        ToolDefinition("create_file", "Alias for write_file", {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path"]}, RiskLevel.MEDIUM, True, False, write_file),
+        ToolDefinition("list_dir", "Alias for list_directory", {"type": "object", "properties": {"path": {"type": "string"}}}, RiskLevel.LOW, False, False, list_directory),
+        ToolDefinition("append_to_file", "Alias for append_file", {"type": "object", "properties": {"path": {"type": "string"}, "content": {"type": "string"}}, "required": ["path"]}, RiskLevel.MEDIUM, True, False, append_file),
+        ToolDefinition("edit_file_insert", "Alias: insert text after a line number", {"type": "object", "properties": {"path": {"type": "string"}, "line": {"type": "integer"}, "new": {"type": "string"}}, "required": ["path", "line", "new"]}, RiskLevel.MEDIUM, True, False, edit_file),
     ]

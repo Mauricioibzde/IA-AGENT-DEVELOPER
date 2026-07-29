@@ -1,4 +1,4 @@
-"""Main autonomous agent loop."""
+"""Main autonomous agent loop with auto-validation and multi-step execution."""
 
 from __future__ import annotations
 
@@ -12,11 +12,11 @@ from .context_manager import ContextManager
 from .executor import Executor
 from .logging_config import AgentLogger
 from .memory import AgentMemory
-from .models import AgentReport, FinalStatus, Plan, ReflectionStatus, Task, TaskStatus
+from .models import AgentReport, FinalStatus, Plan, ReflectionStatus, Task, TaskStatus, ValidationResult
 from .ollama_client import OllamaClient
 from .planner import Planner
 from .project_index import ProjectIndex
-from .prompts import executor_prompt
+from .prompts import executor_prompt, system_prompt
 from .reflector import Reflector
 from .tools import build_default_registry
 from .validator import Validator
@@ -40,22 +40,32 @@ class CodingAgent:
         self.errors: List[str] = []
         self.fixed_errors: List[str] = []
         self.completed_tasks: List[str] = []
+        self.all_validations: List[ValidationResult] = []
 
     def run(self, goal: str) -> AgentReport:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
         self.logger.info("agent_start", message=f"Goal: {goal}")
 
+        # Index project.
         self.index.build()
         self.memory.update_project_summary(self.index.summary(limit=20)[:1500])
         self.memory.add_event("user_request", goal)
 
-        baseline = []
+        # Establish baseline (what was already failing before we changed anything).
+        baseline: List[ValidationResult] = []
         if not self.config.plan_only and not self.config.dry_run:
             try:
                 baseline = self.validator.establish_baseline()
+                self.all_validations.extend(baseline)
+                if baseline:
+                    self.logger.info(
+                        "baseline",
+                        message=f"{sum(1 for v in baseline if v.success)}/{len(baseline)} passed",
+                    )
             except Exception as exc:  # noqa: BLE001
                 self.logger.warn("baseline_failed", message=str(exc))
 
+        # Create plan.
         plan = self.planner.create_plan(goal, self.index.summary())
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))
         self.memory.add_event("plan", plan.summary or plan.goal, {"tasks": [t.id for t in plan.tasks]})
@@ -64,15 +74,18 @@ class CodingAgent:
             return AgentReport(
                 status=FinalStatus.SUCCESS if not self.config.dry_run else FinalStatus.DRY_RUN_COMPLETED,
                 goal=goal,
-                summary="Plan-only mode: no mutations executed.\n" + self._render_plan(plan),
+                summary="Plan-only mode.\n" + self._render_plan(plan),
                 completed_tasks=[t.title for t in plan.tasks],
                 analyzed_files=[f.path for f in self.index.files[:30]],
                 next_steps=["Re-run without --plan-only to execute"],
                 risks=plan.risks,
             )
 
+        # Execute tasks.
         steps = 0
         final_answer = ""
+        consecutive_failures = 0
+
         while steps < self.config.max_steps:
             task = self._next_task(plan)
             if task is None:
@@ -80,8 +93,9 @@ class CodingAgent:
             steps += 1
             task.status = TaskStatus.RUNNING
             task.attempts += 1
-            self.logger.info("agent_step", message=f"Step {steps}: {task.id} {task.title}")
+            self.logger.info("agent_step", message=f"Step {steps}/{self.config.max_steps}: [{task.id}] {task.title}")
 
+            # Build context with auto-read files.
             context = self.context_manager.build(
                 goal=goal,
                 task=task,
@@ -89,33 +103,47 @@ class CodingAgent:
                 memory=self.memory,
                 errors=self.errors[-5:],
             )
-            prompt = executor_prompt(goal, task, self.registry, context)
+            prompt = executor_prompt(
+                goal, task, self.registry, context,
+                previous_results=None,
+            )
+
             try:
-                model_text = self.client.complete(prompt, model=self.config.coder_model)
+                model_text = self.client.complete(
+                    prompt,
+                    model=self.config.coder_model,
+                    system=system_prompt(str(self.config.workspace)),
+                )
             except Exception as exc:  # noqa: BLE001
-                self.errors.append(str(exc))
+                self.errors.append(f"LLM error: {exc}")
                 task.status = TaskStatus.FAILED
+                consecutive_failures += 1
+                if consecutive_failures >= 3:
+                    self.logger.error("consecutive_failures", message="3 LLM failures in a row, stopping")
+                    break
                 continue
 
             calls = self.executor.parse_calls(model_text)
             if not calls:
-                # Treat prose as final if no tools parsed on late steps.
                 final_answer = model_text
                 task.status = TaskStatus.COMPLETED
                 self.completed_tasks.append(task.title)
                 break
 
+            # Detect no-progress loops.
             signature = self._signature(task.id, calls)
             no_progress = signature in self.seen_signatures
             self.seen_signatures.add(signature)
 
+            # Execute tools.
             results, finished = self.executor.run_calls(calls)
-            self.memory.add_event("tools", f"{task.id} executed {len(results)} tools", {"results": results})
-            for call in calls:
-                for path in call.get("args", {}).get("relevant_files", []) if isinstance(call.get("args"), dict) else []:
-                    self.analyzed_files.append(str(path))
+            self.memory.add_event("tools", f"{task.id}: {len(results)} tools", {"tools": [r["tool"] for r in results]})
+            consecutive_failures = 0
+
+            # Track analyzed files.
             for rel in task.relevant_files:
-                self.analyzed_files.append(rel)
+                if rel not in self.analyzed_files:
+                    self.analyzed_files.append(rel)
 
             if finished:
                 final_answer = results[-1]["result"].get("answer", "")
@@ -123,67 +151,80 @@ class CodingAgent:
                 self.completed_tasks.append(task.title)
                 break
 
-            validation_results = []
+            # Auto-validate after filesystem writes.
+            validation_results: List[ValidationResult] = []
+            wrote_files = self.executor.had_writes_this_step(results)
+
             if task.validation_commands:
                 validation_results = [self.validator.run_one(cmd) for cmd in task.validation_commands]
-            elif any(r.get("result", {}).get("ok") is False for r in results):
+            elif wrote_files:
+                quick_checks = self.validator.discover_commands()[:2]
+                if quick_checks:
+                    validation_results = [self.validator.run_one(cmd) for cmd in quick_checks]
+
+            if any(r.get("result", {}).get("ok") is False for r in results) and not validation_results:
                 validation_results = self.validator.run_all()[:2]
 
+            self.all_validations.extend(validation_results)
             validation_summary = self.validator.summarize(validation_results)
             for item in validation_results:
                 if not item.success and item.category == "introduced":
                     self.errors.append(f"{item.command}: {item.stderr[:200]}")
 
+            # Reflect.
             decision = self.reflector.reflect(
                 task,
                 json.dumps(results, ensure_ascii=False)[:4000],
                 validation_summary,
                 no_progress=no_progress,
             )
-            self.logger.info("reflection", message=f"{decision.status.value}: {decision.analysis}")
-            self.memory.add_event("reflection", decision.analysis, {"status": decision.status.value})
+            self.logger.info("reflection", message=f"{decision.status.value}: {decision.analysis[:120]}")
+            self.memory.add_event("reflection", decision.analysis[:300], {"status": decision.status.value})
 
-            if decision.status in {ReflectionStatus.FINISH, ReflectionStatus.CONTINUE}:
-                if all(r.get("result", {}).get("ok", False) for r in results) and all(v.success for v in validation_results or [type("V", (), {"success": True})()]):
-                    task.status = TaskStatus.COMPLETED
-                    self.completed_tasks.append(task.title)
-                    continue
-                if decision.status == ReflectionStatus.FINISH:
-                    task.status = TaskStatus.COMPLETED
-                    self.completed_tasks.append(task.title)
-                    final_answer = decision.next_action or final_answer
+            # Act on reflection.
+            if decision.status == ReflectionStatus.FINISH:
+                task.status = TaskStatus.COMPLETED
+                self.completed_tasks.append(task.title)
+                final_answer = decision.next_action or final_answer
+                if not self._next_task(plan):
                     break
-                # continue with same task if attempts remain
-                if task.attempts >= task.max_attempts:
+                continue
+
+            if decision.status == ReflectionStatus.CONTINUE:
+                all_ok = all(r.get("result", {}).get("ok", False) for r in results)
+                validations_ok = all(v.success for v in validation_results) if validation_results else True
+                if all_ok and validations_ok:
+                    task.status = TaskStatus.COMPLETED
+                    self.completed_tasks.append(task.title)
+                elif task.attempts >= task.max_attempts:
                     task.status = TaskStatus.FAILED
                 continue
 
             if decision.status == ReflectionStatus.RETRY:
-                if decision.analysis and "fixed" not in decision.analysis.lower():
-                    # keep task pending/running for another attempt
-                    if task.attempts >= task.max_attempts:
-                        task.status = TaskStatus.FAILED
-                    else:
-                        task.status = TaskStatus.PENDING
+                if task.attempts >= task.max_attempts:
+                    task.status = TaskStatus.FAILED
+                    self.errors.append(f"Task {task.id} exhausted retries: {decision.analysis[:200]}")
+                else:
+                    task.status = TaskStatus.PENDING
                 continue
 
             if decision.status == ReflectionStatus.REPLAN or decision.should_replan:
-                plan = self.planner.update_plan(plan, decision.analysis or "replan requested")
+                plan = self.planner.update_plan(plan, decision.analysis or "replan")
                 task.status = TaskStatus.PENDING
+                self.logger.info("replan", message="Plan updated after reflection")
                 continue
 
             if decision.status == ReflectionStatus.ROLLBACK:
-                # Best-effort rollback via backups mentioned in results.
                 task.status = TaskStatus.FAILED
-                self.errors.append("Rollback requested by reflector")
+                self.errors.append(f"Rollback requested: {decision.analysis[:200]}")
                 continue
 
             if decision.status in {ReflectionStatus.ABORT, ReflectionStatus.ASK_USER}:
                 task.status = TaskStatus.BLOCKED if decision.status == ReflectionStatus.ASK_USER else TaskStatus.FAILED
-                self.errors.append(decision.analysis)
+                self.errors.append(decision.analysis[:300])
                 break
 
-        return self._build_report(goal, plan, final_answer, baseline)
+        return self._build_report(goal, plan, final_answer)
 
     def _next_task(self, plan: Plan) -> Optional[Task]:
         done = {t.id for t in plan.tasks if t.status == TaskStatus.COMPLETED}
@@ -203,20 +244,25 @@ class CodingAgent:
     def _render_plan(self, plan: Plan) -> str:
         lines = [f"Goal: {plan.goal}", f"Summary: {plan.summary}", "Tasks:"]
         for task in plan.tasks:
-            lines.append(f"- [{task.id}] {task.title}: {task.description}")
+            dep = f" (depends: {', '.join(task.dependencies)})" if task.dependencies else ""
+            lines.append(f"- [{task.id}] {task.title}{dep}: {task.description}")
+        if plan.risks:
+            lines.append("\nRisks:")
+            for risk in plan.risks:
+                lines.append(f"- {risk}")
         return "\n".join(lines)
 
-    def _build_report(self, goal: str, plan: Plan, final_answer: str, baseline: list) -> AgentReport:
+    def _build_report(self, goal: str, plan: Plan, final_answer: str) -> AgentReport:
         failed_tasks = [t for t in plan.tasks if t.status == TaskStatus.FAILED]
         blocked_tasks = [t for t in plan.tasks if t.status == TaskStatus.BLOCKED]
         pending = [t for t in plan.tasks if t.status in {TaskStatus.PENDING, TaskStatus.RUNNING}]
 
-        validations = list(baseline)
-        # Prefer latest validator runs already stored indirectly via errors; re-run lightweight compile if python project.
-        if any(f.language == "python" for f in self.index.files):
-            validations.append(self.validator.run_one("python -m compileall local_agent ollama_agent.py"))
+        # Final compile check for Python.
+        if any(f.language == "python" for f in self.index.files) and not self.config.dry_run:
+            final_check = self.validator.run_one("python -m compileall .")
+            self.all_validations.append(final_check)
 
-        introduced_failures = [v for v in validations if not v.success and v.category == "introduced"]
+        introduced_failures = [v for v in self.all_validations if not v.success and v.category == "introduced"]
 
         if self.config.dry_run:
             status = FinalStatus.DRY_RUN_COMPLETED
@@ -233,13 +279,14 @@ class CodingAgent:
         if status != FinalStatus.SUCCESS and not final_answer:
             summary = f"{summary}\nEstado final: {status.value}"
 
-        # persist memory updates
-        self.memory.remember_files(list(dict.fromkeys(self.executor.created_files + self.executor.modified_files))[:30])
+        # Persist memory.
+        all_files = list(dict.fromkeys(self.executor.created_files + self.executor.modified_files))[:30]
+        self.memory.remember_files(all_files)
         if self.errors:
-            self.memory.long_term.setdefault("known_issues", [])
+            issues = self.memory.long_term.setdefault("known_issues", [])
             for err in self.errors[-5:]:
-                if err not in self.memory.long_term["known_issues"]:
-                    self.memory.long_term["known_issues"].append(err)
+                if err not in issues:
+                    issues.append(err)
             self.memory.save()
 
         return AgentReport(
@@ -251,7 +298,7 @@ class CodingAgent:
             modified_files=list(dict.fromkeys(self.executor.modified_files)),
             created_files=list(dict.fromkeys(self.executor.created_files)),
             commands=list(dict.fromkeys(self.executor.commands)),
-            validations=validations[-10:],
+            validations=self.all_validations[-12:],
             errors=self.errors,
             fixed_errors=self.fixed_errors,
             risks=plan.risks,
@@ -272,7 +319,7 @@ def run_agent(
     verbose: bool = False,
     **kwargs: object,
 ) -> str:
-    """Backward-compatible functional API used by legacy scripts/tests."""
+    """Backward-compatible functional API."""
     config = AgentConfig.from_args(
         workspace,
         model=model,

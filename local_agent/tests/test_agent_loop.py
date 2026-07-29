@@ -14,7 +14,7 @@ class ScriptedClient:
         self.responses = list(responses)
         self.call_count = 0
 
-    def complete(self, prompt, model=None, temperature=0.1, timeout=180):
+    def complete(self, prompt, model=None, temperature=0.1, timeout=180, **kwargs):
         self.call_count += 1
         if not self.responses:
             return '{"tool":"final","args":{"answer":"done"}}'
@@ -35,7 +35,8 @@ def test_agent_creates_file_with_scripted_tools(tmp_path: Path, monkeypatch) -> 
         ]
     )
     # Bypass planner/reflector network by patching methods to deterministic local behavior.
-    agent.planner.create_plan = lambda goal, summary: __import__("local_agent.planner", fromlist=["Planner"]).Planner._to_plan(
+    from local_agent.planner import Planner as _P
+    agent.planner.create_plan = lambda goal, summary, **kw: _P._to_plan(
         agent.planner,
         {
             "goal": goal,
@@ -74,7 +75,8 @@ def test_agent_creates_file_with_scripted_tools(tmp_path: Path, monkeypatch) -> 
 def test_no_progress_detection(tmp_path: Path) -> None:
     cfg = AgentConfig.from_args(tmp_path, no_memory=True, no_git=True, max_steps=3, max_task_attempts=2)
     agent = CodingAgent(cfg)
-    agent.planner.create_plan = lambda goal, summary: __import__("local_agent.planner", fromlist=["Planner"]).Planner._to_plan(
+    from local_agent.planner import Planner as _P
+    agent.planner.create_plan = lambda goal, summary, **kw: _P._to_plan(
         agent.planner,
         {
             "goal": goal,

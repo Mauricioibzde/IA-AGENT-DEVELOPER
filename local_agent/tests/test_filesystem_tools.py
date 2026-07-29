@@ -30,4 +30,4 @@ def test_read_file(tmp_path: Path) -> None:
     cfg = AgentConfig.from_args(tmp_path, no_memory=True)
     result = read_file({"path": "a.txt"}, workspace=str(tmp_path), config=cfg)
     assert result.ok
-    assert result.data["content"] == "hello"
+    assert "hello" in result.data["content"]

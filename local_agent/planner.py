@@ -8,6 +8,7 @@ from typing import Any, Dict, List, Optional
 
 from .models import Plan, RiskLevel, Task, TaskStatus
 from .ollama_client import OllamaClient
+from .project_index import ProjectIndex
 from .prompts import minimal_safe_plan, planner_prompt
 
 
@@ -16,14 +17,20 @@ class Planner:
         self.client = client
         self.model = model
 
-    def create_plan(self, goal: str, project_summary: str) -> Plan:
+    def create_plan(
+        self,
+        goal: str,
+        project_summary: str,
+        *,
+        index: Optional[ProjectIndex] = None,
+    ) -> Plan:
         prompt = planner_prompt(goal, project_summary)
         try:
             raw = self.client.complete(prompt, model=self.model, temperature=0.1)
             data = self._parse_plan_json(raw)
             if data is None:
                 repair = self.client.complete(
-                    "Correct this into valid plan JSON only:\n" + raw,
+                    "Your previous output was not valid JSON. Fix it and return ONLY the plan JSON:\n" + raw[:3000],
                     model=self.model,
                     temperature=0,
                 )
@@ -32,7 +39,17 @@ class Planner:
                 data = minimal_safe_plan(goal)
         except Exception:
             data = minimal_safe_plan(goal)
-        return self._to_plan(data, fallback_goal=goal)
+
+        plan = self._to_plan(data, fallback_goal=goal)
+
+        # Post-process: auto-discover relevant_files if the planner left them empty.
+        if index:
+            self._enrich_with_index(plan, index, goal)
+
+        # Ensure at least one validation command per mutating task.
+        self._ensure_validation_commands(plan)
+
+        return plan
 
     def update_plan(self, plan: Plan, error: str) -> Plan:
         prompt = (
@@ -45,13 +62,41 @@ class Planner:
         except Exception:
             data = self._plan_to_dict(plan)
         updated = self._to_plan(data, fallback_goal=plan.goal)
-        # Preserve completed statuses where ids match.
         done = {t.id: t for t in plan.tasks if t.status == TaskStatus.COMPLETED}
         for task in updated.tasks:
             if task.id in done:
                 task.status = TaskStatus.COMPLETED
                 task.attempts = done[task.id].attempts
         return updated
+
+    def _enrich_with_index(self, plan: Plan, index: ProjectIndex, goal: str) -> None:
+        """Add relevant_files from the project index when the model left them empty."""
+        goal_lower = goal.lower()
+        for task in plan.tasks:
+            if task.relevant_files:
+                continue
+            desc_lower = task.description.lower()
+            candidates = []
+            for f in index.files:
+                name = f.path.rsplit("/", 1)[-1].lower()
+                if name in desc_lower or name in goal_lower:
+                    candidates.append(f.path)
+                elif any(sym.lower() in desc_lower for sym in f.symbols[:10]):
+                    candidates.append(f.path)
+                if len(candidates) >= 5:
+                    break
+            task.relevant_files = candidates[:5]
+
+    def _ensure_validation_commands(self, plan: Plan) -> None:
+        """Ensure mutating tasks have validation commands."""
+        for task in plan.tasks:
+            if task.validation_commands:
+                continue
+            desc_lower = task.description.lower()
+            if any(word in desc_lower for word in ["create", "write", "edit", "modify", "refactor", "fix", "add", "remove", "delete"]):
+                task.validation_commands = ["python -m compileall ."]
+            if "test" in desc_lower or "validate" in desc_lower:
+                task.validation_commands.append("python -m pytest -q --tb=short")
 
     def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
         content = text.strip()
