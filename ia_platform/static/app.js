@@ -3677,10 +3677,11 @@
     stopDevPolling();
     if (state.current && state.previewMode === "dev") {
       state.devPollTimer = setInterval(() => {
+        if (document.hidden) return;
         if (state.current && state.previewMode === "dev") {
           refreshDevStatus().then(() => {
             if (state.devStatus?.running) updatePreview();
-          });
+          }).catch(() => {});
         }
       }, 5000);
     }
@@ -3698,6 +3699,8 @@
     const previewOpen = !$("panelPreview")?.classList.contains("hidden");
     if (!state.current || state.previewMode !== "static" || !previewOpen) return;
     state.previewPollTimer = setInterval(async () => {
+      // Edge/Chrome suspend network on background tabs — skip to avoid ERR_NETWORK_IO_SUSPENDED noise.
+      if (document.hidden) return;
       if (!state.current || state.previewMode !== "static") return;
       if ($("panelPreview")?.classList.contains("hidden")) return;
       try {
@@ -3708,9 +3711,15 @@
         }
         state.previewRevision = rev;
       } catch {
-        /* ignore */
+        /* network suspended / offline — ignore */
       }
     }, 3500);
+  }
+
+  function onDocumentVisibilityChange() {
+    if (document.hidden) return;
+    if (state.current && state.previewMode === "static") syncPreviewPolling();
+    if (state.current && state.previewMode === "dev") syncDevPolling();
   }
 
   async function clearDevError() {
