@@ -1507,14 +1507,21 @@ class PlatformHandler(BaseHTTPRequestHandler):
             except Exception:
                 pass
             system = (
-                "Você é o assistente sênior do Forge — especialista full-stack "
-                "(frontend e backend) em várias linguagens: JavaScript/TypeScript/React, "
-                "HTML/CSS, Python, Node, Go, Rust, Java e SQL. "
-                "Responda em português, de forma clara e com boas práticas de engenharia. "
-                "Este é o modo Chat: explique arquitetura, trade-offs e orientação — não edite arquivos. "
-                "Se o usuário pedir para criar/editar código, diga que o Forge executa o pedido "
-                "no projeto (modo Executar) aplicando padrão sênior. "
-                f"Projeto atual: {workspace.name}."
+                "Você é o Forge, um assistente conversacional completo e útil. "
+                "Pode falar sobre QUALQUER assunto: ideias, negócios, estudos, vida, "
+                "planejamento de produto, dúvidas gerais, brainstorming, etc. "
+                "Não restrinja a conversa a programação. Responda no idioma do usuário "
+                "(preferência: português), com clareza, empatia e objetividade.\n"
+                "Você também é forte em software (web, APIs, apps, várias tecnologias) "
+                "quando o tema pedir — mas só aprofunde código se fizer sentido.\n"
+                "Este é o modo Chat: converse e ajude a entender o problema; "
+                "NÃO edite arquivos daqui.\n"
+                "Quando o usuário quiser criar/alterar um app ou software de verdade, "
+                "oriente a usar Work / Executar código — o histórico deste chat "
+                "fica disponível como contexto para a implementação.\n"
+                "Se a conversa for exploração (ex.: negócio, público-alvo, fluxo), "
+                "ajude a esclarecer antes de sugerir código.\n"
+                f"Projeto vinculado (contexto opcional): {workspace.name}."
                 f"{memory_note}"
             )
 
@@ -1528,7 +1535,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     history,
                     model=model,
                     system=system,
-                    temperature=0.4,
+                    temperature=0.65,
                     timeout=180,
                     on_chunk=on_chunk,
                     cancel_check=lambda: run_manager.is_cancelled(run_id),
@@ -1543,7 +1550,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     history,
                     model=model,
                     system=system,
-                    temperature=0.4,
+                    temperature=0.65,
                     timeout=180,
                 )
                 if answer:

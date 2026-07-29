@@ -2134,22 +2134,28 @@
       els.emptySub.textContent =
         state.surfaceMode === "work"
           ? "Escolha um projeto ou template. No Work o agente edita código e o preview atualiza."
-          : "Converse no Chat ou mude para Work para criar e editar apps no projeto.";
+          : "Chat livre: qualquer assunto. Quando for construir, mude para Work — o contexto segue junto.";
     }
     if (els.promptInput) {
       els.promptInput.placeholder =
-        state.surfaceMode === "work" ? "Trabalhe no que quiser…" : "No que você está pensando?";
+        state.surfaceMode === "work" ? "Trabalhe no que quiser…" : "Pergunte ou converse sobre qualquer coisa…";
     }
     if (els.heroTitle) {
       els.heroTitle.textContent =
-        state.surfaceMode === "work" ? "No que vamos trabalhar?" : "O que você quer saber?";
+        state.surfaceMode === "work" ? "No que vamos trabalhar?" : "No que você está pensando?";
     }
     if (els.heroSub) {
       els.heroSub.textContent =
         state.surfaceMode === "work"
-          ? "Peça mudanças no código — anexos entram no projeto e o agente aplica o padrão sênior."
-          : "Pergunte qualquer coisa. Para alterar arquivos, mude para Work.";
+          ? "Peça mudanças no código — o histórico do Chat vira contexto para implementar."
+          : "Converse sobre qualquer assunto. Para criar/editar o app, use Work / Executar.";
     }
+    document.querySelectorAll(".quick-card--chat").forEach((el) => {
+      el.classList.toggle("hidden", state.surfaceMode === "work");
+    });
+    document.querySelectorAll(".quick-card--work").forEach((el) => {
+      el.classList.toggle("hidden", state.surfaceMode === "chat");
+    });
     syncComposerProjectLabel();
     try {
       localStorage.setItem("forge_surface_mode", state.surfaceMode);
@@ -3697,7 +3703,7 @@
         persistMessage("user", prompt).catch(() => {});
         addExecuteHandoff(
           prompt,
-          "Isso parece um pedido para criar ou editar código. No Chat eu só converso — para alterar arquivos, execute:"
+          "Isso parece um pedido para criar ou editar código. No Chat continuamos a conversa; para alterar arquivos, execute:"
         );
         return;
       }
@@ -5811,11 +5817,13 @@
     if (els.modeChip) {
       els.modeChip.textContent = isExecute ? "Executar" : "Chat";
       els.modeChip.classList.toggle("mode-chip--execute", isExecute);
-      els.modeChip.title = isExecute ? "Modo Executar — altera arquivos no projeto" : "Modo Chat — só conversa";
+      els.modeChip.title = isExecute
+        ? "Modo Executar — altera arquivos no projeto (usa o contexto do Chat)"
+        : "Modo Chat — conversa livre sobre qualquer assunto";
     }
     if (els.promptInput) {
       els.promptInput.placeholder = isChat
-        ? "Converse com o agente… (para criar código, mude para Executar código)"
+        ? "Converse sobre qualquer assunto… (para alterar código, use Executar)"
         : "Peça uma mudança, um componente ou uma correção…";
     }
     try {

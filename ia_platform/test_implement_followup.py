@@ -22,3 +22,11 @@ def test_enrich_goal_appends_chat_context() -> None:
     # Idempotent when already enriched by the frontend.
     again = enrich_goal_with_conversation(enriched, conversation)
     assert again == enriched
+
+
+def test_enrich_short_work_goal_keeps_chat_situation_context() -> None:
+    goal = "Crie a primeira versão do app"
+    conversation = "Usuário: Quero um app para organizar pedidos de uma padaria local."
+    enriched = enrich_goal_with_conversation(goal, conversation)
+    assert "padaria" in enriched
+    assert "Contexto recente do Chat" in enriched

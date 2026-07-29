@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=16" />
+  <link rel="stylesheet" href="/static/app.css?v=17" />
 </head>
 <body>
   <div class="app">
@@ -84,7 +84,7 @@
       <div class="sidebar-bottom">
         <div class="sidebar-tip" id="sidebarTip">
           <strong>Dica do dia</strong>
-          <p>Crie um projeto React + Vite; o agente aplica padrão sênior (FE/BE) e o preview sobe ao vivo.</p>
+          <p>Use o Chat para qualquer assunto e alinhar a ideia; no Work o agente transforma isso em app/código.</p>
         </div>
         <div class="sidebar-user" title="Forge · plataforma local">
           <div class="user-avatar">F</div>
@@ -163,7 +163,7 @@
           <div class="topbar-controls">
             <span class="mode-chip" id="modeChip" title="Modo atual">Chat</span>
             <select id="modeSelect" title="Modo" class="control-select">
-              <option value="chat" selected>Chat</option>
+              <option value="chat" selected>Chat (qualquer assunto)</option>
               <option value="execute">Executar código</option>
               <option value="plan">Só plano</option>
               <option value="dry">Dry-run</option>
@@ -191,18 +191,26 @@
             <div class="chat-hero" id="chatHero">
               <div class="aurora-band aurora-band--soft" aria-hidden="true"></div>
               <p class="hero-kicker" id="heroKicker">Projeto aberto</p>
-              <h3 class="hero-title" id="heroTitle">O que vamos construir agora?</h3>
-              <p class="hero-sub" id="heroSub">Descreva o app ou a mudança — no Work o agente altera arquivos e o preview atualiza. No Chat, só conversa.</p>
+              <h3 class="hero-title" id="heroTitle">No que você está pensando?</h3>
+              <p class="hero-sub" id="heroSub">Converse sobre qualquer assunto. Quando for criar ou editar o app, mude para Work — o contexto do chat acompanha.</p>
               <div class="quick-actions">
-                <button type="button" class="quick-card" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte.">
+                <button type="button" class="quick-card quick-card--chat" data-prompt="Quero conversar sobre uma ideia de produto antes de programar. Me faça perguntas para entender o problema, o público e o resultado desejado.">
+                  <span class="quick-icon">Ideia</span>
+                  <span class="quick-label">Explorar ideia</span>
+                </button>
+                <button type="button" class="quick-card quick-card--chat" data-prompt="Me explique este assunto com calma, em português, sem assumir que eu já sei programar.">
+                  <span class="quick-icon">?</span>
+                  <span class="quick-label">Tirar dúvida</span>
+                </button>
+                <button type="button" class="quick-card quick-card--work" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte.">
                   <span class="quick-icon">Web</span>
                   <span class="quick-label">Criar landing</span>
                 </button>
-                <button type="button" class="quick-card" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia.">
+                <button type="button" class="quick-card quick-card--work" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia.">
                   <span class="quick-icon">UI</span>
                   <span class="quick-label">Melhorar visual</span>
                 </button>
-                <button type="button" class="quick-card" data-prompt="Adicione uma seção de funcionalidades com cards e ícones simples em CSS.">
+                <button type="button" class="quick-card quick-card--work" data-prompt="Adicione uma seção de funcionalidades com cards e ícones simples em CSS.">
                   <span class="quick-icon">+</span>
                   <span class="quick-label">Nova seção</span>
                 </button>
@@ -558,6 +566,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=16"></script>
+  <script src="/static/app.js?v=17"></script>
 </body>
 </html>

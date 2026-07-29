@@ -141,19 +141,35 @@ def looks_like_implement_follow_up(goal: str) -> bool:
 
 
 def enrich_goal_with_conversation(goal: str, conversation: str) -> str:
-    """When the user says 'implement the suggestions', stitch chat context into the goal."""
+    """Stitch recent chat into Work goals so exploration → implementation stays connected."""
     goal_text = str(goal or "").strip()
     conv = str(conversation or "").strip()
     if not goal_text or not conv:
         return goal_text
     if "--- contexto" in goal_text.lower() or "aplique isto" in goal_text.lower():
         return goal_text
-    if not looks_like_implement_follow_up(goal_text):
-        return goal_text
-    return (
-        f"{goal_text}\n\n"
-        "--- Contexto do chat anterior (APLIQUE no código do projeto) ---\n"
-        f"{conv[:4500]}\n"
-        "--- Fim do contexto ---\n"
-        "Edite os arquivos necessários agora; não responda só com texto."
-    )
+
+    # Strong follow-ups: force applying prior suggestions.
+    if looks_like_implement_follow_up(goal_text):
+        return (
+            f"{goal_text}\n\n"
+            "--- Contexto do chat anterior (APLIQUE no código do projeto) ---\n"
+            f"{conv[:4500]}\n"
+            "--- Fim do contexto ---\n"
+            "Edite os arquivos necessários agora; não responda só com texto."
+        )
+
+    # Soft link: short/ambiguous work goals still benefit from prior discussion
+    # (business context, audience, flows) without overriding an already-detailed prompt.
+    if len(goal_text) <= 220 or re.search(
+        r"\b(discutimos|combinamos|falamos|combinado|como combinado|do chat|da conversa|"
+        r"o que (a gente|nós) (falou|definiu|planejou)|com base nisso|nesse contexto)\b",
+        goal_text.lower(),
+    ):
+        return (
+            f"{goal_text}\n\n"
+            "--- Contexto recente do Chat (use para entender a situação antes de codar) ---\n"
+            f"{conv[:3500]}\n"
+            "--- Fim do contexto ---"
+        )
+    return goal_text
