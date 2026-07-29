@@ -2378,7 +2378,8 @@
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(goal);
     startActivityTimer(progressEl, activity);
-    const agentEl = addMessage("Execução retomada — aguardando eventos…", "agent live");
+    const agentEl = addMessage("", "agent live");
+    setWorkingState(agentEl, "Reconectando à execução", "Aguardando leituras e edições…", activity);
     let after = 0;
     let donePayload = null;
     try {
@@ -2401,7 +2402,10 @@
       if (donePayload) {
         const fullReport = donePayload.report || "(sem relatório)";
         const chatSummary = donePayload.summary || fullReport;
-        finalizeAgentMessage(agentEl, chatSummary);
+        finalizeAgentMessage(agentEl, chatSummary, {
+          activity,
+          error: donePayload.status === "CANCELLED" || /^FAIL|FAILED|Erro/i.test(String(donePayload.status || "")),
+        });
         state.lastReport = fullReport;
         await syncWorkspaceAfterRun(donePayload);
         renderRunArtifacts({
@@ -2413,12 +2417,15 @@
         addMessage("Execução retomada e concluída.", "system");
         window.setTimeout(() => removeMessage(progressEl), 6500);
       } else {
-        finalizeAgentMessage(agentEl, "Execução finalizada.", { error: true });
+        finalizeAgentMessage(agentEl, "Execução finalizada.", { error: true, activity });
         window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
       stopActivityTimer(activity);
-      finalizeAgentMessage(agentEl, "Falha ao reconectar: " + (e.message || String(e)), { error: true });
+      finalizeAgentMessage(agentEl, "Falha ao reconectar: " + (e.message || String(e)), {
+        error: true,
+        activity,
+      });
     } finally {
       state.running = false;
       state.runId = null;
@@ -2842,23 +2849,186 @@
     }
   }
 
-  function setWorkingState(el, title, detail = "") {
-    if (!el) return;
-    el.classList.add("live");
+  function ensureCursorWorkbench(el, activity) {
+    if (!el) return null;
+    el.classList.add("live", "cursor-mode");
     el.classList.remove("thinking");
-    el.innerHTML = `
-      <div class="live-inline-status" aria-live="polite">
-        <strong>${escapeHtml(title || "Trabalhando no código")}</strong>
-        ${detail ? `<span>${escapeHtml(detail)}</span>` : `<span>Acompanhe a aba <em>Ao vivo</em> para ver linhas lidas/editadas.</span>`}
-      </div>`;
+    let bench = el.querySelector(".cursor-workbench");
+    if (!bench) {
+      el.innerHTML = `
+        <div class="cursor-workbench" aria-live="polite">
+          <div class="cursor-status-strip">
+            <span class="cursor-pulse" aria-hidden="true"></span>
+            <strong class="cursor-status-title">Preparando agente…</strong>
+            <span class="cursor-stats">Explored 0 · Edited 0</span>
+          </div>
+          <div class="cursor-file-cards"></div>
+        </div>`;
+      bench = el.querySelector(".cursor-workbench");
+    }
+    if (activity) activity.workbenchEl = el;
+    return bench;
   }
 
-  function finalizeAgentMessage(el, text, { error = false } = {}) {
+  function cursorOpVerb(op, status) {
+    if (status === "error") return "Failed";
+    if (status === "start") {
+      return (
+        {
+          read: "Reading",
+          write: "Writing",
+          edit: "Editing",
+          patch: "Patching",
+          delete: "Deleting",
+          search: "Searching",
+          list: "Listing",
+          git: "Git",
+          tool: "Running",
+        }[op] || "Working"
+      );
+    }
+    return (
+      {
+        read: "Read",
+        write: "Wrote",
+        edit: "Edited",
+        patch: "Patched",
+        delete: "Deleted",
+        search: "Searched",
+        list: "Listed",
+        git: "Git",
+        tool: "Ran",
+      }[op] || "Done"
+    );
+  }
+
+  function updateCursorStats(el, activity) {
+    const statsEl = el?.querySelector(".cursor-stats");
+    if (!statsEl || !activity) return;
+    const explored = activity.exploredFiles || 0;
+    const edited = activity.editedFiles || 0;
+    const added = activity.linesAdded || 0;
+    const removed = activity.linesRemoved || 0;
+    const diff = added || removed ? ` · +${added}/−${removed}` : "";
+    statsEl.textContent = `Explored ${explored} · Edited ${edited}${diff}`;
+  }
+
+  function setWorkingState(el, title, detail = "", activity = null) {
     if (!el) return;
+    const bench = ensureCursorWorkbench(el, activity);
+    const titleEl = bench?.querySelector(".cursor-status-title");
+    if (titleEl) titleEl.textContent = title || "Trabalhando no código";
+    if (detail) {
+      const cards = bench?.querySelector(".cursor-file-cards");
+      // Keep a lightweight note only when there are no file cards yet.
+      if (cards && !cards.children.length) {
+        cards.innerHTML = `<div class="cursor-empty-note">${escapeHtml(detail)}</div>`;
+      }
+    }
+    updateCursorStats(el, activity);
+  }
+
+  function upsertCursorFileCard(el, ev, activity) {
+    const bench = ensureCursorWorkbench(el, activity);
+    const cards = bench?.querySelector(".cursor-file-cards");
+    if (!cards || !ev) return;
+
+    // Remove empty placeholder.
+    cards.querySelector(".cursor-empty-note")?.remove();
+
+    const path = ev.path || ev.tool || "arquivo";
+    const key = `${ev.tool || ev.op || "op"}::${path}`;
+    let card =
+      [...cards.querySelectorAll(".cursor-file-card")].find((n) => n.dataset.cardKey === key) || null;
+    const isStart = ev.status === "start";
+    const verb = cursorOpVerb(ev.op, ev.status);
+    const st = ev.stats || {};
+    const statsBits = [
+      st.added != null ? `+${st.added}` : "",
+      st.removed != null ? `−${st.removed}` : "",
+      st.total_lines != null ? `${st.total_lines} lines` : "",
+    ].filter(Boolean);
+
+    if (!card) {
+      card = document.createElement("details");
+      card.className = "cursor-file-card";
+      card.dataset.cardKey = key;
+      card.open = true;
+      cards.appendChild(card);
+    }
+
+    card.className = `cursor-file-card is-${ev.status === "error" ? "error" : ev.op || "tool"}${
+      isStart ? " is-running" : " is-done"
+    }`;
+    const linesHtml =
+      Array.isArray(ev.lines) && ev.lines.length
+        ? `<pre class="cursor-diff">${renderLiveCodeLines(ev.lines)}</pre>`
+        : isStart
+          ? `<pre class="cursor-diff cursor-diff--pending"><div class="live-code-line is-focus"><span class="ln"></span><span class="mark">›</span><span>Aplicando alteração…</span></div></pre>`
+          : ev.error
+            ? `<pre class="cursor-diff"><div class="live-code-line is-del"><span class="ln"></span><span class="mark">!</span><span>${escapeHtml(ev.error)}</span></div></pre>`
+            : `<pre class="cursor-diff"><div class="live-code-line is-context"><span class="ln"></span><span class="mark"></span><span>Sem preview de linhas neste passo.</span></div></pre>`;
+
+    card.innerHTML = `
+      <summary>
+        <span class="cursor-op">${escapeHtml(verb)}</span>
+        <code class="cursor-path">${escapeHtml(path)}</code>
+        <span class="cursor-card-stats">${escapeHtml(statsBits.join(" "))}</span>
+      </summary>
+      ${linesHtml}
+    `;
+
+    // Keep latest cards visible.
+    while (cards.children.length > 12) cards.removeChild(cards.firstChild);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+
+    if (activity) {
+      const pathKey = String(path);
+      activity.seenPaths = activity.seenPaths || new Set();
+      if (pathKey && (ev.op === "read" || ev.op === "search" || ev.op === "list")) {
+        if (!activity.seenPaths.has(`r:${pathKey}`)) {
+          activity.seenPaths.add(`r:${pathKey}`);
+          activity.exploredFiles = (activity.exploredFiles || 0) + 1;
+        }
+      }
+      if (pathKey && (ev.op === "write" || ev.op === "edit" || ev.op === "patch" || ev.op === "delete")) {
+        if (!activity.seenPaths.has(`w:${pathKey}`)) {
+          activity.seenPaths.add(`w:${pathKey}`);
+          activity.editedFiles = (activity.editedFiles || 0) + 1;
+        }
+        if (ev.status === "done") {
+          activity.linesAdded = (activity.linesAdded || 0) + Number(st.added || 0);
+          activity.linesRemoved = (activity.linesRemoved || 0) + Number(st.removed || 0);
+        }
+      }
+      const titleEl = bench.querySelector(".cursor-status-title");
+      if (titleEl) {
+        titleEl.textContent = `${verb} ${path}`;
+      }
+      updateCursorStats(el, activity);
+    }
+  }
+
+  function finalizeAgentMessage(el, text, { error = false, activity = null } = {}) {
+    if (!el) return;
+    const cardsHtml = el.querySelector(".cursor-file-cards")?.innerHTML || "";
+    const statsText = el.querySelector(".cursor-stats")?.textContent || "";
+    const explored = activity?.exploredFiles || 0;
+    const edited = activity?.editedFiles || 0;
     clearThinkingState(el);
-    el.classList.remove("live", "thinking");
+    el.classList.remove("live", "thinking", "cursor-mode");
     const body = String(text || "").trim() || "Execução concluída.";
-    setMessageContent(el, body, "agent");
+    const workbench =
+      cardsHtml.trim() && !cardsHtml.includes("cursor-empty-note")
+        ? `<div class="cursor-workbench is-done">
+            <div class="cursor-status-strip">
+              <strong class="cursor-status-title">${error ? "Falhou" : "Concluído"}</strong>
+              <span class="cursor-stats">${escapeHtml(statsText || `Explored ${explored} · Edited ${edited}`)}</span>
+            </div>
+            <div class="cursor-file-cards">${cardsHtml}</div>
+          </div>`
+        : "";
+    el.innerHTML = `${workbench}<div class="agent-final-report">${renderMarkdown(body)}</div>`;
     el.classList.toggle("error", !!error || /^Erro/i.test(body));
   }
 
@@ -2866,7 +3036,10 @@
     const el = document.createElement("div");
     el.className = "msg " + role + (role === "agent" && /^Erro/i.test(text) ? " error" : "");
     if (/\blive\b/.test(role) && !String(text || "").trim()) {
-      setThinkingState(el);
+      // Cursor-style empty workbench instead of a vague "pensando..."
+      ensureCursorWorkbench(el, null);
+      const title = el.querySelector(".cursor-status-title");
+      if (title) title.textContent = "Iniciando agente…";
     } else {
       setMessageContent(el, text, role);
     }
@@ -3041,6 +3214,12 @@
       files: [],
       liveOp: null,
       liveOps: [],
+      exploredFiles: 0,
+      editedFiles: 0,
+      linesAdded: 0,
+      linesRemoved: 0,
+      seenPaths: new Set(),
+      workbenchEl: null,
       finished: false,
       events: [],
       timer: null,
@@ -3723,6 +3902,7 @@
     const activity = createRunActivity(displayPrompt);
     startActivityTimer(progressEl, activity);
     const agentEl = addMessage("", "agent live");
+    setWorkingState(agentEl, "Iniciando agente…", "Como no Cursor: leituras e diffs aparecem aqui", activity);
     let wasAbort = false;
     const modelForRequest =
       opts.model !== undefined ? opts.model : resolveModelForRequest();
@@ -3785,6 +3965,7 @@
         const fullReport = donePayload.report || "(sem relatório)";
         const chatSummary = donePayload.summary || fullReport;
         finalizeAgentMessage(agentEl, chatSummary, {
+          activity,
           error: donePayload.status === "CANCELLED" || /^FAIL|FAILED|Erro/i.test(String(donePayload.status || "")),
         });
         state.lastReport = fullReport;
@@ -3804,20 +3985,23 @@
         err.streamError = true;
         throw err;
       } else {
-        finalizeAgentMessage(agentEl, "Execução finalizada sem relatório.", { error: true });
+        finalizeAgentMessage(agentEl, "Execução finalizada sem relatório.", { error: true, activity });
         window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
       stopActivityTimer(activity);
       removeMessage(progressEl);
       clearThinkingState(agentEl);
-      agentEl.classList.remove("live", "thinking");
+      agentEl.classList.remove("live", "thinking", "cursor-mode");
       if (e.status === 409 || e.data?.busy) {
-        finalizeAgentMessage(agentEl, e.message || "Agente já em execução neste projeto.", { error: true });
+        finalizeAgentMessage(agentEl, e.message || "Agente já em execução neste projeto.", {
+          error: true,
+          activity,
+        });
         addMessage("Aguarde a execução atual terminar ou cancele antes de enviar outro prompt.", "system");
       } else if (e.name === "AbortError") {
         wasAbort = true;
-        finalizeAgentMessage(agentEl, "Cancelando...", { error: true });
+        finalizeAgentMessage(agentEl, "Cancelando...", { error: true, activity });
       } else if (e.status === 503 || e.data?.ollama_offline) {
         // Offline scaffolds should pass preflight; one soft retry only (avoid loops).
         if (
@@ -3854,7 +4038,7 @@
         state.ollamaOk = false;
         updateOllamaOfflineUI();
         const err = e.message || "Ollama offline.";
-        finalizeAgentMessage(agentEl, "Erro: " + err, { error: true });
+        finalizeAgentMessage(agentEl, "Erro: " + err, { error: true, activity });
         openModelsModal();
       } else {
         const raw = String(e.message || "erro desconhecido");
@@ -3886,7 +4070,7 @@
         const err = isNetwork
           ? "Erro de conexão com o servidor. Reinicie a plataforma (porta 8787) e tente de novo. Se o modelo for grande, a 1ª resposta pode demorar alguns minutos."
           : "Erro: " + raw;
-        finalizeAgentMessage(agentEl, err, { error: true });
+        finalizeAgentMessage(agentEl, err, { error: true, activity });
         if (e.data?.missing_model) {
           addMessage(`Modelo ausente: ${e.data.model}. Baixando automaticamente...`, "system");
           openModelsModal();
@@ -3935,6 +4119,12 @@
           stage: "Agente iniciado",
           detail: `Run ${ev.run_id || ""} aberto. Preparando leitura do projeto e contexto da conversa.`.trim(),
         });
+        setWorkingState(
+          agentEl,
+          "Agente iniciado",
+          "Preparando leitura do projeto…",
+          activity
+        );
         break;
       case "cancelled":
         updateActivity(activity, {
@@ -3942,6 +4132,7 @@
           stage: "Cancelando",
           detail: "Pedido de cancelamento enviado. Aguardando o agente parar no próximo ponto seguro.",
         });
+        setWorkingState(agentEl, "Cancelando…", "Parando no próximo ponto seguro", activity);
         break;
       case "planning":
         updateActivity(activity, {
@@ -3949,7 +4140,7 @@
           stage: "Criando plano",
           detail: ev.message || "Lendo o projeto e montando uma sequência segura de tarefas.",
         });
-        setWorkingState(agentEl, "Planejando as mudanças", "Analisando arquivos do projeto…");
+        setWorkingState(agentEl, "Planejando as mudanças", "Analisando arquivos do projeto…", activity);
         break;
       case "plan":
         updateActivity(activity, {
@@ -3962,7 +4153,8 @@
         setWorkingState(
           agentEl,
           "Plano pronto — começando a editar",
-          `${ev.task_count || "?"} tarefa(s). Veja a aba Ao vivo.`
+          `${ev.task_count || "?"} tarefa(s) · cards de arquivo aparecem abaixo`,
+          activity
         );
         break;
       case "step":
@@ -3981,7 +4173,8 @@
         setWorkingState(
           agentEl,
           `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || "trabalhando"}`,
-          "O modelo vai ler/editar arquivos — veja a aba Ao vivo."
+          "Lendo e editando arquivos — preview linha a linha abaixo",
+          activity
         );
         break;
       case "llm_chunk":
@@ -3994,13 +4187,15 @@
         if (!activity.liveOp) {
           setWorkingState(
             agentEl,
-            "Modelo pensando na próxima edição",
-            `Tarefa: ${activity.task || "em andamento"} · abra Ao vivo`
+            "Decidindo a próxima edição",
+            `Tarefa: ${activity.task || "em andamento"}`,
+            activity
           );
         }
         break;
       case "file_op": {
         updateLiveCodeViewer(ev, activity);
+        upsertCursorFileCard(agentEl, ev, activity);
         const verb = liveOpLabel(ev.op, ev.status);
         updateActivity(activity, {
           phaseId: "work",
@@ -4009,15 +4204,6 @@
             ? `${verb}: ${ev.path}${ev.error ? ` — ${ev.error}` : ""}`
             : ev.headline || "Operação em arquivo",
         });
-        const st = ev.stats || {};
-        const detailBits = [
-          ev.path || "",
-          st.added != null ? `+${st.added}` : "",
-          st.removed != null ? `−${st.removed}` : "",
-          ev.error || "",
-          "aba Ao vivo",
-        ].filter(Boolean);
-        setWorkingState(agentEl, ev.headline || `${verb} código`, detailBits.join(" · "));
         if (ev.path && (ev.op === "write" || ev.op === "edit" || ev.op === "patch") && ev.status === "done") {
           markChangedFiles([ev.path]);
           scheduleFileRefresh(activity);
@@ -4039,7 +4225,8 @@
         setWorkingState(
           agentEl,
           `Executando: ${(ev.tools || []).slice(0, 3).join(", ") || "ferramentas"}`,
-          "Atualizando a aba Ao vivo com o código"
+          "Cards de arquivo atualizam conforme cada operação termina",
+          activity
         );
         break;
       case "tools":
@@ -4076,6 +4263,12 @@
           stage: "Validando alterações",
           detail: `Rodando: ${(ev.commands || []).join(", ") || "validações automáticas"}.`,
         });
+        setWorkingState(
+          agentEl,
+          "Validando alterações",
+          (ev.commands || []).slice(0, 3).join(", ") || "checagens automáticas",
+          activity
+        );
         break;
       case "validation":
         updateActivity(activity, {
@@ -4084,6 +4277,12 @@
           detail: `${ev.ok || 0} de ${ev.count || 0} validações passaram.`,
           reflection: ev.summary || activity.reflection,
         });
+        setWorkingState(
+          agentEl,
+          "Validação concluída",
+          `${ev.ok || 0}/${ev.count || 0} passaram`,
+          activity
+        );
         break;
       case "reflection":
         updateActivity(activity, {
@@ -4092,12 +4291,19 @@
           detail: `Decisão: ${ev.status || "continue"}`,
           reflection: (ev.analysis || "").slice(0, 180),
         });
+        setWorkingState(agentEl, `Avaliando: ${ev.status || "continue"}`, "", activity);
         break;
       case "error":
         updateActivity(activity, {
           stage: "Erro encontrado",
           detail: ev.message || ev.error || "Erro desconhecido durante a execução.",
         });
+        setWorkingState(
+          agentEl,
+          "Erro na execução",
+          ev.message || ev.error || "erro desconhecido",
+          activity
+        );
         break;
       default:
         break;
