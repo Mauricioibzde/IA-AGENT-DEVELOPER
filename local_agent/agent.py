@@ -43,7 +43,13 @@ class CodingAgent:
         self.index = ProjectIndex(config.workspace)
         self.registry = build_default_registry(include_git=config.use_git)
         self.checkpoint = RunCheckpoint(config.workspace, config.run_id or "anonymous")
-        self.executor = Executor(self.registry, config, self.logger, checkpoint=self.checkpoint)
+        self.executor = Executor(
+            self.registry,
+            config,
+            self.logger,
+            checkpoint=self.checkpoint,
+            event_sink=event_sink,
+        )
         self.planner = Planner(self.client, config.planner_model)
         self.reflector = Reflector(self.client, config.reflection_model)
         self.context_manager = ContextManager(config)

@@ -61,6 +61,11 @@
     chats: [],
     chatsExpanded: true,
     projectsShowAll: false,
+    liveCode: {
+      current: null,
+      history: [],
+      autoOpened: false,
+    },
   };
 
   const $ = (id) => document.getElementById(id);
@@ -139,6 +144,12 @@
     btnOpenDeployUrl: $("btnOpenDeployUrl"),
     btnCloseDeploy: $("btnCloseDeploy"),
     rightPanel: $("rightPanel"),
+    panelLive: $("panelLive"),
+    liveCodeBadge: $("liveCodeBadge"),
+    liveCodePath: $("liveCodePath"),
+    liveCodeStats: $("liveCodeStats"),
+    liveCodeBody: $("liveCodeBody"),
+    liveCodeTimeline: $("liveCodeTimeline"),
     mobileTabs: $("mobileTabs"),
     mobileBackdrop: $("mobileBackdrop"),
     devErrorLog: $("devErrorLog"),
@@ -2858,6 +2869,136 @@
     { id: "done", label: "Final" },
   ];
 
+  function resetLiveCodeViewer() {
+    state.liveCode = { current: null, history: [], autoOpened: false };
+    if (els.liveCodeBadge) {
+      els.liveCodeBadge.textContent = "aguardando";
+      els.liveCodeBadge.className = "live-code-badge";
+    }
+    if (els.liveCodePath) els.liveCodePath.textContent = "Nenhuma edição ainda";
+    if (els.liveCodeStats) els.liveCodeStats.textContent = "";
+    if (els.liveCodeBody) {
+      els.liveCodeBody.innerHTML =
+        "Quando o agente ler ou editar arquivos, o código aparece aqui linha a linha — como no ChatGPT.";
+    }
+    if (els.liveCodeTimeline) els.liveCodeTimeline.innerHTML = "";
+  }
+
+  function liveOpLabel(op, status) {
+    if (status === "error") return "erro";
+    const map = {
+      read: "lendo",
+      write: "escrevendo",
+      edit: "editando",
+      patch: "patch",
+      delete: "apagando",
+      search: "buscando",
+      list: "listando",
+      git: "git",
+      tool: "ferramenta",
+    };
+    return map[op] || op || "ação";
+  }
+
+  function renderLiveCodeLines(lines) {
+    if (!lines || !lines.length) {
+      return `<div class="live-code-line is-context"><span class="ln"></span><span class="mark"></span><span>Sem preview de código nesta etapa.</span></div>`;
+    }
+    return lines
+      .map((line) => {
+        const kind = line.kind || "context";
+        const mark = kind === "add" ? "+" : kind === "del" ? "−" : kind === "focus" ? "›" : kind === "hunk" ? "@" : " ";
+        return `<div class="live-code-line is-${escapeHtml(kind)}"><span class="ln">${escapeHtml(String(line.n ?? ""))}</span><span class="mark">${mark}</span><span>${escapeHtml(line.text || "")}</span></div>`;
+      })
+      .join("");
+  }
+
+  function renderLiveCodeTimeline() {
+    if (!els.liveCodeTimeline) return;
+    const items = (state.liveCode.history || []).slice().reverse().slice(0, 12);
+    els.liveCodeTimeline.innerHTML = items
+      .map((item) => {
+        const label = liveOpLabel(item.op, item.status);
+        return `<li><em>${escapeHtml(label)}</em><strong>${escapeHtml(item.path || item.tool || "—")}</strong><span>${escapeHtml(item.headline || "")}</span></li>`;
+      })
+      .join("");
+  }
+
+  function updateLiveCodeViewer(ev, activity) {
+    if (!ev || ev.type !== "file_op") return;
+    const current = {
+      op: ev.op || "tool",
+      tool: ev.tool || "",
+      path: ev.path || "",
+      status: ev.status || "start",
+      ok: ev.ok !== false,
+      language: ev.language || "text",
+      headline: ev.headline || "",
+      lines: Array.isArray(ev.lines) ? ev.lines : [],
+      stats: ev.stats || {},
+      error: ev.error || "",
+      at: Date.now(),
+    };
+    state.liveCode.current = current;
+    // Keep a history entry per start/done pair keyed by tool+path+status.
+    state.liveCode.history = [...(state.liveCode.history || []), current].slice(-40);
+
+    if (activity) {
+      activity.liveOp = current;
+      activity.liveOps = state.liveCode.history.slice(-8);
+    }
+
+    const badge = liveOpLabel(current.op, current.status);
+    if (els.liveCodeBadge) {
+      els.liveCodeBadge.textContent = badge;
+      els.liveCodeBadge.className = `live-code-badge is-${current.status === "error" ? "error" : current.op}`;
+    }
+    if (els.liveCodePath) {
+      els.liveCodePath.textContent = current.path || current.headline || current.tool || "operação";
+    }
+    if (els.liveCodeStats) {
+      const st = current.stats || {};
+      const bits = [];
+      if (st.added != null) bits.push(`+${st.added}`);
+      if (st.removed != null) bits.push(`−${st.removed}`);
+      if (st.total_lines != null) bits.push(`${st.total_lines} linhas`);
+      if (current.error) bits.push(current.error);
+      els.liveCodeStats.textContent = bits.join(" · ");
+    }
+    if (els.liveCodeBody) {
+      els.liveCodeBody.innerHTML = renderLiveCodeLines(current.lines);
+      const view = $("liveCodeView");
+      if (view) view.scrollTop = view.scrollHeight;
+    }
+    renderLiveCodeTimeline();
+
+    if (!state.liveCode.autoOpened && state.surfaceMode === "work") {
+      state.liveCode.autoOpened = true;
+      switchTab("live");
+    }
+  }
+
+  function renderActivityLiveMini(activity) {
+    const op = activity?.liveOp;
+    if (!op) return "";
+    const st = op.stats || {};
+    const stats = [
+      st.added != null ? `+${st.added}` : "",
+      st.removed != null ? `−${st.removed}` : "",
+      op.path || "",
+    ]
+      .filter(Boolean)
+      .join(" · ");
+    return `
+      <div class="activity-live-code">
+        <div class="live-mini-head">
+          <strong>${escapeHtml(op.headline || liveOpLabel(op.op, op.status))}</strong>
+          <span>${escapeHtml(stats)}</span>
+        </div>
+        <pre>${renderLiveCodeLines((op.lines || []).slice(0, 24))}</pre>
+      </div>`;
+  }
+
   function createRunActivity(prompt) {
     return {
       prompt,
@@ -2878,6 +3019,8 @@
       reflection: "",
       llmChars: 0,
       files: [],
+      liveOp: null,
+      liveOps: [],
       finished: false,
       events: [],
       timer: null,
@@ -3001,6 +3144,7 @@
         <div class="activity-current"><span>Últimas ferramentas</span>${escapeHtml(tools)}</div>
         ${files ? `<div class="activity-current"><span>Arquivos alterados</span>${escapeHtml(files)}</div>` : ""}
         ${activity.reflection ? `<div class="activity-current"><span>Leitura do agente</span>${escapeHtml(activity.reflection)}</div>` : ""}
+        ${renderActivityLiveMini(activity)}
         <ol class="activity-log">${recent}</ol>
       </div>
     `;
@@ -3542,6 +3686,7 @@
     }
     state.pendingPrompt = null;
     const displayPrompt = opts.displayPrompt || prompt;
+    resetLiveCodeViewer();
     addMessage(displayPrompt, "user");
     els.promptInput.value = "";
     updateChatHeroVisibility();
@@ -3817,15 +3962,41 @@
         updateActivity(activity, {
           phaseId: "think",
           stage: "Modelo gerando a próxima ação",
-          detail: "Aguardando o Ollama responder com as ferramentas que o agente deve usar.",
+          detail: "Aguardando o Ollama decidir o que ler ou editar no projeto.",
           llmChars: (activity.llmChars || 0) + (ev.text ? ev.text.length : 0),
         });
-        if (ev.text && agentEl) {
+        // Don't dump raw JSON tool-calls into the chat — the Ao vivo panel shows code instead.
+        break;
+      case "file_op": {
+        updateLiveCodeViewer(ev, activity);
+        const verb = liveOpLabel(ev.op, ev.status);
+        updateActivity(activity, {
+          phaseId: "work",
+          stage: ev.headline || `${verb} código`,
+          detail: ev.path
+            ? `${verb}: ${ev.path}${ev.error ? ` — ${ev.error}` : ""}`
+            : ev.headline || "Operação em arquivo",
+        });
+        if (agentEl) {
           clearThinkingState(agentEl);
-          state.llmPreviewChars = Math.min(state.llmPreviewChars + ev.text.length, 2000);
-          agentEl.textContent = (agentEl.textContent + ev.text).slice(-2000);
+          const st = ev.stats || {};
+          const bits = [
+            ev.headline || verb,
+            ev.path || "",
+            st.added != null ? `+${st.added}` : "",
+            st.removed != null ? `−${st.removed}` : "",
+          ].filter(Boolean);
+          agentEl.innerHTML = `<div class="live-inline-status"><strong>${escapeHtml(bits[0] || "Trabalhando no código")}</strong>${bits[1] ? `<span>${escapeHtml(bits.slice(1).join(" · "))}</span>` : ""}</div>`;
+        }
+        if (ev.path && (ev.op === "write" || ev.op === "edit" || ev.op === "patch") && ev.status === "done") {
+          markChangedFiles([ev.path]);
+          scheduleFileRefresh(activity);
+          if (isUiPath(ev.path)) {
+            window.setTimeout(() => updatePreview(/\.(html?)$/i.test(ev.path) ? ev.path : findPreviewPath()), 600);
+          }
         }
         break;
+      }
       case "tools_start":
         updateActivity(activity, {
           phaseId: "work",
@@ -4810,6 +4981,7 @@
     document.querySelectorAll(".panel-tab").forEach((tab) => {
       tab.classList.toggle("active", tab.dataset.tab === name);
     });
+    $("panelLive")?.classList.toggle("hidden", name !== "live");
     $("panelFiles").classList.toggle("hidden", name !== "files");
     $("panelPreview").classList.toggle("hidden", name !== "preview");
     $("panelReport").classList.toggle("hidden", name !== "report");

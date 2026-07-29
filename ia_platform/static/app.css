@@ -872,6 +872,202 @@ body.mode-execute-flash #modeSelect {
   box-shadow: var(--shadow-soft);
 }
 
+.activity-live-code {
+  margin-top: 4px;
+  border: 1px solid rgba(52, 81, 178, 0.18);
+  border-radius: 12px;
+  overflow: hidden;
+  background: #0f141c;
+  color: #e8eef8;
+}
+
+.activity-live-code .live-mini-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  padding: 8px 10px;
+  font-size: 0.72rem;
+  background: rgba(255, 255, 255, 0.04);
+  border-bottom: 1px solid rgba(255, 255, 255, 0.06);
+}
+
+.activity-live-code .live-mini-head strong {
+  color: #9ec1ff;
+  font-weight: 650;
+}
+
+.activity-live-code pre {
+  margin: 0;
+  max-height: 220px;
+  overflow: auto;
+  padding: 8px 0;
+  font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 0.72rem;
+  line-height: 1.45;
+}
+
+.live-code-shell {
+  display: flex;
+  flex-direction: column;
+  height: 100%;
+  min-height: 280px;
+  gap: 0;
+}
+
+.live-code-toolbar {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 10px;
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 88%, #1b2a4a);
+}
+
+.live-code-meta {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-width: 0;
+}
+
+.live-code-badge {
+  flex: 0 0 auto;
+  font-size: 0.68rem;
+  font-weight: 700;
+  letter-spacing: 0.04em;
+  text-transform: uppercase;
+  padding: 3px 7px;
+  border-radius: 999px;
+  background: rgba(52, 81, 178, 0.12);
+  color: var(--accent-2);
+}
+
+.live-code-badge.is-read { background: rgba(56, 189, 248, 0.14); color: #0284c7; }
+.live-code-badge.is-write,
+.live-code-badge.is-edit,
+.live-code-badge.is-patch { background: rgba(34, 197, 94, 0.14); color: #15803d; }
+.live-code-badge.is-delete { background: rgba(239, 68, 68, 0.14); color: #b91c1c; }
+.live-code-badge.is-error { background: rgba(239, 68, 68, 0.16); color: #b91c1c; }
+.live-code-badge.is-search { background: rgba(168, 85, 247, 0.12); color: #7e22ce; }
+
+.live-code-path {
+  font-size: 0.8rem;
+  font-weight: 600;
+  color: var(--ink);
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.live-code-stats {
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+
+.live-code-view {
+  margin: 0;
+  flex: 1;
+  min-height: 220px;
+  max-height: min(58vh, 560px);
+  overflow: auto;
+  background: #0f141c;
+  color: #d7e0ee;
+  padding: 10px 0;
+  font-family: "JetBrains Mono", "Cascadia Code", ui-monospace, monospace;
+  font-size: 0.78rem;
+  line-height: 1.5;
+}
+
+.live-code-view code {
+  display: block;
+}
+
+.live-code-line {
+  display: grid;
+  grid-template-columns: 44px 14px 1fr;
+  gap: 0;
+  padding: 0 10px 0 0;
+  white-space: pre-wrap;
+  word-break: break-word;
+}
+
+.live-code-line .ln {
+  color: #6b7a90;
+  text-align: right;
+  padding-right: 8px;
+  user-select: none;
+}
+
+.live-code-line .mark {
+  text-align: center;
+  user-select: none;
+}
+
+.live-code-line.is-add {
+  background: rgba(34, 197, 94, 0.14);
+}
+.live-code-line.is-add .mark { color: #4ade80; }
+.live-code-line.is-del {
+  background: rgba(239, 68, 68, 0.14);
+}
+.live-code-line.is-del .mark { color: #f87171; }
+.live-code-line.is-focus {
+  background: rgba(56, 189, 248, 0.1);
+}
+.live-code-line.is-focus .mark { color: #38bdf8; }
+.live-code-line.is-hunk {
+  color: #93c5fd;
+  background: rgba(59, 130, 246, 0.12);
+}
+.live-code-line.is-context .mark { color: transparent; }
+
+.live-code-timeline {
+  list-style: none;
+  margin: 0;
+  padding: 8px 10px;
+  border-top: 1px solid var(--border);
+  max-height: 140px;
+  overflow: auto;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+
+.live-code-timeline li {
+  display: flex;
+  gap: 8px;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+
+.live-code-timeline li strong {
+  color: var(--ink);
+  font-weight: 650;
+}
+
+.live-code-timeline li em {
+  font-style: normal;
+  color: var(--accent-2);
+}
+
+.live-inline-status {
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  font-size: 0.88rem;
+}
+
+.live-inline-status strong {
+  color: var(--ink);
+}
+
+.live-inline-status span {
+  color: var(--muted);
+  font-size: 0.78rem;
+}
+
 .agent-activity {
   display: flex;
   flex-direction: column;

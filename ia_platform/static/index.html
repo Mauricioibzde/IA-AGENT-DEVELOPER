@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=9" />
+  <link rel="stylesheet" href="/static/app.css?v=10" />
 </head>
 <body>
   <div class="app">
@@ -257,9 +257,23 @@
 
           <aside class="right-panel" id="rightPanel">
             <div class="panel-tabs" id="panelTabs">
+              <div class="panel-tab" data-tab="live">Ao vivo</div>
               <div class="panel-tab" data-tab="files">Arquivos</div>
               <div class="panel-tab active" data-tab="preview">Preview</div>
               <div class="panel-tab" data-tab="report">Relatório</div>
+            </div>
+            <div class="panel-content hidden" id="panelLive">
+              <div class="live-code-shell" id="liveCodeShell">
+                <div class="live-code-toolbar">
+                  <div class="live-code-meta">
+                    <span class="live-code-badge" id="liveCodeBadge">aguardando</span>
+                    <span class="live-code-path" id="liveCodePath">Nenhuma edição ainda</span>
+                  </div>
+                  <span class="live-code-stats" id="liveCodeStats"></span>
+                </div>
+                <pre class="live-code-view" id="liveCodeView" aria-live="polite"><code id="liveCodeBody">Quando o agente ler ou editar arquivos, o código aparece aqui linha a linha — como no ChatGPT.</code></pre>
+                <ul class="live-code-timeline" id="liveCodeTimeline"></ul>
+              </div>
             </div>
             <div class="panel-content hidden" id="panelFiles">
               <div class="file-search-row">
@@ -317,6 +331,7 @@
           </aside>
         </div>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Painéis do projeto">
+          <button type="button" class="mobile-tab" data-tab="live">Ao vivo</button>
           <button type="button" class="mobile-tab" data-tab="files">Arquivos</button>
           <button type="button" class="mobile-tab active" data-tab="preview">Preview</button>
           <button type="button" class="mobile-tab" data-tab="report">Relatório</button>
@@ -542,6 +557,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=9"></script>
+  <script src="/static/app.js?v=10"></script>
 </body>
 </html>

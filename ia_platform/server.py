@@ -1624,7 +1624,26 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
             def _sink(ev: Dict[str, Any]) -> None:
                 if isinstance(ev, dict):
-                    timeline.append({k: ev.get(k) for k in ("type", "status", "analysis", "tools", "summary", "message", "paths") if k in ev})
+                    timeline.append(
+                    {
+                        k: ev.get(k)
+                        for k in (
+                            "type",
+                            "status",
+                            "analysis",
+                            "tools",
+                            "summary",
+                            "message",
+                            "paths",
+                            "op",
+                            "tool",
+                            "path",
+                            "headline",
+                            "ok",
+                        )
+                        if k in ev
+                    }
+                )
                     run_manager.append_event(run_id, ev)
                 self._send_sse(ev)
 

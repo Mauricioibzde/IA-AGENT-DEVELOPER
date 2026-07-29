@@ -3,10 +3,11 @@
 from __future__ import annotations
 
 import time
-from typing import Any, Dict, List, Set, Tuple
+from typing import Any, Callable, Dict, List, Optional, Set, Tuple
 
 from .config import AgentConfig
 from .checkpoint import RunCheckpoint
+from .file_op_events import build_file_op_event
 from .logging_config import AgentLogger
 from .models import RiskLevel, ToolResult
 from .security import to_rel_path
@@ -23,6 +24,11 @@ READ_TOOLS = {"read_file", "read_file_range", "list_directory", "list_dir", "sea
               "search_files", "search_symbol", "search_relevant", "get_file_info", "validate_path",
               "git_status", "git_diff", "git_log", "git_show", "git_branch", "git_changed_files"}
 
+LIVE_TOOLS = MUTATING_TOOLS | READ_TOOLS | {
+    "run_command",
+    "final",
+}
+
 
 class Executor:
     def __init__(
@@ -31,17 +37,47 @@ class Executor:
         config: AgentConfig,
         logger: AgentLogger,
         checkpoint: RunCheckpoint | None = None,
+        event_sink: Optional[Callable[[Dict[str, Any]], None]] = None,
     ) -> None:
         self.registry = registry
         self.config = config
         self.logger = logger
         self.checkpoint = checkpoint
+        self.event_sink = event_sink
         self.modified_files: List[str] = []
         self.created_files: List[str] = []
         self.commands: List[str] = []
         self.read_files: Set[str] = set()
         self.step_diffs: List[str] = []
 
+    def _emit(self, payload: Dict[str, Any]) -> None:
+        if not self.event_sink:
+            return
+        try:
+            self.event_sink(payload)
+        except Exception:
+            pass
+
+    def _emit_file_op(
+        self,
+        tool: str,
+        args: Dict[str, Any],
+        status: str,
+        result: Optional[Dict[str, Any]] = None,
+        error: Optional[str] = None,
+    ) -> None:
+        if tool not in LIVE_TOOLS or tool == "final":
+            return
+        self._emit(
+            build_file_op_event(
+                workspace=self.config.workspace,
+                tool=tool,
+                args=args,
+                status=status,
+                result=result,
+                error=error,
+            )
+        )
     def _rel(self, path: str | None) -> str:
         return to_rel_path(self.config.workspace, path)
 
@@ -73,6 +109,9 @@ class Executor:
                 results.append({"tool": "final", "result": {"ok": True, "answer": answer}})
                 return results, True
 
+            call_args = args if isinstance(args, dict) else {}
+            self._emit_file_op(str(name), call_args, "start")
+
             tool = self.registry.get(name)
             if tool and tool.requires_confirmation:
                 risk = tool.risk_level
@@ -86,7 +125,9 @@ class Executor:
                         ),
                         data={"confirmation_required": True, "risk_level": risk.value},
                     )
-                    results.append({"tool": name, "result": result.to_dict()})
+                    payload = result.to_dict()
+                    self._emit_file_op(str(name), call_args, "error", payload, result.error)
+                    results.append({"tool": name, "result": payload})
                     continue
                 # HIGH always needs explicit confirmation — auto_approve_low_risk
                 # only covers LOW/MEDIUM (see CLI help).
@@ -99,7 +140,9 @@ class Executor:
                         ),
                         data={"confirmation_required": True, "risk_level": risk.value},
                     )
-                    results.append({"tool": name, "result": result.to_dict()})
+                    payload = result.to_dict()
+                    self._emit_file_op(str(name), call_args, "error", payload, result.error)
+                    results.append({"tool": name, "result": payload})
                     continue
                 if risk == RiskLevel.MEDIUM and not self.config.auto_approve_low_risk:
                     result = ToolResult(
@@ -110,18 +153,20 @@ class Executor:
                         ),
                         data={"confirmation_required": True, "risk_level": risk.value},
                     )
-                    results.append({"tool": name, "result": result.to_dict()})
+                    payload = result.to_dict()
+                    self._emit_file_op(str(name), call_args, "error", payload, result.error)
+                    results.append({"tool": name, "result": payload})
                     continue
 
             # Track reads for read-before-edit enforcement.
             if name in READ_TOOLS:
-                path = args.get("path") if isinstance(args, dict) else None
+                path = call_args.get("path")
                 if path:
                     self.read_files.add(self._rel(str(path)))
 
             # Enforce read-before-edit on existing files.
             if name in MUTATING_TOOLS:
-                path = args.get("path") if isinstance(args, dict) else None
+                path = call_args.get("path")
                 if path:
                     rel = self._rel(str(path))
                     abs_path = self.config.workspace / rel
@@ -131,11 +176,13 @@ class Executor:
                             ok=False,
                             error=f"Must read_file '{rel}' before editing. Read the file first, then retry.",
                         )
-                        results.append({"tool": name, "result": result.to_dict()})
+                        payload = result.to_dict()
+                        self._emit_file_op(str(name), call_args, "error", payload, result.error)
+                        results.append({"tool": name, "result": payload})
                         continue
 
             if name in MUTATING_TOOLS and not self.config.dry_run:
-                new_paths = self._mutation_new_paths(name, args if isinstance(args, dict) else {})
+                new_paths = self._mutation_new_paths(name, call_args)
                 already = set(self.modified_files + self.created_files)
                 projected = already | new_paths
                 if len(projected) > self.config.max_modified_files:
@@ -146,18 +193,20 @@ class Executor:
                             "Finish or validate current changes."
                         ),
                     )
-                    results.append({"tool": name, "result": result.to_dict()})
+                    payload = result.to_dict()
+                    self._emit_file_op(str(name), call_args, "error", payload, result.error)
+                    results.append({"tool": name, "result": payload})
                     continue
                 if self.checkpoint is not None:
                     # Snapshot every path this mutation may touch (including re-edits
                     # of already-counted files — first snapshot wins).
-                    for rel in self._mutation_all_paths(name, args if isinstance(args, dict) else {}):
+                    for rel in self._mutation_all_paths(name, call_args):
                         self.checkpoint.snapshot_before(rel)
 
             started = time.time()
             result = self.registry.execute(
                 name,
-                args if isinstance(args, dict) else {},
+                call_args,
                 workspace=str(self.config.workspace),
                 config=self.config,
             )
@@ -169,7 +218,7 @@ class Executor:
                 success=result.ok,
                 duration_ms=duration_ms,
             )
-            self._track(name, result, args if isinstance(args, dict) else {})
+            self._track(name, result, call_args)
 
             # Collect diff info for mutations.
             if name in MUTATING_TOOLS and result.ok and not result.dry_run:
@@ -177,9 +226,16 @@ class Executor:
                 if diff:
                     self.step_diffs.append(diff)
 
-            results.append({"tool": name, "result": result.to_dict()})
+            payload = result.to_dict()
+            self._emit_file_op(
+                str(name),
+                call_args,
+                "done" if result.ok else "error",
+                payload,
+                None if result.ok else result.error,
+            )
+            results.append({"tool": name, "result": payload})
         return results, False
-
     def had_writes_this_step(self, results: List[Dict[str, Any]]) -> bool:
         """Return True if any tool in results mutated the filesystem."""
         for r in results:
