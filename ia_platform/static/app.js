@@ -20,6 +20,8 @@
     models: [],
     modelRecommendations: null,
     recommendedModel: null,
+    activeModel: null,
+    activeModelLive: false,
     userSettings: null,
     profileMode: "detected",
     pullingModel: false,
@@ -159,6 +161,7 @@
     templateGrid: $("templateGrid"),
     modeSelect: $("modeSelect"),
     modelSelect: $("modelSelect"),
+    activeModelBadge: $("activeModelBadge"),
     modelCustomInput: $("modelCustomInput"),
     modelGroupInstalled: $("modelGroupInstalled"),
     modelGroupRecommended: $("modelGroupRecommended"),
@@ -627,6 +630,71 @@
     return resolveModelForRequest();
   }
 
+  function isAutoModelSelected() {
+    return !resolveModelForRequest();
+  }
+
+  function expectedAutoModel() {
+    const recommended = state.recommendedModel;
+    if (recommended && (state.models || []).includes(recommended) && modelFitsHardware(recommended)) {
+      return recommended;
+    }
+    return pickFittingInstalledModel(null) || recommended || null;
+  }
+
+  function updateActiveModelDisplay(model, opts = {}) {
+    const live = !!opts.live;
+    const source = opts.source || (isAutoModelSelected() ? "auto" : "manual");
+    const resolved = (model || "").trim() || null;
+    if (resolved) state.activeModel = resolved;
+    else if (!live) state.activeModel = expectedAutoModel();
+    state.activeModelLive = live && !!state.activeModel;
+
+    const shown = state.activeModel;
+    const auto = isAutoModelSelected() || source === "auto";
+
+    if (els.activeModelBadge) {
+      if (!shown) {
+        els.activeModelBadge.textContent = "Auto";
+        els.activeModelBadge.classList.remove("is-live", "is-manual");
+        els.activeModelBadge.title = "Auto: o Forge escolhe o modelo na hora da execução";
+      } else if (auto) {
+        els.activeModelBadge.textContent = live ? `Usando ${shown}` : `Auto → ${shown}`;
+        els.activeModelBadge.classList.toggle("is-live", live);
+        els.activeModelBadge.classList.remove("is-manual");
+        els.activeModelBadge.title = live
+          ? `Execução em andamento com ${shown}`
+          : `No modo Auto o Forge usará: ${shown}`;
+      } else {
+        els.activeModelBadge.textContent = live ? `Usando ${shown}` : shown;
+        els.activeModelBadge.classList.toggle("is-live", live);
+        els.activeModelBadge.classList.add("is-manual");
+        els.activeModelBadge.title = `Modelo selecionado: ${shown}`;
+      }
+    }
+
+    const topAuto = els.modelSelect?.querySelector('option[value="__auto__"]');
+    if (topAuto) {
+      topAuto.textContent = shown ? `Auto → ${shown}` : "Auto (recomendado)";
+    }
+    const composerAuto = els.composerModelSelect?.querySelector('option[value=""]');
+    if (composerAuto) {
+      composerAuto.textContent = shown ? `Auto · ${shown}` : "Auto";
+    }
+
+    if (els.healthStatus && state.ollamaOk) {
+      const modelLabel = auto
+        ? shown
+          ? ` · Auto → ${shown}`
+          : " · Auto"
+        : ` · ${shown || getSelectedModel() || "modelo"}`;
+      const liveMark = state.activeModelLive ? " ●" : "";
+      const serverOld = !state.platformVersion && !state.serverFeatures?.full_setup_stream;
+      const serverHint = serverOld ? ' · <span class="status-warn">backend v1</span>' : "";
+      els.healthStatus.innerHTML = `<span class="status-dot ok"></span>Ollama pronto${escapeHtml(modelLabel)}${liveMark}${serverHint}`;
+    }
+  }
+
   function topBarModelValue() {
     const value = els.modelSelect?.value || "__auto__";
     if (value === "__auto__") return null;
@@ -852,13 +920,21 @@
       setModelSelection(null);
     }
 
+    updateActiveModelDisplay(getSelectedModel() || expectedAutoModel(), {
+      source: isAutoModelSelected() ? "auto" : "manual",
+      live: !!state.activeModelLive,
+    });
+
     if (els.modelHint) {
       if (recommended && !isInstalled) {
         els.modelHint.textContent = `Recomendado: ${recommended} — clique em Modelos IA para baixar.`;
         els.modelHint.classList.remove("hidden");
       } else if (recommended) {
         const src = state.profileMode === "manual" ? "pelo perfil Meu PC" : "pelo hardware detectado";
-        els.modelHint.textContent = `Sugestão ${src}: ${recommended} — você pode escolher outro modelo livremente.`;
+        const autoNote = isAutoModelSelected()
+          ? ` Auto usará ${expectedAutoModel() || recommended} nesta máquina.`
+          : "";
+        els.modelHint.textContent = `Sugestão ${src}: ${recommended}.${autoNote}`;
         els.modelHint.classList.remove("hidden");
       } else {
         els.modelHint.classList.add("hidden");
@@ -1349,10 +1425,14 @@
       state.platformVersion = d.platform_version || null;
       updateModelOptions(state.models);
       applyRecommendedModel(d.recommended_model, state.models);
-      const modelLabel = getSelectedModel() ? ` · ${getSelectedModel()}` : " · auto";
-      const serverOld = !state.platformVersion && !state.serverFeatures?.full_setup_stream;
-      const serverHint = serverOld ? ' · <span class="status-warn">backend v1</span>' : "";
-      els.healthStatus.innerHTML = `<span class="status-dot ${state.ollamaOk ? "ok" : "err"}"></span>${state.ollamaOk ? "Ollama pronto" : "Ollama offline?"}${modelLabel}${serverHint}`;
+      if (!state.ollamaOk) {
+        els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline?';
+      } else {
+        updateActiveModelDisplay(getSelectedModel() || expectedAutoModel(), {
+          source: isAutoModelSelected() ? "auto" : "manual",
+          live: false,
+        });
+      }
       updateOllamaOfflineUI();
     } catch {
       state.ollamaOk = false;
@@ -3432,6 +3512,7 @@
       activity.files = Array.from(new Set([...(activity.files || []), ...changed])).slice(-12);
     }
     const cancelled = donePayload?.status === "CANCELLED";
+    const usedModel = donePayload?.model || activity.model || state.activeModel;
     updateActivity(activity, {
       finished: true,
       phaseId: "done",
@@ -3439,11 +3520,16 @@
       detail: cancelled
         ? "O agente parou a pedido do usuário."
         : changed.length
-          ? `Pronto. ${changed.length} arquivo(s) alterado(s).`
-          : "Pronto. Relatório final disponível abaixo.",
+          ? `Pronto. ${changed.length} arquivo(s) alterado(s).${usedModel ? ` Modelo: ${usedModel}.` : ""}`
+          : `Pronto. Relatório final disponível abaixo.${usedModel ? ` Modelo: ${usedModel}.` : ""}`,
       step: activity.maxSteps || activity.step,
+      model: usedModel || activity.model,
     });
     renderRunActivity(progressEl, activity);
+    updateActiveModelDisplay(usedModel || expectedAutoModel(), {
+      source: isAutoModelSelected() ? "auto" : "manual",
+      live: false,
+    });
   }
 
   async function cancelRun() {
@@ -3847,9 +3933,25 @@
           if (ev.type === "started" && ev.run_id) {
             state.runId = ev.run_id;
             if (els.btnCancel) els.btnCancel.disabled = false;
-            statusEl.textContent = `Chat · ${ev.model || "auto"} · ${elapsed}s`;
+            if (ev.model) {
+              updateActiveModelDisplay(ev.model, {
+                source: modelForRequest ? "manual" : "auto",
+                live: true,
+              });
+            }
+            const modelLabel = ev.model
+              ? modelForRequest
+                ? ev.model
+                : `Auto → ${ev.model}`
+              : "auto";
+            statusEl.textContent = `Chat · ${modelLabel} · ${elapsed}s`;
           } else if (ev.type === "chat_chunk" && ev.text) {
-            if (statusEl.isConnected) statusEl.textContent = `Chat · respondendo… ${elapsed}s`;
+            if (statusEl.isConnected) {
+              const live = state.activeModel
+                ? `${modelForRequest ? "" : "Auto → "}${state.activeModel}`
+                : "modelo";
+              statusEl.textContent = `Chat · ${live} · respondendo… ${elapsed}s`;
+            }
             clearThinkingState(agentEl);
             fullText += ev.text;
             agentEl.textContent = fullText;
@@ -3936,6 +4038,10 @@
         els.btnCancel?.classList.add("hidden");
       }
       if (els.btnCancel) els.btnCancel.disabled = false;
+      updateActiveModelDisplay(state.activeModel || expectedAutoModel(), {
+        source: isAutoModelSelected() ? "auto" : "manual",
+        live: false,
+      });
       updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
@@ -4179,16 +4285,35 @@
           state.runId = ev.run_id;
           if (els.btnCancel) els.btnCancel.disabled = false;
         }
+        if (ev.model) {
+          activity.model = ev.model;
+          updateActiveModelDisplay(ev.model, {
+            source: ev.model_mode === "manual" ? "manual" : "auto",
+            live: true,
+          });
+          addActivityEvent(
+            activity,
+            "Modelo",
+            ev.model_mode === "auto" || isAutoModelSelected()
+              ? `Auto escolheu ${ev.model}`
+              : `Usando ${ev.model}`
+          );
+        }
         updateActivity(activity, {
           runId: ev.run_id || activity.runId,
           phaseId: "prepare",
-          stage: "Agente iniciado",
-          detail: `Run ${ev.run_id || ""} aberto. Preparando leitura do projeto e contexto da conversa.`.trim(),
+          stage: ev.model ? `Agente iniciado · ${ev.model}` : "Agente iniciado",
+          detail: ev.model
+            ? `Modelo em uso: ${ev.model}${ev.model_mode === "auto" ? " (Auto)" : ""}. Preparando leitura do projeto.`
+            : `Run ${ev.run_id || ""} aberto. Preparando leitura do projeto e contexto da conversa.`.trim(),
+          model: ev.model || activity.model,
         });
         setWorkingState(
           agentEl,
-          "Agente iniciado",
-          "Preparando leitura do projeto…",
+          ev.model ? `Agente iniciado · ${ev.model}` : "Agente iniciado",
+          ev.model
+            ? `${ev.model_mode === "auto" ? "Auto → " : ""}${ev.model}`
+            : "Preparando leitura do projeto…",
           activity
         );
         break;
@@ -4203,6 +4328,7 @@
       case "model_fallback": {
         const fromModel = ev.from_model || "modelo grande";
         const toModel = ev.to_model || "modelo menor";
+        const wasAuto = isAutoModelSelected();
         updateActivity(activity, {
           phaseId: "prepare",
           stage: "Trocando modelo",
@@ -4221,8 +4347,15 @@
           7000
         );
         if (toModel) {
-          setModelSelection(toModel);
-          rememberModelPreference(toModel);
+          // Keep Auto selected when the user chose Auto; only show the live model.
+          if (!wasAuto) {
+            setModelSelection(toModel);
+            rememberModelPreference(toModel);
+          } else {
+            rememberModelPreference(null);
+            setModelSelection(null);
+          }
+          updateActiveModelDisplay(toModel, { source: wasAuto ? "auto" : "manual", live: true });
         }
         break;
       }
@@ -5444,9 +5577,17 @@
     const selected = resolveModelForRequest();
     rememberModelPreference(selected);
     if (!selected) {
-      showToast("Modelo: Auto (escolhe conforme o perfil de hardware)", "ok");
+      const expected = expectedAutoModel();
+      updateActiveModelDisplay(expected, { source: "auto", live: false });
+      showToast(
+        expected
+          ? `Modelo: Auto → <strong>${escapeHtml(expected)}</strong>`
+          : "Modelo: Auto (escolhe conforme o hardware)",
+        "ok"
+      );
       return;
     }
+    updateActiveModelDisplay(selected, { source: "manual", live: false });
     if (!modelFitsHardware(selected)) {
       warnIfModelTooLarge(selected);
       return;
@@ -5509,11 +5650,19 @@
     if (!val) {
       setModelSelection(null);
       rememberModelPreference(null);
-      showToast("Modelo: Auto (escolhe conforme o perfil de hardware)", "ok");
+      const expected = expectedAutoModel();
+      updateActiveModelDisplay(expected, { source: "auto", live: false });
+      showToast(
+        expected
+          ? `Modelo: Auto → <strong>${escapeHtml(expected)}</strong>`
+          : "Modelo: Auto (escolhe conforme o hardware)",
+        "ok"
+      );
       return;
     }
     setModelSelection(val);
     rememberModelPreference(val);
+    updateActiveModelDisplay(val, { source: "manual", live: false });
     if (!modelFitsHardware(val)) {
       warnIfModelTooLarge(val);
       return;

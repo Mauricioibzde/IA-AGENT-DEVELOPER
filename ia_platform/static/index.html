@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=14" />
+  <link rel="stylesheet" href="/static/app.css?v=15" />
 </head>
 <body>
   <div class="app">
@@ -174,6 +174,7 @@
               <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
               <option value="__custom__">Outro...</option>
             </select>
+            <span class="active-model-badge" id="activeModelBadge" title="Modelo que o Forge vai usar (ou está usando agora)">Auto</span>
             <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
             <div class="steps-control" title="Max steps">
               <span class="steps-icon" aria-hidden="true">✦</span>
@@ -557,6 +558,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=14"></script>
+  <script src="/static/app.js?v=15"></script>
 </body>
 </html>

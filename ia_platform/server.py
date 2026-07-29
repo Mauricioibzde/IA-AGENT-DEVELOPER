@@ -1612,7 +1612,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return
 
         run_manager.set_goal(run_id, prompt)
-        started = {"type": "started", "run_id": run_id, "goal": prompt}
+        requested_model = str(data.get("model") or "").strip()
+        started = {
+            "type": "started",
+            "run_id": run_id,
+            "goal": prompt,
+            "model": models.get("coder"),
+            "planner_model": models.get("planner"),
+            "reflection_model": models.get("reflection"),
+            "model_mode": "manual" if requested_model else "auto",
+        }
         run_manager.append_event(run_id, started)
         self._send_sse(started)
         try:
@@ -1652,7 +1661,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
             run_goal = enrich_goal_with_conversation(prompt, conversation or "")
             report = agent.run(run_goal, conversation_context=conversation)
             result = self._finalize_run(workspace, project_id, report, run_id=run_id, events=timeline)
-            done_ev = {"type": "done", **result}
+            used_model = (
+                getattr(getattr(agent, "client", None), "active_model", None)
+                or config.coder_model
+                or models.get("coder")
+            )
+            done_ev = {
+                "type": "done",
+                **result,
+                "model": used_model,
+                "model_mode": "manual" if requested_model else "auto",
+            }
             run_manager.append_event(run_id, done_ev)
             self._send_sse(done_ev)
         except Exception as exc:
