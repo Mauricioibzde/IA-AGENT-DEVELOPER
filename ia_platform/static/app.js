@@ -20,6 +20,8 @@
     models: [],
     modelRecommendations: null,
     recommendedModel: null,
+    autoModel: null,
+    suggestedDownload: null,
     activeModel: null,
     activeModelLive: false,
     userSettings: null,
@@ -635,11 +637,19 @@
   }
 
   function expectedAutoModel() {
+    if (state.autoModel && (state.models || []).includes(state.autoModel)) {
+      return state.autoModel;
+    }
     const recommended = state.recommendedModel;
-    if (recommended && (state.models || []).includes(recommended) && modelFitsHardware(recommended)) {
+    if (recommended && (state.models || []).includes(recommended)) {
       return recommended;
     }
-    return pickFittingInstalledModel(null) || recommended || null;
+    // Never advertise a model that is not installed.
+    return (
+      pickFittingInstalledModel(null) ||
+      (state.models || []).find((name) => !/embed/i.test(name) && !/-base$/i.test(name)) ||
+      null
+    );
   }
 
   function updateActiveModelDisplay(model, opts = {}) {
@@ -926,15 +936,21 @@
     });
 
     if (els.modelHint) {
-      if (recommended && !isInstalled) {
+      const autoName = expectedAutoModel();
+      const download = state.suggestedDownload;
+      if (autoName && isAutoModelSelected()) {
+        const extra =
+          download && download !== autoName
+            ? ` Opcional baixar: ${download}.`
+            : "";
+        els.modelHint.textContent = `Auto usará ${autoName} agora.${extra}`;
+        els.modelHint.classList.remove("hidden");
+      } else if (recommended && !isInstalled) {
         els.modelHint.textContent = `Recomendado: ${recommended} — clique em Modelos IA para baixar.`;
         els.modelHint.classList.remove("hidden");
       } else if (recommended) {
         const src = state.profileMode === "manual" ? "pelo perfil Meu PC" : "pelo hardware detectado";
-        const autoNote = isAutoModelSelected()
-          ? ` Auto usará ${expectedAutoModel() || recommended} nesta máquina.`
-          : "";
-        els.modelHint.textContent = `Sugestão ${src}: ${recommended}.${autoNote}`;
+        els.modelHint.textContent = `Sugestão ${src}: ${recommended}.`;
         els.modelHint.classList.remove("hidden");
       } else {
         els.modelHint.classList.add("hidden");
@@ -1423,8 +1439,10 @@
       state.ollamaOk = !!(d.ollama && d.agent);
       state.serverFeatures = d.features || null;
       state.platformVersion = d.platform_version || null;
+      state.autoModel = d.auto_model || null;
+      state.suggestedDownload = d.suggested_download || null;
       updateModelOptions(state.models);
-      applyRecommendedModel(d.recommended_model, state.models);
+      applyRecommendedModel(d.recommended_model || d.auto_model, state.models);
       if (!state.ollamaOk) {
         els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline?';
       } else {
@@ -4020,11 +4038,20 @@
           removeMessage(statusEl);
           return sendChatPrompt(prompt, { model: fallback || "", oomRetried: true });
         }
-        agentEl.textContent = isNetwork
-          ? "Erro de conexão com o servidor. Reinicie a plataforma e tente de novo."
-          : /404|n[aã]o encontrado|model.*not found/i.test(raw)
-            ? "Modelo indisponível no Ollama. Mude para Auto (recomendado) ou outro modelo instalado e tente de novo."
-            : "Erro: " + raw;
+        if (isNetwork) {
+          // Often Ollama/host ran out of free RAM mid-stream — not a "wrong URL".
+          const live = expectedAutoModel() || state.activeModel || "o modelo atual";
+          agentEl.textContent =
+            `Conexão interrompida durante o chat (comum com pouca memória livre). ` +
+            `Confirme Auto → ${live}, feche outros apps pesados e tente de novo. ` +
+            `Se continuar, reinicie a plataforma.`;
+          showToast("Chat interrompido — tente de novo com Auto no modelo instalado.", "err", 7000);
+        } else if (/404|n[aã]o encontrado|model.*not found/i.test(raw)) {
+          agentEl.textContent =
+            "Modelo indisponível no Ollama. Mude para Auto (recomendado) ou outro modelo instalado e tente de novo.";
+        } else {
+          agentEl.textContent = "Erro: " + raw;
+        }
         agentEl.classList.add("error");
         await persistMessage("agent", agentEl.textContent).catch(() => {});
       }

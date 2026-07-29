@@ -217,6 +217,23 @@ def test_resolve_explicit_oversized_model_downgrades() -> None:
     assert resolve_model_for_run("qwen2.5-coder:32b", installed, hw) == "deepseek-coder:6.7b"
 
 
+def test_recommend_setup_prefers_installed_over_missing_download() -> None:
+    hw = {
+        "tier": "minimal",
+        "effective_memory_gb": 3.5,
+        "ram_total_gb": 16,
+        "ram_available_gb": 3.5,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert recommend_setup_model(hw, installed) == "deepseek-coder:6.7b"
+    assert resolve_model_for_run(None, installed, hw) == "deepseek-coder:6.7b"
+
+
 def test_resolve_explicit_smaller_model_never_upgrades() -> None:
     hw = {
         "tier": "minimal",

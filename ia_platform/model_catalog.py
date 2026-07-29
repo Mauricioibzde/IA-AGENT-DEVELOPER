@@ -485,12 +485,30 @@ def recommend_setup_model(
         if name and name in installed and _name_fits_hardware(name, hardware):
             return name
 
+    # Prefer an already-installed model (even if tight on RAM) before asking
+    # the user to download another one. Auto/runtime already pick among installed.
+    if oversized_installed:
+        oversized_installed.sort(key=lambda item: item[0])
+        return oversized_installed[0][1]
+
+    exact_installed = [
+        entry
+        for entry in MODEL_CATALOG
+        if entry.ollama_name in installed and "coder" in entry.tags
+    ]
+    if exact_installed:
+        exact_installed.sort(key=lambda entry: (TIER_ORDER.get(entry.tier, 2), entry.size_gb))
+        return exact_installed[0].ollama_name
+
+    if installed:
+        return resolve_model_for_run(None, installed, hardware)
+
     has_gpu = bool(hardware.get("has_gpu") or hardware.get("gpus"))
 
     if has_gpu:
         return recommend_models(hardware, installed)["primary"]["ollama_name"]
 
-    # CPU-only: prefer smaller coder models that fit RAM
+    # No models installed yet: suggest the smallest coder that fits to download.
     candidates: List[tuple[float, ModelEntry]] = []
     for entry in MODEL_CATALOG:
         if "coder" not in entry.tags:
@@ -508,20 +526,6 @@ def recommend_setup_model(
     if candidates:
         candidates.sort(key=lambda item: item[0], reverse=True)
         return candidates[0][1].ollama_name
-
-    # Nothing fits to download: fall back to smallest oversized install.
-    if oversized_installed:
-        oversized_installed.sort(key=lambda item: item[0])
-        return oversized_installed[0][1]
-
-    exact_installed = [
-        entry
-        for entry in MODEL_CATALOG
-        if entry.ollama_name in installed and "coder" in entry.tags
-    ]
-    if exact_installed:
-        exact_installed.sort(key=lambda entry: (TIER_ORDER.get(entry.tier, 2), entry.size_gb))
-        return exact_installed[0].ollama_name
 
     fallback = recommend_models(hardware, installed)["primary"]["ollama_name"]
     return _installed_model_name(fallback, installed) or fallback

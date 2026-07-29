@@ -235,7 +235,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_hardware(qs)
         if path == "/api/settings":
             return self._handle_get_settings()
-        if path == "/api/models/recommendations":
+        if path in {"/api/models/recommendations", "/api/models/recommend"}:
             return self._handle_model_recommendations(qs)
         if path == "/api/models/installed":
             return self._handle_models_installed()
@@ -598,9 +598,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
         ollama_ok = client.check_available(timeout=2)
         models = client.list_models() if ollama_ok else []
         recommended_name = None
+        auto_model = None
+        suggested_download = None
         if ollama_ok:
             hw = _recommendation_hardware()
-            recommended_name = recommend_setup_model(hw, models)
+            # What Auto will actually use right now (always prefers installed).
+            auto_model = resolve_model_for_run(None, models, hw) if models else None
+            recommended_name = auto_model or recommend_setup_model(hw, models)
+            setup_pick = recommend_setup_model(hw, models)
+            if setup_pick and setup_pick not in models:
+                suggested_download = setup_pick
         self._send_json(
             200,
             {
@@ -609,6 +616,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "ollama": ollama_ok,
                 "models": models[:20],
                 "recommended_model": recommended_name,
+                "auto_model": auto_model,
+                "suggested_download": suggested_download,
                 "projects_root": str(PROJECTS_ROOT),
                 "platform_version": PLATFORM_VERSION,
                 "npm_available": shutil.which("npm") is not None,
@@ -1405,7 +1414,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         cancelled = run_manager.cancel(run_id, force=force)
         return self._send_json(200, {"ok": True, "cancelled": cancelled, "run_id": run_id, "force": force})
 
-    def _chat_history_for_ollama(self, workspace: Path, limit: int = 16) -> list:
+    def _chat_history_for_ollama(self, workspace: Path, limit: int = 8) -> list:
+        """Keep chat context short — long histories + large models often drop the connection."""
         messages = load_messages(workspace)
         if messages and messages[-1].get("role") == "user":
             messages = messages[:-1]
@@ -1416,9 +1426,9 @@ class PlatformHandler(BaseHTTPRequestHandler):
             if not text:
                 continue
             if role == "user":
-                history.append({"role": "user", "content": text[:4000]})
+                history.append({"role": "user", "content": text[:1800]})
             elif role == "agent":
-                history.append({"role": "assistant", "content": text[:4000]})
+                history.append({"role": "assistant", "content": text[:1800]})
         return history
 
     def _handle_chat_stream(self) -> None:
