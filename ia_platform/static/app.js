@@ -22,11 +22,19 @@
     previewMode: "static",
     deploying: false,
     mobilePanelOpen: false,
+    runs: [],
+    selectedRunId: null,
+    fileSearchTimer: null,
   };
 
   const $ = (id) => document.getElementById(id);
 
   const els = {
+    sidebar: $("sidebar"),
+    sidebarBackdrop: $("sidebarBackdrop"),
+    btnToggleSidebar: $("btnToggleSidebar"),
+    fileSearchInput: $("fileSearchInput"),
+    runHistoryList: $("runHistoryList"),
     projectList: $("projectList"),
     emptyView: $("emptyView"),
     workspaceView: $("workspaceView"),
@@ -395,7 +403,10 @@
       item.className = "project-item" + (state.current?.id === p.id ? " active" : "");
       item.dataset.id = p.id;
       item.innerHTML = `<div class="name">${escapeHtml(p.name)}</div><div class="meta">${p.files} arquivos · ${formatDate(p.updated)}</div>`;
-      item.addEventListener("click", () => selectProject(p.id));
+      item.addEventListener("click", () => {
+        selectProject(p.id);
+        closeSidebar();
+      });
       els.projectList.appendChild(item);
     });
   }
@@ -421,6 +432,8 @@
     if (!project) return;
     state.current = project;
     state.selectedFile = null;
+    state.selectedRunId = null;
+    state.lastReport = "";
     state.previewMode = "static";
     els.previewMode.value = "static";
     els.fileViewer.classList.add("hidden");
@@ -429,7 +442,9 @@
     els.emptyView.classList.add("hidden");
     els.workspaceView.classList.remove("hidden");
     renderProjectList();
+    closeSidebar();
     await loadChat();
+    await loadRunHistory();
     await loadFiles();
     await refreshDevStatus();
     updatePreview();
@@ -495,6 +510,113 @@
 
   function isMobileLayout() {
     return window.matchMedia("(max-width: 900px)").matches;
+  }
+
+  function openSidebar() {
+    els.sidebar?.classList.add("sidebar-open");
+    els.sidebarBackdrop?.classList.remove("hidden");
+  }
+
+  function closeSidebar() {
+    els.sidebar?.classList.remove("sidebar-open");
+    els.sidebarBackdrop?.classList.add("hidden");
+  }
+
+  function syncSidebarToggle() {
+    const show = isMobileLayout();
+    els.btnToggleSidebar?.classList.toggle("hidden", !show);
+    if (!show) closeSidebar();
+  }
+
+  function runStatusClass(status) {
+    if (!status) return "";
+    if (status === "SUCCESS") return "ok";
+    if (status === "CANCELLED" || status === "PARTIAL_SUCCESS") return "warn";
+    return "err";
+  }
+
+  function formatRunTime(ts) {
+    if (!ts) return "";
+    return new Date(ts * 1000).toLocaleString("pt-BR", {
+      day: "2-digit",
+      month: "short",
+      hour: "2-digit",
+      minute: "2-digit",
+    });
+  }
+
+  function renderRunHistory() {
+    if (!els.runHistoryList) return;
+    const runs = state.runs || [];
+    if (!runs.length) {
+      els.runHistoryList.innerHTML = '<li class="run-empty">Nenhuma execução registrada.</li>';
+      return;
+    }
+    els.runHistoryList.innerHTML = runs
+      .map((run) => {
+        const active = run.id === state.selectedRunId ? " active" : "";
+        const goal = escapeHtml((run.goal || run.summary || "Execução").slice(0, 80));
+        const status = escapeHtml(run.status || "?");
+        const cls = runStatusClass(run.status);
+        return `<li data-run-id="${escapeHtml(run.id)}" class="${active.trim()}">
+          <div class="run-status ${cls}">${status}</div>
+          <div>${goal}</div>
+          <div class="run-meta">${formatRunTime(run.ts)}</div>
+        </li>`;
+      })
+      .join("");
+    els.runHistoryList.querySelectorAll("[data-run-id]").forEach((item) => {
+      item.addEventListener("click", () => selectRun(item.dataset.runId));
+    });
+  }
+
+  function selectRun(runId) {
+    const run = (state.runs || []).find((r) => r.id === runId);
+    if (!run) return;
+    state.selectedRunId = runId;
+    state.lastReport = run.report || run.summary || "";
+    setMessageContent(els.reportViewer, state.lastReport, "agent");
+    renderRunHistory();
+    switchTab("report");
+  }
+
+  async function loadRunHistory() {
+    if (!state.current) return;
+    try {
+      const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/runs`);
+      state.runs = d.runs || [];
+      renderRunHistory();
+      if (state.runs.length) {
+        state.selectedRunId = state.runs[0].id;
+        const selected = state.runs[0];
+        state.lastReport = selected.report || selected.summary || "";
+        setMessageContent(els.reportViewer, state.lastReport, "agent");
+        renderRunHistory();
+      }
+    } catch {
+      state.runs = [];
+      renderRunHistory();
+    }
+  }
+
+  async function searchProjectFiles(query) {
+    if (!state.current || !query.trim()) {
+      await loadFiles();
+      return;
+    }
+    try {
+      const d = await api(
+        `/api/projects/${encodeURIComponent(state.current.id)}/search?q=${encodeURIComponent(query.trim())}`
+      );
+      state.files = (d.matches || []).map((m) => ({
+        path: m.path,
+        name: m.path.split("/").pop(),
+        type: "file",
+      }));
+      renderFileTree();
+    } catch (e) {
+      els.fileTree.innerHTML = `<li class="file-error">${escapeHtml(e.message)}</li>`;
+    }
   }
 
   function openMobilePanel() {
@@ -660,6 +782,7 @@
         }
         await loadProjects();
         await loadFiles();
+        await loadRunHistory();
         await refreshDevStatus();
         updatePreview();
         switchTab("report");
@@ -1043,6 +1166,19 @@
   els.mobileBackdrop?.addEventListener("click", closeMobilePanel);
   window.addEventListener("resize", () => {
     if (!isMobileLayout()) closeMobilePanel();
+    syncSidebarToggle();
+  });
+
+  els.btnToggleSidebar?.addEventListener("click", () => {
+    if (els.sidebar?.classList.contains("sidebar-open")) closeSidebar();
+    else openSidebar();
+  });
+  els.sidebarBackdrop?.addEventListener("click", closeSidebar);
+
+  els.fileSearchInput?.addEventListener("input", () => {
+    clearTimeout(state.fileSearchTimer);
+    const q = els.fileSearchInput.value;
+    state.fileSearchTimer = setTimeout(() => searchProjectFiles(q), 250);
   });
 
   els.btnClearChat?.addEventListener("click", clearChat);
@@ -1118,6 +1254,7 @@
   // ── Init ──
 
   async function init() {
+    syncSidebarToggle();
     checkHealth();
     setInterval(checkHealth, 15000);
     try {

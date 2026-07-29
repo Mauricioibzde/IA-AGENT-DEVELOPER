@@ -132,6 +132,54 @@ class ProjectIndex:
     def find_by_symbol(self, symbol: str) -> List[ProjectFile]:
         return [f for f in self.files if symbol in f.symbols]
 
+    def search_relevant(self, query: str, limit: int = 8) -> List[ProjectFile]:
+        """Keyword search over paths, symbols, and imports (RAG-lite, no embeddings)."""
+        tokens = [t for t in re.split(r"\W+", query.lower()) if len(t) >= 3]
+        if not tokens:
+            return []
+
+        scored: List[tuple[int, ProjectFile]] = []
+        for item in self.files:
+            score = 0
+            path_lower = item.path.lower()
+            name_lower = path_lower.rsplit("/", 1)[-1]
+            for token in tokens:
+                if token in name_lower:
+                    score += 4
+                elif token in path_lower:
+                    score += 3
+                if any(token in sym.lower() for sym in item.symbols[:12]):
+                    score += 2
+                if any(token in imp.lower() for imp in item.imports[:12]):
+                    score += 1
+                if item.is_config and token in path_lower:
+                    score += 2
+            if score > 0:
+                scored.append((score, item))
+
+        scored.sort(key=lambda pair: (-pair[0], pair[1].path))
+        seen: set[str] = set()
+        results: List[ProjectFile] = []
+        for _, item in scored:
+            if item.path in seen:
+                continue
+            seen.add(item.path)
+            results.append(item)
+            if len(results) >= limit:
+                break
+        return results
+
+    def relevant_summary(self, query: str, limit: int = 8) -> str:
+        matches = self.search_relevant(query, limit=limit)
+        if not matches:
+            return ""
+        lines = ["Arquivos relevantes para o objetivo:"]
+        for item in matches:
+            syms = ", ".join(item.symbols[:4])
+            extra = f" — símbolos: {syms}" if syms else ""
+            lines.append(f"- {item.path} [{item.language or '?'}]{extra}")
+        return "\n".join(lines)
+
     def _detect_commands(self) -> None:
         pkg = self.workspace / "package.json"
         if pkg.exists():

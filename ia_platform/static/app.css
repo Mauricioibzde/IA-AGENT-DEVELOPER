@@ -651,8 +651,95 @@ body {
   margin-top: 20px;
 }
 
+.btn-icon {
+  min-width: 2rem;
+  padding: 6px 10px;
+  font-size: 1rem;
+  line-height: 1;
+}
+
+.sidebar-backdrop {
+  position: fixed;
+  inset: 0;
+  background: rgba(0, 0, 0, 0.5);
+  z-index: 45;
+}
+
+.file-search-row {
+  padding: 8px 10px 4px;
+  border-bottom: 1px solid var(--border);
+}
+.file-search-row input {
+  width: 100%;
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.8rem;
+}
+
+.run-history {
+  padding: 10px 12px;
+  border-bottom: 1px solid var(--border);
+  max-height: 140px;
+  overflow-y: auto;
+}
+.run-history h4 {
+  font-size: 0.75rem;
+  color: var(--muted);
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  margin-bottom: 8px;
+}
+.run-history-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+}
+.run-history-list li {
+  font-size: 0.78rem;
+  padding: 6px 8px;
+  border-radius: 6px;
+  border: 1px solid var(--border);
+  cursor: pointer;
+  background: var(--surface-2);
+}
+.run-history-list li:hover,
+.run-history-list li.active { border-color: var(--accent); }
+.run-history-list .run-meta {
+  color: var(--muted);
+  font-size: 0.7rem;
+  margin-top: 2px;
+}
+.run-history-list .run-status.ok { color: var(--ok); }
+.run-history-list .run-status.err { color: var(--err); }
+.run-history-list .run-status.warn { color: var(--warn); }
+
+#panelReport {
+  display: flex;
+  flex-direction: column;
+  min-height: 0;
+}
+#panelReport .report-viewer {
+  flex: 1;
+  overflow: auto;
+}
+
 @media (max-width: 900px) {
-  .sidebar { width: 200px; }
+  .sidebar-toggle { display: inline-flex !important; }
+  .sidebar {
+    position: fixed;
+    left: 0;
+    top: 0;
+    bottom: 0;
+    z-index: 50;
+    transform: translateX(-100%);
+    transition: transform 0.22s ease;
+    box-shadow: 8px 0 32px rgba(0, 0, 0, 0.35);
+  }
+  .sidebar.sidebar-open { transform: translateX(0); }
   .workspace-body { grid-template-columns: 1fr; }
   .mobile-tabs { display: flex; }
   .right-panel {

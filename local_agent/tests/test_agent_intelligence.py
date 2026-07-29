@@ -72,6 +72,16 @@ def test_planner_skips_compileall_for_react_only(tmp_path: Path) -> None:
     assert "npm" in joined or "vite" in joined or not cmds
 
 
+def test_project_index_search_relevant(tmp_path: Path) -> None:
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "AuthService.py").write_text("class AuthService:\n    pass\n", encoding="utf-8")
+    (tmp_path / "README.md").write_text("# docs\n", encoding="utf-8")
+    index = ProjectIndex(tmp_path)
+    index.build()
+    matches = index.search_relevant("update auth service login", limit=5)
+    assert any("AuthService.py" in f.path for f in matches)
+
+
 def test_context_invalidate_refreshes_cache(tmp_path: Path) -> None:
     target = tmp_path / "app.py"
     target.write_text("v1\n", encoding="utf-8")

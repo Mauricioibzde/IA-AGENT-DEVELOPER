@@ -8,7 +8,7 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar">
+    <aside class="sidebar" id="sidebar">
       <div class="sidebar-header">
         <div class="logo">Forge <span>AI</span></div>
       </div>
@@ -22,6 +22,7 @@
         <p class="model-hint hidden" id="modelHint"></p>
       </div>
     </aside>
+    <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
     <div class="main">
       <!-- Empty state (no project selected) -->
@@ -55,6 +56,7 @@
       <!-- Workspace (project selected) -->
       <section class="view-workspace hidden" id="workspaceView">
         <header class="topbar">
+          <button type="button" class="btn btn-ghost btn-icon sidebar-toggle hidden" id="btnToggleSidebar" title="Projetos">☰</button>
           <h2 id="projectTitle">Projeto</h2>
           <div class="topbar-controls">
             <select id="modeSelect" title="Modo de execução">
@@ -93,6 +95,9 @@
               <div class="panel-tab" data-tab="report">Relatório</div>
             </div>
             <div class="panel-content" id="panelFiles">
+              <div class="file-search-row">
+                <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
+              </div>
               <ul class="file-tree" id="fileTree"></ul>
               <pre class="file-viewer hidden" id="fileViewer"></pre>
             </div>
@@ -111,6 +116,10 @@
               <p class="preview-hint" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
             </div>
             <div class="panel-content hidden" id="panelReport">
+              <div class="run-history" id="runHistory">
+                <h4>Histórico de execuções</h4>
+                <ul class="run-history-list" id="runHistoryList"></ul>
+              </div>
               <div class="file-viewer report-viewer" id="reportViewer">Nenhuma execução ainda.</div>
             </div>
           </aside>

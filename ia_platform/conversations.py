@@ -81,9 +81,12 @@ def format_conversation_context(messages: List[Dict[str, Any]], limit: int = 10)
         if not text:
             continue
         if role == "user":
-            lines.append(f"Usuário: {text[:800]}")
+            lines.append(f"Usuário: {text[:1200]}")
         elif role == "agent":
-            lines.append(f"Agente: {text[:500]}")
+            meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
+            status = meta.get("status")
+            prefix = f"Agente ({status}): " if status else "Agente: "
+            lines.append(f"{prefix}{text[:800]}")
         else:
-            lines.append(f"Sistema: {text[:300]}")
+            lines.append(f"Sistema: {text[:400]}")
     return "\n".join(lines)

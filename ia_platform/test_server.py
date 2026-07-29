@@ -299,6 +299,36 @@ def test_run_stream_rejects_busy_workspace(platform_url: str, tmp_path: Path, mo
         run_manager.clear(run_id)
 
 
+def test_project_search_endpoint(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "search-demo"
+    project_dir.mkdir(parents=True)
+    (project_dir / "dashboard.py").write_text("def render_dashboard():\n    pass\n", encoding="utf-8")
+
+    with urllib.request.urlopen(
+        f"{platform_url}/api/projects/search-demo/search?q=dashboard",
+        timeout=5,
+    ) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["query"] == "dashboard"
+    assert any("dashboard.py" in m["path"] for m in data["matches"])
+
+
+def test_runs_endpoint(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "runs-demo"
+    project_dir.mkdir(parents=True)
+
+    from ia_platform.run_history import record_run
+
+    record_run(project_dir, goal="test goal", status="SUCCESS", report="ok report")
+
+    with urllib.request.urlopen(f"{platform_url}/api/projects/runs-demo/runs", timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert len(data["runs"]) == 1
+    assert data["runs"][0]["goal"] == "test goal"
+
+
 def test_hardware_endpoint(platform_url: str) -> None:
     with urllib.request.urlopen(f"{platform_url}/api/system/hardware", timeout=5) as resp:
         data = json.loads(resp.read().decode())

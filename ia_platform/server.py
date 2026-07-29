@@ -19,6 +19,7 @@ from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
 from ia_platform.model_catalog import recommend_models, resolve_model_for_run, resolve_models_for_run
 from ia_platform.ollama_models import OllamaModelManager
+from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
 
 ROOT = Path(__file__).resolve().parent
@@ -352,6 +353,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_get_chat(project_id)
         if project_id and sub == "dev/status":
             return self._handle_dev_status(project_id)
+        if project_id and sub == "runs":
+            return self._handle_get_runs(project_id)
+        if project_id and sub == "search":
+            return self._handle_project_search(project_id, qs)
         if path in {"/", "/index.html"}:
             return self._serve_file(STATIC / "index.html")
         if path.startswith("/static/"):
@@ -573,6 +578,49 @@ class PlatformHandler(BaseHTTPRequestHandler):
         messages = append_message(base, role, text, meta=meta)
         return self._send_json(201, {"ok": True, "messages": messages})
 
+    def _handle_get_runs(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        runs = load_runs(base, limit=30)
+        return self._send_json(200, {"project": project_id, "runs": runs})
+
+    def _handle_project_search(self, project_id: str, qs: Dict[str, List[str]]) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        query = str(qs.get("q", [""])[0]).strip()
+        if not query:
+            return self._send_json(400, {"error": "q is required"})
+
+        from local_agent.project_index import ProjectIndex
+
+        index = ProjectIndex(base)
+        index.build()
+        matches = index.search_relevant(query, limit=15)
+        return self._send_json(
+            200,
+            {
+                "project": project_id,
+                "query": query,
+                "matches": [
+                    {
+                        "path": f.path,
+                        "language": f.language,
+                        "symbols": f.symbols[:8],
+                        "size": f.size,
+                    }
+                    for f in matches
+                ],
+            },
+        )
+
     def _handle_dev_status(self, project_id: str) -> None:
         try:
             base = _project_path(project_id)
@@ -653,7 +701,14 @@ class PlatformHandler(BaseHTTPRequestHandler):
         conversation = format_conversation_context(prior, limit=10)
         return models, conversation, None
 
-    def _finalize_run(self, workspace: Path, project_id: Optional[str], report) -> Dict[str, Any]:
+    def _finalize_run(
+        self,
+        workspace: Path,
+        project_id: Optional[str],
+        report,
+        *,
+        run_id: Optional[str] = None,
+    ) -> Dict[str, Any]:
         rendered = report.render()
         if project_id:
             append_message(
@@ -664,7 +719,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "status": report.status.value,
                     "created_files": report.created_files,
                     "modified_files": report.modified_files,
+                    "run_id": run_id,
                 },
+            )
+            record_run(
+                workspace,
+                goal=report.goal,
+                status=report.status.value,
+                report=rendered,
+                created_files=report.created_files,
+                modified_files=report.modified_files,
+                run_id=run_id,
             )
         return {
             "ok": True,
@@ -673,6 +738,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             "workspace": str(workspace),
             "created_files": report.created_files,
             "modified_files": report.modified_files,
+            "run_id": run_id,
         }
 
     def _send_sse(self, payload: Dict[str, Any]) -> None:
@@ -735,7 +801,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             config.cancel_check = lambda: run_manager.is_cancelled(run_id)
             agent = CodingAgent(config, event_sink=self._send_sse)
             report = agent.run(prompt, conversation_context=conversation)
-            result = self._finalize_run(workspace, project_id, report)
+            result = self._finalize_run(workspace, project_id, report, run_id=run_id)
             self._send_sse({"type": "done", **result})
         except Exception as exc:
             self._send_sse({"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]})
@@ -775,7 +841,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             config = self._build_agent_config(data, workspace, models)
             config.run_id = run_id
             report = CodingAgent(config).run(prompt, conversation_context=conversation)
-            self._send_json(200, self._finalize_run(workspace, project_id, report))
+            self._send_json(200, self._finalize_run(workspace, project_id, report, run_id=run_id))
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "trace": traceback.format_exc()[-2000:]})
         finally:

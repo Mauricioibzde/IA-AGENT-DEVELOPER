@@ -103,7 +103,11 @@ class CodingAgent:
         self._event("planning", message="Analisando projeto e criando plano...")
         if self._is_cancelled():
             return self._cancelled_report(goal)
-        plan = self.planner.create_plan(goal, self.index.summary(), index=self.index)
+        index_summary = self.index.summary()
+        relevant = self.index.relevant_summary(goal, limit=10)
+        if relevant:
+            index_summary = f"{index_summary}\n\n{relevant}"
+        plan = self.planner.create_plan(goal, index_summary, index=self.index)
         for task in plan.tasks:
             task.max_attempts = self.config.max_task_attempts
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))

@@ -72,20 +72,19 @@ class Planner:
     def _enrich_with_index(self, plan: Plan, index: ProjectIndex, goal: str) -> None:
         """Add relevant_files from the project index when the model left them empty."""
         goal_lower = goal.lower()
+        searched = [f.path for f in index.search_relevant(goal, limit=6)]
         for task in plan.tasks:
             if task.relevant_files:
                 continue
             desc_lower = task.description.lower()
-            candidates = []
+            candidates = list(searched)
             for f in index.files:
                 name = f.path.rsplit("/", 1)[-1].lower()
                 if name in desc_lower or name in goal_lower:
                     candidates.append(f.path)
                 elif any(sym.lower() in desc_lower for sym in f.symbols[:10]):
                     candidates.append(f.path)
-                if len(candidates) >= 5:
-                    break
-            task.relevant_files = candidates[:5]
+            task.relevant_files = list(dict.fromkeys(candidates))[:5]
 
     def _ensure_validation_commands(self, plan: Plan, index: Optional[ProjectIndex] = None) -> None:
         """Ensure mutating tasks have project-aware validation commands."""
