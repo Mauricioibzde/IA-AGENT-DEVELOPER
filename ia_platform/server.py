@@ -459,7 +459,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 },
             )
         result = ollama_service.ensure_running(host, auto_install=auto_install)
-        status = 200 if result.get("ok") else (503 if result.get("installed", True) else 404)
+        status = 200 if result.get("ok") else 503
         return self._send_json(status, result)
 
     def _handle_ollama_setup_stream(self) -> None:

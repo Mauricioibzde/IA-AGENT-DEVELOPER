@@ -33,6 +33,7 @@
     ollamaInstalled: true,
     setupPlatform: null,
     setupInstallUrl: null,
+    serverFeatures: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -264,7 +265,7 @@
   function showSetupModal(message, percent) {
     setupProgress.visible = true;
     els.setupModal?.classList.remove("hidden");
-    if (!Object.keys(setupProgress.stepStatus).length) resetSetupProgress();
+    resetSetupProgress();
     updateSetupProgress(percent ?? 5, message || "Iniciando configuração...", "check");
   }
 
@@ -492,6 +493,35 @@
     }
   }
 
+  function isApiRouteMissing(data) {
+    return data?.error === "not found";
+  }
+
+  function outdatedServerMessage() {
+    const platform = (state.setupPlatform || navigator.platform || "").toLowerCase();
+    if (platform.includes("win")) {
+      return "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute: .\\scripts\\run-platform.ps1";
+    }
+    return "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute: ./scripts/run-platform.sh";
+  }
+
+  async function readJsonResponse(res) {
+    return res.json().catch(() => ({}));
+  }
+
+  async function checkServerSetupSupport() {
+    try {
+      const res = await fetch("/api/health");
+      const d = await res.json().catch(() => ({}));
+      state.serverFeatures = d.features || null;
+      if (d.features?.full_setup_stream === true) return true;
+      if (d.features?.ollama_setup_stream === true || d.features?.ollama_auto_install === true) return true;
+      return false;
+    } catch {
+      return false;
+    }
+  }
+
   function updateChatHeroVisibility() {
     if (!els.chatHero) return;
     const hasConversation = els.chatMessages.querySelectorAll(".msg.user, .msg.agent").length > 0;
@@ -534,13 +564,11 @@
       headers: { "Content-Type": "application/json" },
       body: JSON.stringify({ install: true }),
     });
-    const data = await res.json().catch(() => ({}));
+    const data = await readJsonResponse(res);
     if (!res.ok || !data.ok) {
       if (showProgress) {
-        if (res.status === 404) {
-          finishSetupError(
-            "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute novamente: .\\scripts\\run-platform.ps1"
-          );
+        if (res.status === 404 && isApiRouteMissing(data)) {
+          finishSetupError(outdatedServerMessage());
         } else {
           finishSetupError(data.error || "Falha ao configurar Ollama.", { installUrl: data.install_url });
         }
@@ -574,7 +602,17 @@
       });
 
       if (res.status === 404) {
-        return ensureOllamaViaEnsureEndpoint(showProgress);
+        const data = await readJsonResponse(res);
+        if (isApiRouteMissing(data)) {
+          return ensureOllamaViaEnsureEndpoint(showProgress);
+        }
+        if (showProgress) {
+          finishSetupError(data.error || "Falha ao configurar Ollama.", { installUrl: data.install_url });
+        }
+        state.ollamaOk = false;
+        state.ollamaInstalled = data.installed !== false;
+        updateOllamaOfflineUI();
+        return false;
       }
 
       if (!res.ok || !res.body) {
@@ -725,7 +763,15 @@
         body: JSON.stringify({ install: true, pull_recommended: pullRecommended }),
       });
 
-      if (res.status === 404) return null;
+      if (res.status === 404) {
+        const data = await readJsonResponse(res);
+        if (isApiRouteMissing(data)) return null;
+        if (showProgress) {
+          finishSetupError(data.error || "Endpoint de configuração indisponível.", { installUrl: data.install_url });
+          showSetupActions(true);
+        }
+        return false;
+      }
 
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));
@@ -830,6 +876,16 @@
     if (state.setupInFlight) return state.setupInFlight;
 
     const task = (async () => {
+      const supported = await checkServerSetupSupport();
+      if (!supported) {
+        if (showProgress) {
+          showSetupModal("Verificando servidor...", 2);
+          finishSetupError(outdatedServerMessage());
+          showSetupActions(true);
+        }
+        return false;
+      }
+
       const full = await runFullSetupStream({ pullRecommended, showProgress });
       if (full !== null) return full;
       return ensureEnvironmentLegacy({ pullRecommended, showProgress });
@@ -1982,7 +2038,7 @@
     try {
       clearSetupDismissed();
       resetSetupProgress();
-      els.setupInstallLink?.classList.add("hidden");
+      els.setupInstallLinkWrap?.classList.add("hidden");
       showSetupModal("Iniciando configuração automática...", 3);
       showSetupActions(false);
       const ok = await ensureEnvironment({ pullRecommended: true, showProgress: true });
