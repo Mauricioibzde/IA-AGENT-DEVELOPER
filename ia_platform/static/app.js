@@ -42,6 +42,8 @@
     previewLoadRetried: false,
     previewRevision: null,
     previewPollTimer: null,
+    previewPollAbort: null,
+    previewPollInFlight: false,
     ollamaOk: false,
     previewDevice: "desktop",
     healthInFlight: false,
@@ -484,10 +486,16 @@
   // ── API helpers ──
 
   async function api(path, options = {}) {
+    const { headers: extraHeaders, ...rest } = options;
     const res = await fetch(path, {
-      headers: { "Content-Type": "application/json", ...(options.headers || {}) },
-      ...options,
+      headers: { "Content-Type": "application/json", ...(extraHeaders || {}) },
+      ...rest,
     });
+    if (rest.signal?.aborted) {
+      const err = new Error("Aborted");
+      err.name = "AbortError";
+      throw err;
+    }
     const data = await res.json().catch(() => ({}));
     if (!res.ok) {
       const err = new Error(data.error || res.statusText || "Erro na requisição");
@@ -3675,16 +3683,34 @@
 
   function syncDevPolling() {
     stopDevPolling();
+    if (document.hidden) return;
     if (state.current && state.previewMode === "dev") {
       state.devPollTimer = setInterval(() => {
-        if (document.hidden) return;
+        if (document.hidden) {
+          stopDevPolling();
+          return;
+        }
         if (state.current && state.previewMode === "dev") {
-          refreshDevStatus().then(() => {
-            if (state.devStatus?.running) updatePreview();
-          }).catch(() => {});
+          refreshDevStatus()
+            .then(() => {
+              if (state.devStatus?.running) updatePreview();
+            })
+            .catch(() => {});
         }
       }, 5000);
     }
+  }
+
+  function abortPreviewPoll() {
+    if (state.previewPollAbort) {
+      try {
+        state.previewPollAbort.abort();
+      } catch (_) {
+        /* ignore */
+      }
+      state.previewPollAbort = null;
+    }
+    state.previewPollInFlight = false;
   }
 
   function stopPreviewPolling() {
@@ -3692,32 +3718,61 @@
       clearInterval(state.previewPollTimer);
       state.previewPollTimer = null;
     }
+    abortPreviewPoll();
+  }
+
+  async function pollPreviewRevisionOnce() {
+    if (document.hidden || state.previewPollInFlight) return;
+    if (!state.current || state.previewMode !== "static") return;
+    if ($("panelPreview")?.classList.contains("hidden")) return;
+
+    abortPreviewPoll();
+    const controller = new AbortController();
+    state.previewPollAbort = controller;
+    state.previewPollInFlight = true;
+    try {
+      const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/preview-revision`, {
+        signal: controller.signal,
+      });
+      if (controller.signal.aborted || document.hidden) return;
+      const rev = d.revision || null;
+      if (state.previewRevision && rev && rev !== state.previewRevision) {
+        updatePreview(findPreviewPath());
+      }
+      state.previewRevision = rev;
+    } catch (err) {
+      if (err?.name === "AbortError") return;
+      /* network suspended / offline — ignore */
+    } finally {
+      if (state.previewPollAbort === controller) {
+        state.previewPollAbort = null;
+        state.previewPollInFlight = false;
+      }
+    }
   }
 
   function syncPreviewPolling() {
     stopPreviewPolling();
+    if (document.hidden) return;
     const previewOpen = !$("panelPreview")?.classList.contains("hidden");
     if (!state.current || state.previewMode !== "static" || !previewOpen) return;
-    state.previewPollTimer = setInterval(async () => {
-      // Edge/Chrome suspend network on background tabs — skip to avoid ERR_NETWORK_IO_SUSPENDED noise.
-      if (document.hidden) return;
-      if (!state.current || state.previewMode !== "static") return;
-      if ($("panelPreview")?.classList.contains("hidden")) return;
-      try {
-        const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/preview-revision`);
-        const rev = d.revision || null;
-        if (state.previewRevision && rev && rev !== state.previewRevision) {
-          updatePreview(findPreviewPath());
-        }
-        state.previewRevision = rev;
-      } catch {
-        /* network suspended / offline — ignore */
+    // Immediate quiet refresh when becoming visible, then slow poll while focused.
+    pollPreviewRevisionOnce();
+    state.previewPollTimer = setInterval(() => {
+      if (document.hidden) {
+        stopPreviewPolling();
+        return;
       }
-    }, 3500);
+      pollPreviewRevisionOnce();
+    }, 5000);
   }
 
   function onDocumentVisibilityChange() {
-    if (document.hidden) return;
+    if (document.hidden) {
+      stopPreviewPolling();
+      stopDevPolling();
+      return;
+    }
     if (state.current && state.previewMode === "static") syncPreviewPolling();
     if (state.current && state.previewMode === "dev") syncDevPolling();
   }
@@ -4017,6 +4072,14 @@
     syncSidebarToggle();
   });
   document.addEventListener("visibilitychange", onDocumentVisibilityChange);
+  window.addEventListener("pagehide", () => {
+    stopPreviewPolling();
+    stopDevPolling();
+  });
+  window.addEventListener("freeze", () => {
+    stopPreviewPolling();
+    stopDevPolling();
+  });
 
   els.btnToggleSidebar?.addEventListener("click", () => {
     if (isMobileLayout()) {
