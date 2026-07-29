@@ -1,0 +1,130 @@
+"""Planner: produce structured task plans from user goals."""
+
+from __future__ import annotations
+
+import json
+import re
+from typing import Any, Dict, List, Optional
+
+from .models import Plan, RiskLevel, Task, TaskStatus
+from .ollama_client import OllamaClient
+from .prompts import minimal_safe_plan, planner_prompt
+
+
+class Planner:
+    def __init__(self, client: OllamaClient, model: str) -> None:
+        self.client = client
+        self.model = model
+
+    def create_plan(self, goal: str, project_summary: str) -> Plan:
+        prompt = planner_prompt(goal, project_summary)
+        try:
+            raw = self.client.complete(prompt, model=self.model, temperature=0.1)
+            data = self._parse_plan_json(raw)
+            if data is None:
+                repair = self.client.complete(
+                    "Correct this into valid plan JSON only:\n" + raw,
+                    model=self.model,
+                    temperature=0,
+                )
+                data = self._parse_plan_json(repair)
+            if data is None:
+                data = minimal_safe_plan(goal)
+        except Exception:
+            data = minimal_safe_plan(goal)
+        return self._to_plan(data, fallback_goal=goal)
+
+    def update_plan(self, plan: Plan, error: str) -> Plan:
+        prompt = (
+            "Update this JSON plan after the error. Return ONLY JSON plan.\n"
+            f"Error: {error}\nCurrent plan:\n{json.dumps(self._plan_to_dict(plan), ensure_ascii=False)}"
+        )
+        try:
+            raw = self.client.complete(prompt, model=self.model, temperature=0.1)
+            data = self._parse_plan_json(raw) or self._plan_to_dict(plan)
+        except Exception:
+            data = self._plan_to_dict(plan)
+        updated = self._to_plan(data, fallback_goal=plan.goal)
+        # Preserve completed statuses where ids match.
+        done = {t.id: t for t in plan.tasks if t.status == TaskStatus.COMPLETED}
+        for task in updated.tasks:
+            if task.id in done:
+                task.status = TaskStatus.COMPLETED
+                task.attempts = done[task.id].attempts
+        return updated
+
+    def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
+        content = text.strip()
+        if content.startswith("```"):
+            content = re.sub(r"^```(?:json)?\s*", "", content)
+            content = re.sub(r"\s*```$", "", content)
+        try:
+            data = json.loads(content)
+            if isinstance(data, dict) and "tasks" in data:
+                return data
+        except json.JSONDecodeError:
+            pass
+        match = re.search(r"\{.*\}", content, re.S)
+        if not match:
+            return None
+        try:
+            data = json.loads(match.group(0))
+        except json.JSONDecodeError:
+            return None
+        if isinstance(data, dict) and "tasks" in data:
+            return data
+        return None
+
+    def _to_plan(self, data: Dict[str, Any], fallback_goal: str) -> Plan:
+        tasks_data = data.get("tasks") if isinstance(data.get("tasks"), list) else []
+        tasks: List[Task] = []
+        for index, item in enumerate(tasks_data):
+            if not isinstance(item, dict):
+                continue
+            risk_raw = str(item.get("risk_level", "low")).lower()
+            try:
+                risk = RiskLevel(risk_raw)
+            except ValueError:
+                risk = RiskLevel.LOW
+            tasks.append(
+                Task(
+                    id=str(item.get("id") or f"task-{index+1}"),
+                    title=str(item.get("title") or f"Task {index+1}"),
+                    description=str(item.get("description") or fallback_goal),
+                    dependencies=[str(x) for x in item.get("dependencies") or []],
+                    validation_commands=[str(x) for x in item.get("validation_commands") or []],
+                    relevant_files=[str(x) for x in item.get("relevant_files") or []],
+                    risk_level=risk,
+                    status=TaskStatus.PENDING,
+                )
+            )
+        if not tasks:
+            safe = minimal_safe_plan(fallback_goal)
+            return self._to_plan(safe, fallback_goal=fallback_goal)
+        return Plan(
+            goal=str(data.get("goal") or fallback_goal),
+            summary=str(data.get("summary") or ""),
+            tasks=tasks,
+            risks=[str(r) for r in data.get("risks") or []],
+        )
+
+    @staticmethod
+    def _plan_to_dict(plan: Plan) -> Dict[str, Any]:
+        return {
+            "goal": plan.goal,
+            "summary": plan.summary,
+            "risks": plan.risks,
+            "tasks": [
+                {
+                    "id": t.id,
+                    "title": t.title,
+                    "description": t.description,
+                    "dependencies": t.dependencies,
+                    "relevant_files": t.relevant_files,
+                    "validation_commands": t.validation_commands,
+                    "risk_level": t.risk_level.value,
+                    "status": t.status.value,
+                }
+                for t in plan.tasks
+            ],
+        }

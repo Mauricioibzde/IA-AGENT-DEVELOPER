@@ -16,3 +16,6 @@ sandbox/
 app_demo/
 demo_py/
 *.tmp
+.env
+.agent/
+*.bak

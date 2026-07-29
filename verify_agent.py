@@ -4,16 +4,16 @@
 from __future__ import annotations
 
 import argparse
-import os
 import tempfile
 from pathlib import Path
 
-import ollama_agent
+from local_agent.agent import run_agent
+from local_agent.config import AgentConfig
 
 
 def main() -> None:
     parser = argparse.ArgumentParser(description="Verify agent write + validate flow")
-    parser.add_argument("--model", default=ollama_agent.DEFAULT_MODEL)
+    parser.add_argument("--model", default=None)
     parser.add_argument("--workspace", default="")
     parser.add_argument("--dry-run", action="store_true")
     parser.add_argument("--verbose", action="store_true")
@@ -21,6 +21,7 @@ def main() -> None:
 
     workspace = args.workspace or tempfile.mkdtemp(prefix="ia-agent-verify-")
     Path(workspace).mkdir(parents=True, exist_ok=True)
+    model = args.model or AgentConfig.from_args(workspace).model
 
     prompt = (
         'Create a source file called src/app.js with the content console.log("hello"); '
@@ -28,11 +29,11 @@ def main() -> None:
     )
     print(f"workspace={workspace}")
     print(
-        ollama_agent.run_agent(
+        run_agent(
             prompt,
             workspace=workspace,
-            model=args.model,
-            max_steps=4,
+            model=model,
+            max_steps=6,
             dry_run=args.dry_run,
             verbose=args.verbose,
         )

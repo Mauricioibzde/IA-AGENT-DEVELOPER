@@ -1,121 +1,102 @@
 # IA Agent Developer
 
-Local Ollama-based coding agent for file creation, project scaffolding, and simple validation.
+Agente local de desenvolvimento com Ollama: planeja, edita arquivos com sandbox, executa comandos seguros, valida e reflete sobre falhas.
 
-## What it does
-- Creates and edits files inside a sandboxed workspace
-- Scaffolds starter projects (`node`, `python`, `react`)
-- Validates that files or folders exist
-- Uses Ollama as the reasoning engine (`/api/chat`, with `/api/generate` fallback)
+## Requisitos
+- Python 3.11+
+- [Ollama](https://ollama.com/)
+- Modelo local recomendado: `qwen2.5-coder:7b` (leve) ou `qwen3-coder:30b` (mais capaz)
 
-## Project structure
-- `ollama_agent.py` — main agent + tools
-- `ollama-create-file.ps1` — optional PowerShell helper
-- `verify_agent.py` — manual end-to-end check
-- `tests/` — unit tests (no Ollama required for most cases)
+## Instalação rápida
 
-## Requirements
-- Python 3.10+
-- [Ollama](https://ollama.com/) (installed automatically by the setup script when possible)
-- Disk space for a coding model (default setup uses `qwen2.5-coder:7b`)
-
-## One-command setup
-
-This installs Python deps, checks/installs Ollama, pulls a model, creates `sandbox/`, runs unit tests, and does a dry-run smoke test.
-
-**Windows (PowerShell):**
+Windows:
 
 ```powershell
 powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1
 ```
 
-Or double-click / run:
-
-```bat
-scripts\setup.bat
-```
-
-**Linux / macOS:**
+Linux/macOS:
 
 ```bash
 bash scripts/setup.sh
 ```
 
-Useful options:
-
-```powershell
-# Windows: choose model / skip steps
-.\scripts\setup.ps1 -Model qwen2.5-coder:7b
-.\scripts\setup.ps1 -SkipSmoke -SkipTests
-```
+Manual:
 
 ```bash
-# Linux/macOS
-bash scripts/setup.sh --model=qwen2.5-coder:7b
-bash scripts/setup.sh --skip-smoke --skip-tests
-```
-
-## Quick start (manual)
-
-```bash
-# optional: install test tooling
 python -m pip install -e ".[dev]"
-
-# start Ollama in another terminal
+cp .env.example .env
 ollama serve
-
-# pull a model if needed
 ollama pull qwen2.5-coder:7b
-
-# run the agent
-python ollama_agent.py "Create a file called demo.txt with the content hello"
 ```
 
-Useful flags:
+## Execução
 
 ```bash
-python ollama_agent.py --dry-run "Create a starter project called app_demo"
-python ollama_agent.py --verbose "List files in the current folder"
-python ollama_agent.py --model qwen3-coder:30b --workspace ./sandbox "Criar pasta tmp"
+# Nova CLI modular
+python -m local_agent "Crie um arquivo demo.txt com hello" --workspace ./sandbox --verbose
+
+# Somente plano
+python -m local_agent "Refatore o módulo X" --plan-only
+
+# Dry-run
+python -m local_agent "Crie um projeto python demo_py" --dry-run --verbose
+
+# Entrypoint legado
+python ollama_agent.py --workspace ./sandbox "Create a file called demo.txt with the content hello"
 ```
 
-Environment variables:
-- `OLLAMA_HOST` — default `http://127.0.0.1:11434`
-- `OLLAMA_MODEL` — default `qwen3-coder:30b`
+Flags principais: `--workspace`, `--model`, `--planner-model`, `--reflection-model`, `--max-steps`, `--max-task-attempts`, `--command-timeout`, `--dry-run`, `--verbose`, `--debug`, `--plan-only`, `--no-memory`, `--no-git`, `--config`.
 
-## Example commands
+## Arquitetura
 
-Create a Node starter project:
-
-```bash
-python ollama_agent.py "Create a starter project called app_demo in folder app_demo"
+```text
+local_agent/
+  agent.py           # loop principal
+  planner.py         # plano estruturado
+  executor.py        # execução de tools
+  validator.py       # testes/build/lint
+  reflector.py       # decisão retry/replan/finish
+  memory.py          # memória curto/longo prazo (.agent/memory.json)
+  project_index.py   # índice lexical/estrutural
+  security.py        # sandbox de paths
+  ollama_client.py   # cliente HTTP Ollama
+  tools/             # filesystem, terminal, patch, search, git, project
 ```
 
-Create a Python starter:
+## Ferramentas
+- Arquivos: `read_file`, `read_file_range`, `write_file`, `append_file`, `apply_patch`, `replace_in_file` (legado), `list_directory`, `validate_path`, ...
+- Busca: `search_text`, `search_files`, `search_symbol`
+- Terminal: `run_command` com classificação de risco e bloqueios
+- Projeto: `scaffold_project`, `create_multiple_files`
+- Git (somente leitura): `git_status`, `git_diff`, `git_log`, ...
 
-```bash
-python ollama_agent.py "Create a python starter project called demo_py in folder demo_py"
-```
+## Segurança
+- Paths confinados ao `--workspace` (inclui proteção contra symlink escape)
+- Comandos perigosos bloqueados (`rm -rf /`, `git reset --hard`, `curl | sh`, etc.)
+- Escrita atômica e backups `.bak` em alterações destrutivas/patch
+- `--dry-run` não muta disco nem executa comandos
 
-Validate a folder:
+## Memória
+Persistida em `.agent/memory.json` no workspace (desativável com `--no-memory`).
 
-```bash
-python ollama_agent.py "Validate the files in the app_demo folder"
-```
-
-## Tests
+## Testes
 
 ```bash
 python -m pytest -q
 ```
 
-Live Ollama smoke test is skipped automatically when the daemon is offline.
+Os testes unitários usam mocks e **não** dependem de Ollama.
 
-## Safety notes
-- Tool paths are resolved inside `--workspace` and cannot escape it
-- `run_command` prefers argv execution when a shell is not required
-- `replace_in_file` fails if the old text is missing
-- Prefer `--dry-run` when exploring risky prompts
+## Limitações atuais
+- Sem embeddings/RAG vetorial
+- Patch unified-diff ainda é conservador (melhor usar hunks estruturados)
+- Confirmação interativa rica para alto risco ainda é simplificada
+- Qualidade depende fortemente do modelo Ollama escolhido
 
-## Notes
-This project is intentionally isolated from AzubiForge so it can evolve as a standalone agent prototype.
+## Roadmap
+- Diff/patch unificado mais completo
+- Modo interativo REPL
+- Políticas de aprovação por tool
+- Indexação incremental e cache
+- Métricas de custo/latência por etapa

@@ -4,10 +4,10 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ia-agent-developer"
-version = "0.2.0"
-description = "Local Ollama coding agent with sandboxed file and shell tools"
+version = "0.3.0"
+description = "Autonomous local Ollama coding agent with sandboxed tools"
 readme = "README.md"
-requires-python = ">=3.10"
+requires-python = ">=3.11"
 license = { text = "MIT" }
 authors = [{ name = "Mauricioibzde" }]
 dependencies = []
@@ -16,11 +16,15 @@ dependencies = []
 dev = ["pytest>=8.0"]
 
 [project.scripts]
-ia-agent = "ollama_agent:main"
+ia-agent = "local_agent.cli:main"
+ollama-agent = "ollama_agent:main"
 
 [tool.setuptools]
 py-modules = ["ollama_agent", "verify_agent"]
 
+[tool.setuptools.packages.find]
+include = ["local_agent*"]
+
 [tool.pytest.ini_options]
-testpaths = ["tests"]
+testpaths = ["tests", "local_agent/tests"]
 pythonpath = ["."]

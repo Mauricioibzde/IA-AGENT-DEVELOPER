@@ -65,8 +65,9 @@ def test_path_sandbox_blocks_escape(tmp_path):
 
 def test_write_file_blocks_absolute_escape(tmp_path, tmp_path_factory):
     outside = tmp_path_factory.mktemp("outside") / "secret.txt"
-    with pytest.raises(WorkspaceSecurityError):
-        execute_tool("write_file", {"path": str(outside), "content": "nope"}, workspace=str(tmp_path))
+    result = execute_tool("write_file", {"path": str(outside), "content": "nope"}, workspace=str(tmp_path))
+    assert result["ok"] is False
+    assert "workspace" in (result.get("error") or "").lower()
 
 
 def test_replace_in_file_reports_replacements(tmp_path):
@@ -84,12 +85,13 @@ def test_replace_in_file_reports_replacements(tmp_path):
 
 def test_replace_in_file_errors_when_missing(tmp_path):
     (tmp_path / "file.txt").write_text("abc", encoding="utf-8")
-    with pytest.raises(ValueError, match="No matches"):
-        execute_tool(
-            "replace_in_file",
-            {"path": "file.txt", "old": "zzz", "new": "x"},
-            workspace=str(tmp_path),
-        )
+    result = execute_tool(
+        "replace_in_file",
+        {"path": "file.txt", "old": "zzz", "new": "x"},
+        workspace=str(tmp_path),
+    )
+    assert result["ok"] is False
+    assert "No matches" in (result.get("error") or "")
 
 
 def test_dry_run_does_not_write(tmp_path):
