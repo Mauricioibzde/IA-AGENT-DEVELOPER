@@ -3324,7 +3324,7 @@
       } catch {
         /* ignore */
       }
-    }, 2000);
+    }, 3500);
   }
 
   async function clearDevError() {
