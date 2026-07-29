@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1" />
+  <title>IA Agent Developer — Local</title>
+  <style>
+    :root { --bg: #0f1117; --panel: #1a1d27; --accent: #6c8cff; --text: #e8eaef; --muted: #8b90a0; --ok: #3dd68c; --err: #ff6b6b; }
+    * { box-sizing: border-box; }
+    body { margin: 0; font-family: system-ui, sans-serif; background: var(--bg); color: var(--text); min-height: 100vh; display: flex; flex-direction: column; }
+    header { padding: 16px 20px; border-bottom: 1px solid #2a2f3d; display: flex; justify-content: space-between; align-items: center; }
+    header h1 { margin: 0; font-size: 1.1rem; }
+    header span { color: var(--muted); font-size: 0.85rem; }
+    main { flex: 1; display: grid; grid-template-columns: 1fr 320px; gap: 0; min-height: 0; }
+    #chat { padding: 20px; overflow-y: auto; display: flex; flex-direction: column; gap: 12px; }
+    .msg { max-width: 90%; padding: 12px 14px; border-radius: 12px; white-space: pre-wrap; word-break: break-word; line-height: 1.45; font-size: 0.92rem; }
+    .msg.user { align-self: flex-end; background: var(--accent); color: #fff; }
+    .msg.agent { align-self: flex-start; background: var(--panel); border: 1px solid #2a2f3d; }
+    .msg.system { align-self: center; color: var(--muted); font-size: 0.8rem; background: transparent; }
+    aside { border-left: 1px solid #2a2f3d; padding: 16px; background: #12151c; overflow-y: auto; }
+    aside label { display: block; font-size: 0.75rem; color: var(--muted); margin: 10px 0 4px; }
+    aside input, aside select { width: 100%; padding: 8px; border-radius: 8px; border: 1px solid #2a2f3d; background: var(--panel); color: var(--text); }
+    footer { padding: 12px 20px; border-top: 1px solid #2a2f3d; display: flex; gap: 10px; }
+    #prompt { flex: 1; padding: 12px 14px; border-radius: 10px; border: 1px solid #2a2f3d; background: var(--panel); color: var(--text); resize: none; min-height: 48px; max-height: 120px; font-family: inherit; }
+    button { padding: 12px 18px; border: none; border-radius: 10px; background: var(--accent); color: #fff; font-weight: 600; cursor: pointer; }
+    button:disabled { opacity: 0.5; cursor: not-allowed; }
+    .status-dot { display: inline-block; width: 8px; height: 8px; border-radius: 50%; margin-right: 6px; }
+    .status-dot.ok { background: var(--ok); }
+    .status-dot.err { background: var(--err); }
+    @media (max-width: 800px) { main { grid-template-columns: 1fr; } aside { border-left: none; border-top: 1px solid #2a2f3d; } }
+  </style>
+</head>
+<body>
+  <header>
+    <h1>IA Agent Developer</h1>
+    <span id="health"><span class="status-dot err"></span>checking...</span>
+  </header>
+  <main>
+    <div id="chat"></div>
+    <aside>
+      <label>Workspace</label>
+      <input id="workspace" value="sandbox" />
+      <label>Modelo</label>
+      <input id="model" placeholder="qwen2.5-coder:7b" />
+      <label>Modo</label>
+      <select id="mode">
+        <option value="execute">Executar</option>
+        <option value="plan">Só plano</option>
+        <option value="dry">Dry-run</option>
+      </select>
+      <label>Max steps</label>
+      <input id="maxSteps" type="number" value="12" min="1" max="50" />
+      <p style="font-size:0.75rem;color:var(--muted);margin-top:16px">
+        Rode <code>ollama serve</code> antes. Projetos gerados ficam na pasta workspace.
+      </p>
+    </aside>
+  </main>
+  <footer>
+    <textarea id="prompt" rows="2" placeholder="Ex: Crie uma landing page HTML/CSS moderna..."></textarea>
+    <button id="send">Enviar</button>
+  </footer>
+  <script>
+    const chat = document.getElementById('chat');
+    const sendBtn = document.getElementById('send');
+    const promptEl = document.getElementById('prompt');
+
+    function addMsg(text, role) {
+      const el = document.createElement('div');
+      el.className = 'msg ' + role;
+      el.textContent = text;
+      chat.appendChild(el);
+      chat.scrollTop = chat.scrollHeight;
+    }
+
+    async function checkHealth() {
+      const el = document.getElementById('health');
+      try {
+        const r = await fetch('/api/health');
+        const d = await r.json();
+        const ok = d.ollama && d.agent;
+        el.innerHTML = `<span class="status-dot ${ok ? 'ok' : 'err'}"></span>${ok ? 'Pronto' : 'Ollama offline?'}`;
+      } catch {
+        el.innerHTML = '<span class="status-dot err"></span>offline';
+      }
+    }
+
+    sendBtn.onclick = async () => {
+      const prompt = promptEl.value.trim();
+      if (!prompt) return;
+      addMsg(prompt, 'user');
+      promptEl.value = '';
+      sendBtn.disabled = true;
+      addMsg('Processando...', 'system');
+      const mode = document.getElementById('mode').value;
+      try {
+        const r = await fetch('/api/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({
+            prompt,
+            workspace: document.getElementById('workspace').value || 'sandbox',
+            model: document.getElementById('model').value || null,
+            max_steps: parseInt(document.getElementById('maxSteps').value || '12', 10),
+            plan_only: mode === 'plan',
+            dry_run: mode === 'dry',
+          }),
+        });
+        const d = await r.json();
+        chat.removeChild(chat.lastChild);
+        if (d.error) {
+          addMsg('Erro: ' + d.error, 'agent');
+        } else {
+          addMsg(d.report || '(sem resposta)', 'agent');
+        }
+      } catch (e) {
+        chat.removeChild(chat.lastChild);
+        addMsg('Falha na requisição: ' + e.message, 'agent');
+      }
+      sendBtn.disabled = false;
+    };
+
+    promptEl.addEventListener('keydown', (e) => {
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); sendBtn.click(); }
+    });
+
+    checkHealth();
+    setInterval(checkHealth, 15000);
+    addMsg('Plataforma local pronta. Descreva o site ou app que quer criar.', 'system');
+  </script>
+</body>
+</html>

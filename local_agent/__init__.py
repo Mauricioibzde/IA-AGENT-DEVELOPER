@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-__version__ = "0.3.0"
+__version__ = "1.0.0"
 
 from .agent import run_agent
 from .config import AgentConfig

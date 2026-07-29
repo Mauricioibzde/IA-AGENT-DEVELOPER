@@ -4,7 +4,7 @@ build-backend = "setuptools.build_meta"
 
 [project]
 name = "ia-agent-developer"
-version = "0.3.0"
+version = "1.0.0"
 description = "Autonomous local Ollama coding agent with sandboxed tools"
 readme = "README.md"
 requires-python = ">=3.11"
@@ -26,5 +26,5 @@ py-modules = ["ollama_agent", "verify_agent"]
 include = ["local_agent*"]
 
 [tool.pytest.ini_options]
-testpaths = ["tests", "local_agent/tests"]
+testpaths = ["tests", "local_agent/tests", "ia_platform"]
 pythonpath = ["."]
