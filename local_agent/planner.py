@@ -114,13 +114,20 @@ class Planner:
 
             if not cmds and index:
                 has_python = any(f.language == "python" for f in index.files)
-                if has_python:
+                has_node = bool(index.package_scripts) or any(
+                    f.language in {"javascript", "typescript"} for f in index.files
+                )
+                if has_python and not has_node:
                     cmds = ["python -m compileall ."]
 
-            if not cmds:
-                cmds = ["python -m compileall ."]
+            if not cmds and index:
+                has_python = any(f.language == "python" for f in index.files)
+                if has_python and not index.package_scripts:
+                    cmds = ["python -m compileall ."]
 
             task.validation_commands = cmds
+            if not cmds:
+                continue
             if "test" in desc_lower or "validate" in desc_lower:
                 if index and index.detected_commands.get("test"):
                     extra = index.detected_commands["test"][0]

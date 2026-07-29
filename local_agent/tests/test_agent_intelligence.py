@@ -55,6 +55,23 @@ def test_planner_uses_node_validation(tmp_path: Path) -> None:
     assert any("vitest" in c or "npm" in c or "test" in c for c in cmds)
 
 
+def test_planner_skips_compileall_for_react_only(tmp_path: Path) -> None:
+    src = tmp_path / "src"
+    src.mkdir()
+    (tmp_path / "package.json").write_text(
+        json.dumps({"scripts": {"dev": "vite", "build": "vite build"}}),
+        encoding="utf-8",
+    )
+    (src / "App.jsx").write_text("export default function App(){return null}\n", encoding="utf-8")
+    index = ProjectIndex(tmp_path)
+    index.build()
+    plan = Planner(FakeClient(), "m").create_plan("build react ui", index.summary(), index=index)
+    cmds = plan.tasks[0].validation_commands
+    joined = " ".join(cmds)
+    assert "compileall" not in joined
+    assert "npm" in joined or "vite" in joined or not cmds
+
+
 def test_context_invalidate_refreshes_cache(tmp_path: Path) -> None:
     target = tmp_path / "app.py"
     target.write_text("v1\n", encoding="utf-8")

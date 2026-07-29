@@ -17,7 +17,7 @@ from ia_platform.conversations import append_message, clear_messages, format_con
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import dev_manager
 from ia_platform.hardware import detect_hardware
-from ia_platform.model_catalog import recommend_models, resolve_model_for_run
+from ia_platform.model_catalog import recommend_models, resolve_model_for_run, resolve_models_for_run
 from ia_platform.ollama_models import OllamaModelManager
 from ia_platform.run_manager import run_manager
 
@@ -139,7 +139,7 @@ import react from "@vitejs/plugin-react";
 
 export default defineConfig({
   plugins: [react()],
-  server: { host: "127.0.0.1", port: 5173 },
+  server: { host: "127.0.0.1", port: Number(process.env.PORT) || 5173 },
 });
 """,
         "index.html": """<!DOCTYPE html>
@@ -610,33 +610,38 @@ class PlatformHandler(BaseHTTPRequestHandler):
         result = deploy_project(base, project_id)
         return self._send_json(200, {"project": project_id, **result})
 
-    def _build_agent_config(self, data: Dict[str, Any], workspace: Path, model: str):
+    def _build_agent_config(self, data: Dict[str, Any], workspace: Path, models: Dict[str, str]):
         from local_agent.config import AgentConfig
 
-        return AgentConfig.from_args(
+        cfg = AgentConfig.from_args(
             workspace,
-            model=model,
+            model=models["coder"],
+            planner_model=models["planner"],
+            reflection_model=models["reflection"],
             max_steps=int(data.get("max_steps") or 12),
             dry_run=bool(data.get("dry_run")),
             plan_only=bool(data.get("plan_only")),
             verbose=True,
         )
+        return cfg
 
-    def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[str, str, Optional[Dict[str, Any]]]:
-        """Resolve model, build conversation context, preflight availability."""
+    def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[Dict[str, str], str, Optional[Dict[str, Any]]]:
+        """Resolve models, build conversation context, preflight availability."""
         mgr = self._ollama_manager()
         installed = mgr.list_names()
         hardware = detect_hardware()
-        model = resolve_model_for_run(data.get("model"), installed, hardware)
+        models = resolve_models_for_run(data.get("model"), installed, hardware)
+        coder = models["coder"]
 
-        if not mgr.has_model(model):
-            return model, "", {
-                "error": f"Modelo '{model}' não está instalado. Baixe em Modelos IA.",
-                "model": model,
-                "missing_model": True,
-                "pull_available": True,
-                "recommended": recommend_models(hardware, installed).get("primary"),
-            }
+        for role, name in models.items():
+            if not mgr.has_model(name):
+                return models, "", {
+                    "error": f"Modelo '{name}' ({role}) não está instalado. Baixe em Modelos IA.",
+                    "model": name,
+                    "missing_model": True,
+                    "pull_available": True,
+                    "recommended": recommend_models(hardware, installed).get("primary"),
+                }
 
         messages = load_messages(workspace)
         if messages and messages[-1].get("role") == "user":
@@ -644,7 +649,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
         else:
             prior = messages
         conversation = format_conversation_context(prior, limit=10)
-        return model, conversation, None
+        return models, conversation, None
 
     def _finalize_run(self, workspace: Path, project_id: Optional[str], report) -> Dict[str, Any]:
         rendered = report.render()
@@ -694,9 +699,18 @@ class PlatformHandler(BaseHTTPRequestHandler):
         workspace.mkdir(parents=True, exist_ok=True)
         project_id = _project_id_from_workspace(workspace)
 
-        model, conversation, preflight_error = self._prepare_run(data, workspace)
+        models, conversation, preflight_error = self._prepare_run(data, workspace)
         if preflight_error:
             return self._send_json(400, preflight_error)
+
+        if run_manager.is_workspace_busy(workspace):
+            return self._send_json(
+                409,
+                {
+                    "error": "Agente já em execução neste projeto. Aguarde ou cancele a execução atual.",
+                    "busy": True,
+                },
+            )
 
         self.send_response(200)
         self.send_header("Content-Type", "text/event-stream; charset=utf-8")
@@ -705,11 +719,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
-        run_id = run_manager.create()
+        run_id = run_manager.acquire(str(workspace))
+        if not run_id:
+            self._send_sse({"type": "error", "error": "Workspace ocupado por outra execução."})
+            return
+
+        self._send_sse({"type": "started", "run_id": run_id, "goal": prompt})
         try:
             from local_agent.agent import CodingAgent
 
-            config = self._build_agent_config(data, workspace, model)
+            config = self._build_agent_config(data, workspace, models)
             config.run_id = run_id
             config.cancel_check = lambda: run_manager.is_cancelled(run_id)
             agent = CodingAgent(config, event_sink=self._send_sse)
@@ -734,18 +753,31 @@ class PlatformHandler(BaseHTTPRequestHandler):
         workspace.mkdir(parents=True, exist_ok=True)
         project_id = _project_id_from_workspace(workspace)
 
-        model, conversation, preflight_error = self._prepare_run(data, workspace)
+        models, conversation, preflight_error = self._prepare_run(data, workspace)
         if preflight_error:
             return self._send_json(400, preflight_error)
+
+        if run_manager.is_workspace_busy(workspace):
+            return self._send_json(
+                409,
+                {"error": "Agente já em execução neste projeto.", "busy": True},
+            )
+
+        run_id = run_manager.acquire(str(workspace))
+        if not run_id:
+            return self._send_json(409, {"error": "Workspace ocupado.", "busy": True})
 
         try:
             from local_agent.agent import CodingAgent
 
-            config = self._build_agent_config(data, workspace, model)
+            config = self._build_agent_config(data, workspace, models)
+            config.run_id = run_id
             report = CodingAgent(config).run(prompt, conversation_context=conversation)
             self._send_json(200, self._finalize_run(workspace, project_id, report))
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "trace": traceback.format_exc()[-2000:]})
+        finally:
+            run_manager.clear(run_id)
 
     def _serve_file(self, file_path: Path) -> None:
         if not file_path.is_file():

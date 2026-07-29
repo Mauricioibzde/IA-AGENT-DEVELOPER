@@ -263,6 +263,42 @@ def test_run_cancel_endpoint(platform_url: str) -> None:
     assert data["cancelled"] is False
 
 
+def test_run_stream_rejects_busy_workspace(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "busy-demo"
+    project_dir.mkdir(parents=True)
+
+    class FakeMgr:
+        def list_names(self):
+            return ["qwen2.5-coder:7b"]
+
+        def has_model(self, model):
+            return True
+
+    monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+
+    from ia_platform.run_manager import run_manager
+
+    run_id = run_manager.acquire(str(project_dir))
+    assert run_id
+    try:
+        req = urllib.request.Request(
+            f"{platform_url}/api/run/stream",
+            data=json.dumps({"prompt": "teste", "workspace": "projects/busy-demo"}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            urllib.request.urlopen(req, timeout=5)
+            assert False, "expected 409"
+        except urllib.error.HTTPError as exc:
+            assert exc.code == 409
+            body = json.loads(exc.read().decode())
+            assert body.get("busy") is True
+    finally:
+        run_manager.clear(run_id)
+
+
 def test_hardware_endpoint(platform_url: str) -> None:
     with urllib.request.urlopen(f"{platform_url}/api/system/hardware", timeout=5) as resp:
         data = json.loads(resp.read().decode())

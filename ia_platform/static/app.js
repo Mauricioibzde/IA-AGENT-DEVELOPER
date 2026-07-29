@@ -20,6 +20,7 @@
     pullingModel: false,
     devStatus: null,
     previewMode: "static",
+    llmPreviewChars: 0,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -35,6 +36,7 @@
     btnCancel: $("btnCancel"),
     btnNewProject: $("btnNewProject"),
     btnRefreshFiles: $("btnRefreshFiles"),
+    btnClearChat: $("btnClearChat"),
     btnDeploy: $("btnDeploy"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
@@ -180,7 +182,31 @@
     }
   }
 
-  // ── Health ──
+  function parseSseBlock(block) {
+    const line = block.split("\n").find((l) => l.startsWith("data: "));
+    if (!line) return null;
+    try {
+      return JSON.parse(line.slice(6));
+    } catch {
+      return null;
+    }
+  }
+
+  async function clearChat() {
+    if (!state.current) return;
+    if (!window.confirm("Limpar toda a conversa deste projeto?")) return;
+    try {
+      await api(`/api/projects/${encodeURIComponent(state.current.id)}/chat`, {
+        method: "POST",
+        body: JSON.stringify({ clear: true }),
+      });
+      els.chatMessages.innerHTML = "";
+      state.lastReport = "";
+      els.reportViewer.textContent = "Nenhuma execução ainda.";
+    } catch (e) {
+      addMessage("Erro ao limpar chat: " + e.message, "system");
+    }
+  }
 
   async function checkHealth() {
     try {
@@ -485,8 +511,11 @@
     state.running = true;
     state.runId = null;
     state.abortController = new AbortController();
+    state.llmPreviewChars = 0;
     els.btnSend.disabled = true;
+    els.btnCancel?.classList.add("hidden");
     els.btnCancel?.classList.remove("hidden");
+    els.btnCancel.disabled = true;
 
     const mode = els.modeSelect.value;
     const progressEl = addMessage("Iniciando agente...", "progress");
@@ -513,6 +542,7 @@
         const errData = await res.json().catch(() => ({}));
         const err = new Error(errData.error || "Falha no streaming");
         err.data = errData;
+        err.status = res.status;
         throw err;
       }
 
@@ -528,9 +558,8 @@
         const blocks = buffer.split("\n\n");
         buffer = blocks.pop() || "";
         for (const block of blocks) {
-          const line = block.split("\n").find((l) => l.startsWith("data: "));
-          if (!line) continue;
-          const ev = JSON.parse(line.slice(6));
+          const ev = parseSseBlock(block);
+          if (!ev) continue;
           if (ev.type === "done") {
             donePayload = ev;
             continue;
@@ -568,7 +597,11 @@
     } catch (e) {
       removeMessage(progressEl);
       agentEl.classList.remove("live");
-      if (e.name === "AbortError") {
+      if (e.status === 409 || e.data?.busy) {
+        agentEl.textContent = e.message || "Agente já em execução neste projeto.";
+        agentEl.classList.add("error");
+        addMessage("Aguarde a execução atual terminar ou cancele antes de enviar outro prompt.", "system");
+      } else if (e.name === "AbortError") {
         agentEl.textContent = "Execução cancelada.";
         agentEl.classList.add("error");
         await persistMessage("agent", "Execução cancelada.").catch(() => {});
@@ -587,8 +620,10 @@
       state.running = false;
       state.runId = null;
       state.abortController = null;
+      state.llmPreviewChars = 0;
       els.btnSend.disabled = false;
       els.btnCancel?.classList.add("hidden");
+      els.btnCancel.disabled = false;
       els.promptInput.focus();
     }
   }
@@ -596,7 +631,10 @@
   function handleStreamEvent(ev, progressEl, agentEl) {
     switch (ev.type) {
       case "started":
-        if (ev.run_id) state.runId = ev.run_id;
+        if (ev.run_id) {
+          state.runId = ev.run_id;
+          if (els.btnCancel) els.btnCancel.disabled = false;
+        }
         progressEl.textContent = "Agente iniciado...";
         break;
       case "cancelled":
@@ -620,6 +658,10 @@
         break;
       case "llm_chunk":
         progressEl.textContent = "Gerando chamada de ferramentas...";
+        if (ev.text && agentEl) {
+          state.llmPreviewChars = Math.min(state.llmPreviewChars + ev.text.length, 2000);
+          agentEl.textContent = (agentEl.textContent + ev.text).slice(-2000);
+        }
         break;
       case "error":
         progressEl.textContent = "Erro: " + (ev.message || ev.error || "desconhecido");
@@ -706,7 +748,7 @@
       els.previewFrame.src = "about:blank";
       els.previewHint.classList.remove("hidden");
       els.previewHint.textContent = state.devStatus?.has_dev_script
-        ? "Nenhum HTML estático. Use npm run dev ou peça ao agente para criar index.html."
+        ? "Apps React/Vite precisam de npm run dev — clique em Iniciar dev."
         : "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
       return;
     }
@@ -865,6 +907,7 @@
   // ── Events ──
 
   els.btnSend.addEventListener("click", sendPrompt);
+  els.btnClearChat?.addEventListener("click", clearChat);
   els.btnCancel?.addEventListener("click", cancelRun);
   els.modelSelect?.addEventListener("change", () => {
     const custom = els.modelSelect.value === "__custom__";

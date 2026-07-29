@@ -2,7 +2,7 @@
 
 from __future__ import annotations
 
-from ia_platform.model_catalog import MODEL_CATALOG, recommend_models, resolve_model_for_run
+from ia_platform.model_catalog import MODEL_CATALOG, recommend_models, resolve_model_for_run, resolve_models_for_run
 
 
 def test_recommend_medium_hardware() -> None:
@@ -49,4 +49,23 @@ def test_resolve_model_for_run_prefers_installed() -> None:
     hw = {"tier": "medium", "effective_memory_gb": 10, "has_gpu": False, "ram_total_gb": 16, "ram_available_gb": 12, "vram_total_gb": 0, "vram_free_gb": 0, "cpu_cores": 8, "gpus": []}
     model = resolve_model_for_run("", ["deepseek-coder:6.7b"], hw)
     assert "deepseek" in model
+
+
+def test_resolve_models_uses_light_planner_on_low_tier() -> None:
+    hw = {
+        "tier": "low",
+        "effective_memory_gb": 5,
+        "ram_total_gb": 8,
+        "ram_available_gb": 5,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:7b", "qwen2.5-coder:1.5b"]
+    models = resolve_models_for_run("", installed, hw)
+    assert models["planner"] == "qwen2.5-coder:1.5b"
+    assert models["reflection"] == "qwen2.5-coder:1.5b"
+    assert models["coder"] in installed
 

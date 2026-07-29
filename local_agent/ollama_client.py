@@ -43,7 +43,10 @@ class OllamaClient:
             messages = [{"role": "system", "content": system}, *messages]
 
         last_error: Exception | None = None
+        cancel_check = self.config.cancel_check
         for attempt in range(retries + 1):
+            if cancel_check and cancel_check():
+                raise OllamaError("cancelled")
             try:
                 content = self._chat_once(messages, model_name, temperature, timeout)
                 self.total_chars_received += len(content)
@@ -132,6 +135,18 @@ class OllamaClient:
         *,
         system: Optional[str] = None,
     ) -> str:
+        cancel_check = self.config.cancel_check
+        if cancel_check and cancel_check():
+            raise OllamaError("cancelled")
+        if cancel_check:
+            return self.stream_chat(
+                [{"role": "user", "content": prompt}],
+                model=model,
+                temperature=temperature,
+                timeout=timeout,
+                system=system,
+                cancel_check=cancel_check,
+            )
         return self.chat(
             [{"role": "user", "content": prompt}],
             model=model,

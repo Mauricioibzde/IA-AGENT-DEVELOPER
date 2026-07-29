@@ -16,7 +16,7 @@ from .models import AgentReport, FinalStatus, Plan, ReflectionStatus, Task, Task
 from .ollama_client import OllamaClient
 from .planner import Planner
 from .project_index import ProjectIndex
-from .prompts import executor_prompt, system_prompt
+from .prompts import executor_prompt, final_report_prompt, system_prompt
 from .reflector import Reflector
 from .tools import build_default_registry
 from .validator import Validator
@@ -85,7 +85,9 @@ class CodingAgent:
 
         # Establish baseline (what was already failing before we changed anything).
         baseline: List[ValidationResult] = []
-        if not self.config.plan_only and not self.config.dry_run:
+        if not self.config.plan_only and not self.config.dry_run and not self._should_skip_baseline():
+            if self._is_cancelled():
+                return self._cancelled_report(goal)
             try:
                 baseline = self.validator.establish_baseline()
                 self.all_validations.extend(baseline)
@@ -468,6 +470,56 @@ class CodingAgent:
                 lines.append(f"- {risk}")
         return "\n".join(lines)
 
+    def _should_skip_baseline(self) -> bool:
+        """Skip heavy baseline when Node deps are not installed yet."""
+        if self.index.package_scripts and not (self.config.workspace / "node_modules").is_dir():
+            return True
+        return False
+
+    def _report_facts(self, goal: str, plan: Plan, status: FinalStatus) -> str:
+        failed = [t.title for t in plan.tasks if t.status == TaskStatus.FAILED]
+        pending = [t.title for t in plan.tasks if t.status in {TaskStatus.PENDING, TaskStatus.RUNNING}]
+        validation_lines = [
+            f"- {v.command}: {'ok' if v.success else 'fail'} ({v.category})"
+            for v in self.all_validations[-8:]
+        ]
+        lines = [
+            f"Status: {status.value}",
+            f"Completed tasks: {', '.join(self.completed_tasks) or 'none'}",
+            f"Created files: {', '.join(self.executor.created_files) or 'none'}",
+            f"Modified files: {', '.join(self.executor.modified_files) or 'none'}",
+            f"Failed tasks: {', '.join(failed) or 'none'}",
+            f"Pending tasks: {', '.join(pending) or 'none'}",
+            f"Errors: {'; '.join(self.errors[-5:]) or 'none'}",
+            f"Fixed errors: {'; '.join(self.fixed_errors[-3:]) or 'none'}",
+            "Validations:",
+            *(validation_lines or ["- none"]),
+        ]
+        return "\n".join(lines)
+
+    def _summarize_with_llm(self, goal: str, plan: Plan, status: FinalStatus, fallback: str) -> str:
+        if self.config.dry_run or self.config.plan_only or status == FinalStatus.CANCELLED:
+            return fallback
+        if self._is_cancelled():
+            return fallback
+        stats = getattr(self.client, "stats", None)
+        if stats and stats.get("budget_remaining", 1) <= 0:
+            return fallback
+        facts = self._report_facts(goal, plan, status)
+        try:
+            summary = self.client.complete(
+                final_report_prompt(goal, facts),
+                model=self.config.reflection_model,
+                temperature=0.2,
+            )
+            if summary.strip() and not self._is_cancelled():
+                return summary.strip()
+        except Exception as exc:  # noqa: BLE001
+            if "cancelled" in str(exc).lower():
+                return fallback
+            self.logger.warn("final_report_failed", message=str(exc))
+        return fallback
+
     def _build_report(self, goal: str, plan: Plan, final_answer: str) -> AgentReport:
         failed_tasks = [t for t in plan.tasks if t.status == TaskStatus.FAILED]
         blocked_tasks = [t for t in plan.tasks if t.status == TaskStatus.BLOCKED]
@@ -494,6 +546,7 @@ class CodingAgent:
         summary = final_answer or plan.summary or "Execução concluída."
         if status != FinalStatus.SUCCESS and not final_answer:
             summary = f"{summary}\nEstado final: {status.value}"
+        summary = self._summarize_with_llm(goal, plan, status, summary)
 
         # Persist memory.
         all_files = list(dict.fromkeys(self.executor.created_files + self.executor.modified_files))[:30]

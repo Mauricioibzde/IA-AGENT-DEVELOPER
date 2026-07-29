@@ -141,6 +141,44 @@ TIER_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "ultra": 4}
 
 def resolve_model_for_run(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     """Pick the best model name for an agent run."""
+    return resolve_models_for_run(requested, installed, hardware)["coder"]
+
+
+def _pick_light_aux_model(installed: List[str], coder: str, hardware: Dict[str, Any]) -> Optional[str]:
+    """Pick a smaller installed model for planner/reflection on low-end hardware."""
+    tier = hardware.get("tier", "medium")
+    if tier not in {"minimal", "low"}:
+        return None
+
+    for entry in MODEL_CATALOG:
+        if entry.tier not in {"minimal", "low"}:
+            continue
+        if entry.ollama_name == coder:
+            continue
+        if entry.ollama_name in installed:
+            return entry.ollama_name
+
+    for name in installed:
+        if name == coder:
+            continue
+        lower = name.lower()
+        if any(tag in lower for tag in ("1.5b", "1b", ":3b", "3b")):
+            return name
+    return None
+
+
+def resolve_models_for_run(
+    requested: Optional[str], installed: List[str], hardware: Dict[str, Any]
+) -> Dict[str, str]:
+    """Resolve coder/planner/reflection models for an agent run."""
+    coder = _resolve_coder_model(requested, installed, hardware)
+    aux = None if requested and str(requested).strip() else _pick_light_aux_model(installed, coder, hardware)
+    planner = aux or coder
+    reflection = aux or coder
+    return {"coder": coder, "planner": planner, "reflection": reflection}
+
+
+def _resolve_coder_model(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     if requested and str(requested).strip():
         return str(requested).strip()
 
