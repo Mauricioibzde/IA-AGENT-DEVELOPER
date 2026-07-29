@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=4" />
+  <link rel="stylesheet" href="/static/app.css?v=5" />
 </head>
 <body>
   <div class="app">
@@ -191,7 +191,11 @@
                 </button>
               </div>
               <div class="chat-input-actions">
-                <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar execução</button>
+                <div class="busy-banner hidden" id="busyBanner">
+                  <span id="busyBannerText">Há uma execução em andamento.</span>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnForceCancel">Cancelar e liberar</button>
+                </div>
+                <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar</button>
               </div>
             </div>
           </div>
@@ -326,6 +330,11 @@
           </div>
           <span class="pull-percent" id="pullPercent">0%</span>
         </div>
+        <div class="pull-phases" id="pullPhases" aria-label="Fases do download">
+          <span class="pull-phase" data-phase="download">1. Download</span>
+          <span class="pull-phase" data-phase="install">2. Instalação</span>
+          <span class="pull-phase" data-phase="ready">3. Pronto</span>
+        </div>
         <div class="pull-bar"><div class="pull-bar-fill" id="pullBarFill"></div></div>
         <p id="pullStatus">Preparando download...</p>
         <p class="pull-error hidden" id="pullError"></p>
@@ -432,6 +441,8 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
     </div>
   </div>
 
-  <script src="/static/app.js?v=4"></script>
+  <div id="toastStack" class="toast-stack" aria-live="polite"></div>
+
+  <script src="/static/app.js?v=5"></script>
 </body>
 </html>

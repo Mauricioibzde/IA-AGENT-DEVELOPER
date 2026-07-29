@@ -1254,10 +1254,22 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def _handle_run_cancel(self) -> None:
         data = self._read_json()
         run_id = str(data.get("run_id") or "").strip()
+        workspace = str(data.get("workspace") or data.get("project_path") or "").strip()
+        force = bool(data.get("force", True))
+        if not run_id and workspace:
+            try:
+                ws = _resolve_workspace(workspace)
+            except ValueError as exc:
+                return self._send_json(400, {"error": str(exc)})
+            cancelled_id = run_manager.cancel_workspace(str(ws), force=force)
+            return self._send_json(
+                200,
+                {"ok": True, "cancelled": bool(cancelled_id), "run_id": cancelled_id, "force": force},
+            )
         if not run_id:
-            return self._send_json(400, {"error": "run_id is required"})
-        cancelled = run_manager.cancel(run_id)
-        return self._send_json(200, {"ok": True, "cancelled": cancelled, "run_id": run_id})
+            return self._send_json(400, {"error": "run_id or workspace is required"})
+        cancelled = run_manager.cancel(run_id, force=force)
+        return self._send_json(200, {"ok": True, "cancelled": cancelled, "run_id": run_id, "force": force})
 
     def _chat_history_for_ollama(self, workspace: Path, limit: int = 16) -> list:
         messages = load_messages(workspace)
@@ -1302,11 +1314,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
             }
 
         if run_manager.is_workspace_busy(workspace):
+            active = run_manager.active_for_workspace(str(workspace)) or {}
             return self._send_json(
                 409,
                 {
                     "error": "Já existe uma execução neste projeto. Cancele ou aguarde.",
                     "busy": True,
+                    "run_id": active.get("run_id"),
+                    "goal": active.get("goal"),
+                    "started_at": active.get("started_at"),
+                    "cancelled": active.get("cancelled"),
                 },
             )
 

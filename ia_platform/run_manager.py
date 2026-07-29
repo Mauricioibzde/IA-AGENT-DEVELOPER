@@ -112,12 +112,33 @@ class RunManager:
             meta = self._meta.setdefault(run_id, {})
             meta["goal"] = goal
 
-    def cancel(self, run_id: str) -> bool:
+    def cancel(self, run_id: str, *, force: bool = False) -> bool:
+        """Mark a run cancelled. With force=True, free the workspace lock immediately."""
         with self._lock:
-            if run_id not in self._active:
+            known = run_id in self._active or any(rid == run_id for rid in self._workspace_runs.values())
+            if not known:
                 return False
             self._cancelled.add(run_id)
+            meta = self._meta.setdefault(run_id, {})
+            meta["status"] = "cancelling" if not force else "cancelled"
+            if force:
+                self._active.discard(run_id)
+                meta["status"] = "cancelled"
+                for workspace, active_id in list(self._workspace_runs.items()):
+                    if active_id == run_id:
+                        del self._workspace_runs[workspace]
+                        break
             return True
+
+    def cancel_workspace(self, workspace: str, *, force: bool = True) -> Optional[str]:
+        """Cancel the active run for a workspace. Returns run_id if any."""
+        workspace_key = self._normalize_workspace(workspace)
+        with self._lock:
+            run_id = self._workspace_runs.get(workspace_key)
+            if not run_id:
+                return None
+        self.cancel(run_id, force=force)
+        return run_id
 
     def is_cancelled(self, run_id: str) -> bool:
         with self._lock:
@@ -126,7 +147,19 @@ class RunManager:
     def is_workspace_busy(self, workspace: str) -> bool:
         workspace_key = self._normalize_workspace(workspace)
         with self._lock:
-            return workspace_key in self._workspace_runs
+            run_id = self._workspace_runs.get(workspace_key)
+            if not run_id:
+                return False
+            # Auto-free locks that stayed cancelled too long (agent stuck in LLM stream).
+            meta = self._meta.get(run_id) or {}
+            if run_id in self._cancelled:
+                started = float(meta.get("started_at") or 0)
+                if started and time.time() - started > 45:
+                    self._active.discard(run_id)
+                    del self._workspace_runs[workspace_key]
+                    meta["status"] = "cancelled"
+                    return False
+            return True
 
     def workspace_for(self, run_id: str) -> Optional[str]:
         with self._lock:

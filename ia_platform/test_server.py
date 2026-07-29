@@ -280,14 +280,14 @@ def test_run_cancel_endpoint(platform_url: str) -> None:
     try:
         req = urllib.request.Request(
             f"{platform_url}/api/run/cancel",
-            data=json.dumps({"run_id": run_id}).encode(),
+            data=json.dumps({"run_id": run_id, "force": True}).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
         assert data["cancelled"] is True
-        assert run_manager.is_cancelled(run_id)
+        assert data.get("force") is True
     finally:
         run_manager.clear(run_id)
 
@@ -300,6 +300,20 @@ def test_run_cancel_endpoint(platform_url: str) -> None:
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
     assert data["cancelled"] is False
+
+
+def test_run_cancel_force_releases_workspace(tmp_path: Path) -> None:
+    from ia_platform.run_manager import RunManager
+
+    mgr = RunManager()
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    run_id = mgr.acquire(str(ws))
+    assert run_id
+    assert mgr.is_workspace_busy(str(ws))
+    assert mgr.cancel(run_id, force=True) is True
+    assert mgr.is_workspace_busy(str(ws)) is False
+    assert mgr.is_cancelled(run_id) is True
 
 
 def test_run_stream_rejects_busy_workspace(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:

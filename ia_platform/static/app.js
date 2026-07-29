@@ -141,7 +141,12 @@
     pullModelName: $("pullModelName"),
     pullPercent: $("pullPercent"),
     pullError: $("pullError"),
+    pullPhases: $("pullPhases"),
     modelActionFeedback: $("modelActionFeedback"),
+    toastStack: $("toastStack"),
+    busyBanner: $("busyBanner"),
+    busyBannerText: $("busyBannerText"),
+    btnForceCancel: $("btnForceCancel"),
     modelHint: $("modelHint"),
     chatHero: $("chatHero"),
     previewViewport: $("previewViewport"),
@@ -1203,11 +1208,74 @@
     `;
   }
 
+  function showToast(message, kind = "info", ms = 4200) {
+    if (!els.toastStack) return;
+    const toast = document.createElement("div");
+    toast.className = `toast ${kind === "ok" ? "ok" : kind === "err" ? "err" : "info"}`;
+    toast.innerHTML = message;
+    els.toastStack.appendChild(toast);
+    window.setTimeout(() => {
+      toast.style.opacity = "0";
+      toast.style.transition = "opacity 0.2s ease";
+      window.setTimeout(() => toast.remove(), 220);
+    }, ms);
+  }
+
+  function showBusyBanner(info = {}) {
+    if (!els.busyBanner) return;
+    const goal = info.goal ? String(info.goal).slice(0, 80) : "";
+    const started = info.started_at ? Math.max(0, Math.round(Date.now() / 1000 - Number(info.started_at))) : null;
+    const wait = started != null ? ` · ${started}s` : "";
+    if (els.busyBannerText) {
+      els.busyBannerText.textContent = goal
+        ? `Execução em andamento${wait}: ${goal}`
+        : `Já existe uma execução neste projeto${wait}. Cancele para liberar.`;
+    }
+    els.busyBanner.classList.remove("hidden");
+    els.btnCancel?.classList.remove("hidden");
+    if (els.btnCancel) els.btnCancel.disabled = false;
+    if (info.run_id) state.runId = info.run_id;
+  }
+
+  function hideBusyBanner() {
+    els.busyBanner?.classList.add("hidden");
+  }
+
+  function setPullPhase(phase) {
+    if (!els.pullPhases) return;
+    const order = ["download", "install", "ready"];
+    if (phase === "error") {
+      els.pullPhases.querySelectorAll("[data-phase]").forEach((el) => {
+        if (el.classList.contains("active") || el.classList.contains("done")) {
+          el.classList.add("err");
+        }
+        el.classList.remove("active");
+      });
+      return;
+    }
+    const idx = order.indexOf(phase);
+    els.pullPhases.querySelectorAll("[data-phase]").forEach((el) => {
+      const name = el.getAttribute("data-phase");
+      const pos = order.indexOf(name);
+      el.classList.remove("active", "done", "err");
+      if (pos < idx) el.classList.add("done");
+      else if (pos === idx) el.classList.add("active");
+    });
+  }
+
+  function classifyPullPhase(status) {
+    const s = String(status || "").toLowerCase();
+    if (/verif|digest|writ|packing|install|success/.test(s)) return "install";
+    if (/download|pull|manifest|layer|fetch/.test(s)) return "download";
+    return "download";
+  }
+
   function showModelFeedback(message, kind = "info") {
     if (!els.modelActionFeedback) return;
     els.modelActionFeedback.classList.remove("hidden", "ok", "err", "info");
     els.modelActionFeedback.classList.add(kind === "ok" ? "ok" : kind === "err" ? "err" : "info");
     els.modelActionFeedback.innerHTML = message;
+    showToast(message, kind);
   }
 
   function hideModelFeedback() {
@@ -1308,11 +1376,12 @@
   function showPullProgress(model, statusText) {
     resetPullProgressUi();
     els.pullProgress?.classList.remove("hidden");
-    if (els.pullTitle) els.pullTitle.textContent = "Baixando e instalando modelo";
+    if (els.pullTitle) els.pullTitle.textContent = "Baixando modelo";
     if (els.pullModelName) els.pullModelName.textContent = model;
     if (els.pullStatus) els.pullStatus.textContent = statusText || `Iniciando download de ${model}...`;
     if (els.pullPercent) els.pullPercent.textContent = "…";
     els.pullBarFill?.classList.add("indeterminate");
+    setPullPhase("download");
     els.pullProgress?.scrollIntoView({ behavior: "smooth", block: "nearest" });
   }
 
@@ -1321,7 +1390,13 @@
     const completed = formatPullBytes(ev.completed);
     const total = formatPullBytes(ev.total);
     const sizeBit = completed && total ? ` (${completed} / ${total})` : completed ? ` (${completed})` : "";
-    const statusText = `${ev.status || `Baixando ${model}...`}${sizeBit}${pct != null ? ` — ${pct}%` : ""}`;
+    const phase = classifyPullPhase(ev.status);
+    setPullPhase(phase);
+    const phaseLabel = phase === "install" ? "Instalando" : "Baixando";
+    if (els.pullTitle) {
+      els.pullTitle.textContent = phase === "install" ? "Instalando modelo no Ollama" : "Baixando modelo";
+    }
+    const statusText = `${ev.status || `${phaseLabel} ${model}...`}${sizeBit}${pct != null ? ` — ${pct}%` : ""}`;
 
     if (els.pullStatus) els.pullStatus.textContent = statusText;
     if (pct != null) {
@@ -1338,21 +1413,24 @@
   function finishPullProgress(model, success, errorMsg) {
     els.pullBarFill?.classList.remove("indeterminate");
     if (success) {
+      setPullPhase("ready");
       els.pullProgress?.classList.add("is-success");
       els.pullProgress?.classList.remove("is-error");
       if (els.pullBarFill) els.pullBarFill.style.width = "100%";
       if (els.pullPercent) els.pullPercent.textContent = "100%";
       if (els.pullTitle) els.pullTitle.textContent = "Modelo instalado";
-      if (els.pullStatus) els.pullStatus.textContent = `${model} pronto para uso neste servidor Forge/Ollama.`;
+      if (els.pullStatus) els.pullStatus.textContent = `${model} instalado e pronto para uso.`;
       if (els.pullError) els.pullError.classList.add("hidden");
       updateCardPullProgress(model, 100, "Instalado com sucesso");
-      showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> baixado e selecionado.`, "ok");
+      showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> instalado com sucesso.`, "ok");
+      showToast(`Modelo ${escapeHtml(model)} instalado.`, "ok", 5000);
     } else {
+      setPullPhase("error");
       const explained = explainPullError(errorMsg);
       els.pullProgress?.classList.add("is-error");
       els.pullProgress?.classList.remove("is-success");
       if (els.pullTitle) els.pullTitle.textContent = explained.title;
-      if (els.pullStatus) els.pullStatus.textContent = "O download não foi concluído.";
+      if (els.pullStatus) els.pullStatus.textContent = "O download/instalação não foi concluído.";
       if (els.pullError) {
         els.pullError.textContent = explained.detail;
         els.pullError.classList.remove("hidden");
@@ -1383,7 +1461,8 @@
             return;
           }
           setModelSelection(model);
-          showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> selecionado para as próximas execuções.`, "ok");
+          showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> selecionado.`, "ok");
+          showToast(`Modelo selecionado: ${escapeHtml(model)}`, "ok");
           return;
         }
         if (btn.dataset.action === "pull") {
@@ -2473,17 +2552,27 @@
   }
 
   async function cancelRun() {
-    if (!state.running) return;
-    if (state.runId) {
-      fetch("/api/run/cancel", {
-        method: "POST",
-        headers: { "Content-Type": "application/json" },
-        body: JSON.stringify({ run_id: state.runId }),
-      }).catch(() => {});
+    hideBusyBanner();
+    const runId = state.runId;
+    const workspace = state.current?.path;
+    const payload = { force: true };
+    if (runId) payload.run_id = runId;
+    else if (workspace) payload.workspace = workspace;
+    if (runId || workspace) {
+      try {
+        await fetch("/api/run/cancel", {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify(payload),
+        });
+      } catch (_) {
+        /* ignore */
+      }
     }
     if (state.abortController) {
       state.abortController.abort();
     }
+    showToast("Execução cancelada — fila liberada.", "info");
   }
 
   async function sendPrompt() {
@@ -2561,8 +2650,16 @@
   function looksLikeConversationOnly(text) {
     const t = String(text || "").trim();
     if (!t) return false;
-    if (looksLikeCodeRequest(t)) return false;
     const lower = t.toLowerCase();
+    // Meta questions about the agent itself should stay in Chat.
+    if (
+      /\b(descreva|objetivo|projetad[oa]|para que (voc[eê]|vc)|capaz de|voc[eê] (consegue|pode|foi)|seu (prop[oó]sito|objetivo)|o que (voc[eê]|vc) (é|e|faz))\b/i.test(
+        lower
+      )
+    ) {
+      return true;
+    }
+    if (looksLikeCodeRequest(t)) return false;
     if (t.length <= 120) {
       if (/^(oi|ol[aá]|iae|e a[ií]|hey|hi|hello|bom dia|boa tarde|boa noite)\b/i.test(lower)) return true;
       if (/^(tudo bem|como vai|obrigad[oa]|valeu|ok|beleza)\b/i.test(lower)) return true;
@@ -2603,6 +2700,14 @@
 
     const t = String(text || "").toLowerCase().trim();
     if (t.length < 12) return false;
+    // Capability / purpose questions are conversation, not build requests.
+    if (
+      /\b(descreva|objetivo|projetad[oa]|para que (voc[eê]|vc)|capaz de|voc[eê] (consegue|pode|foi)|seu (prop[oó]sito|objetivo))\b/i.test(
+        t
+      )
+    ) {
+      return false;
+    }
     // Pure questions / explanations stay in Chat even if they mention "site"/"app".
     if (
       /^(me )?(explica|explique|o que|qual|como funciona|por\s*qu[eê]|pode (me )?(dizer|explicar))\b/i.test(t) ||
@@ -2648,6 +2753,7 @@
 
   async function sendChatPrompt(prompt) {
     state.pendingPrompt = null;
+    hideBusyBanner();
     addMessage(prompt, "user");
     els.promptInput.value = "";
     updateChatHeroVisibility();
@@ -2656,12 +2762,20 @@
     state.abortController = new AbortController();
     els.btnSend.disabled = true;
     els.btnCancel?.classList.remove("hidden");
-    els.btnCancel.disabled = true;
+    if (els.btnCancel) els.btnCancel.disabled = false;
 
-    const statusEl = addMessage("Respondendo…", "progress");
+    const statusEl = addMessage("pensando...", "progress");
     const agentEl = addMessage("", "agent live");
+    setThinkingState(agentEl);
     let wasAbort = false;
     let fullText = "";
+    let elapsed = 0;
+    const waitTimer = window.setInterval(() => {
+      elapsed += 1;
+      if (statusEl.isConnected && !fullText) {
+        statusEl.textContent = `Chat · carregando resposta… ${elapsed}s (pode demorar se o modelo estiver frio)`;
+      }
+    }, 1000);
 
     try {
       await persistMessage("user", prompt);
@@ -2700,10 +2814,10 @@
           if (!ev) continue;
           if (ev.type === "started" && ev.run_id) {
             state.runId = ev.run_id;
-            els.btnCancel.disabled = false;
-            statusEl.textContent = `Chat · ${ev.model || "auto"} · primeira resposta pode demorar se o modelo estiver a carregar…`;
+            if (els.btnCancel) els.btnCancel.disabled = false;
+            statusEl.textContent = `Chat · ${ev.model || "auto"} · ${elapsed}s`;
           } else if (ev.type === "chat_chunk" && ev.text) {
-            if (statusEl.isConnected) statusEl.textContent = `Chat · respondendo…`;
+            if (statusEl.isConnected) statusEl.textContent = `Chat · respondendo… ${elapsed}s`;
             clearThinkingState(agentEl);
             fullText += ev.text;
             agentEl.textContent = fullText;
@@ -2734,19 +2848,24 @@
       }
     } catch (e) {
       removeMessage(statusEl);
+      clearThinkingState(agentEl);
       agentEl.classList.remove("live", "thinking");
       if (e.status === 409 || e.data?.busy) {
         agentEl.textContent = e.message || "Já existe uma execução neste projeto.";
         agentEl.classList.add("error");
+        showBusyBanner(e.data || {});
+        showToast("Projeto ocupado — clique em Cancelar e liberar.", "err", 6000);
       } else if (e.name === "AbortError") {
         wasAbort = true;
         agentEl.textContent = "Chat cancelado.";
         agentEl.classList.add("error");
+        hideBusyBanner();
       } else if (e.status === 503 || e.data?.ollama_offline) {
         const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
         if (ready) {
           els.promptInput.value = prompt;
           state.running = false;
+          window.clearInterval(waitTimer);
           removeMessage(agentEl);
           return sendChatPrompt(prompt);
         }
@@ -2767,12 +2886,15 @@
         await persistMessage("agent", agentEl.textContent).catch(() => {});
       }
     } finally {
+      window.clearInterval(waitTimer);
       state.running = false;
       state.runId = null;
       state.abortController = null;
       els.btnSend.disabled = false;
-      els.btnCancel?.classList.add("hidden");
-      els.btnCancel.disabled = false;
+      if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) {
+        els.btnCancel?.classList.add("hidden");
+      }
+      if (els.btnCancel) els.btnCancel.disabled = false;
       updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
@@ -4132,10 +4254,24 @@
 
   els.btnClearChat?.addEventListener("click", clearChat);
   els.btnCancel?.addEventListener("click", cancelRun);
+  els.btnForceCancel?.addEventListener("click", async () => {
+    await cancelRun();
+    hideBusyBanner();
+  });
   els.modelSelect?.addEventListener("change", () => {
     const custom = els.modelSelect.value === "__custom__";
     els.modelCustomInput?.classList.toggle("hidden", !custom);
-    if (custom) els.modelCustomInput?.focus();
+    if (custom) {
+      els.modelCustomInput?.focus();
+      showToast("Digite o nome do modelo Ollama personalizado.", "info");
+      return;
+    }
+    const selected = getSelectedModel();
+    if (!selected) {
+      showToast("Modelo: Auto (recomendado)", "ok");
+      return;
+    }
+    showToast(`Modelo selecionado: ${selected}`, "ok");
   });
   els.promptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
