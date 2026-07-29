@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import re
 from dataclasses import asdict, dataclass
 from typing import Any, Dict, List, Optional
 
@@ -142,6 +143,61 @@ TIER_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "ultra": 4}
 def resolve_model_for_run(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     """Pick the best model name for an agent run."""
     return resolve_models_for_run(requested, installed, hardware)["coder"]
+
+
+def estimate_model_size_gb(name: str) -> float:
+    """Best-effort parameter/size estimate for ranking fallback models."""
+    entry = _catalog_entry_for_name(name)
+    if entry:
+        return float(entry.params_b or entry.size_gb or 99.0)
+    match = re.search(r"(\d+(?:\.\d+)?)\s*b\b", (name or "").lower())
+    if match:
+        return float(match.group(1))
+    return 99.0
+
+
+def pick_smaller_fallback_model(failed: str, installed: List[str]) -> Optional[str]:
+    """Pick the best smaller installed model after a load/OOM failure.
+
+    Prefers the largest coder that is still smaller than the failed model.
+    """
+    failed_name = (failed or "").strip()
+    if not failed_name or not installed:
+        return None
+    failed_size = estimate_model_size_gb(failed_name)
+    candidates: List[tuple[float, str]] = []
+    for name in installed:
+        lower = (name or "").lower()
+        if not lower or lower == failed_name.lower():
+            continue
+        if "embed" in lower or lower.endswith("-base"):
+            continue
+        size = estimate_model_size_gb(name)
+        # Must be meaningfully smaller (avoid 14b when 32b OOM'd on tight hosts).
+        if size >= failed_size or size >= max(failed_size * 0.85, failed_size - 0.1):
+            continue
+        score = size * 10.0
+        if "coder" in lower:
+            score += 40.0
+        if any(tag in lower for tag in (":7b", "7b", "6.7b", "8b")):
+            score += 12.0
+        if any(tag in lower for tag in (":3b", "3b", "1.5b", "1b")):
+            score += 4.0
+        candidates.append((score, name))
+    if not candidates:
+        # Last resort: any other non-base installed model, smallest first.
+        leftovers: List[tuple[float, str]] = []
+        for name in installed:
+            lower = (name or "").lower()
+            if not lower or lower == failed_name.lower() or "embed" in lower or lower.endswith("-base"):
+                continue
+            leftovers.append((estimate_model_size_gb(name), name))
+        if not leftovers:
+            return None
+        leftovers.sort(key=lambda item: item[0])
+        return leftovers[0][1]
+    candidates.sort(key=lambda item: item[0], reverse=True)
+    return candidates[0][1]
 
 
 def _pick_light_aux_model(installed: List[str], coder: str, hardware: Dict[str, Any]) -> Optional[str]:

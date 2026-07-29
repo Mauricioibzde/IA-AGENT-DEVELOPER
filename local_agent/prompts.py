@@ -268,14 +268,26 @@ def minimal_safe_plan(goal: str) -> dict:
     backend = _goal_looks_backend(goal)
     plain_web = _goal_looks_plain_web(goal)
     react = _goal_looks_react(goal)
+    g = (goal or "").lower()
+    # "Adicione uma seção na página" on an existing HTML app — treat as plain web edit.
+    page_edit = bool(
+        re.search(r"\b(se[cç][aã]o|section|página|pagina|layout|hero|rodapé|footer)\b", g)
+    ) and not react
 
-    if plain_web and not backend:
+    if (plain_web or (page_edit and not backend)) and not backend:
         validate: list[str] = []
+        editing = bool(re.search(r"\b(adicion|alter|edit|atualiz|inclu|melhor)\b", g)) or "index.html" in g
         execute_desc = (
             f"{goal}\n"
-            "Crie/atualize uma app pequena estática: index.html + style.css + app.js. "
-            "HTML semântico, CSS polido, JS mínimo funcional. NÃO use React/Vite/npm "
-            "a menos que o usuário peça. Não rode npm run build."
+            + (
+                "Edite a página estática existente (index.html + style.css + app.js). "
+                "HTML semântico, CSS polido, JS mínimo. NÃO use React/Vite/npm. "
+                "Não rode npm/pytest/python."
+                if editing
+                else "Crie/atualize uma app pequena estática: index.html + style.css + app.js. "
+                "HTML semântico, CSS polido, JS mínimo funcional. NÃO use React/Vite/npm "
+                "a menos que o usuário peça. Não rode npm run build."
+            )
         )
         return {
             "goal": goal,
@@ -284,7 +296,7 @@ def minimal_safe_plan(goal: str) -> dict:
             "tasks": [
                 {
                     "id": "task-1",
-                    "title": "Criar app HTML/CSS/JS",
+                    "title": "Editar HTML/CSS/JS" if editing else "Criar app HTML/CSS/JS",
                     "description": execute_desc,
                     "dependencies": [],
                     "relevant_files": ["index.html", "style.css", "app.js"],

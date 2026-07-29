@@ -189,6 +189,17 @@ def test_installed_model_name_does_not_cross_match_size_tags() -> None:
     assert _installed_model_name("llama3.2", ["llama3.2:3b"]) == "llama3.2:3b"
 
 
+def test_pick_smaller_fallback_prefers_coder_under_failed() -> None:
+    from ia_platform.model_catalog import pick_smaller_fallback_model
+
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b", "llama3.2:3b"]
+    assert pick_smaller_fallback_model("qwen2.5-coder:32b", installed) == "deepseek-coder:6.7b"
+    assert pick_smaller_fallback_model("deepseek-coder:6.7b", ["qwen2.5-coder:1.5b", "llama3.2:3b"]) in {
+        "qwen2.5-coder:1.5b",
+        "llama3.2:3b",
+    }
+
+
 def test_resolve_model_for_chat_skips_oversized_installed() -> None:
     hw = {
         "tier": "medium",

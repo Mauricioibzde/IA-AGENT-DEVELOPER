@@ -26,13 +26,15 @@ class Planner:
         conversation: str = "",
     ) -> Plan:
         prompt = planner_prompt(goal, project_summary, conversation=conversation)
+        # Prefer the live model (may already have fallen back after an OOM).
+        model = getattr(self.client, "active_model", None) or self.model
         try:
-            raw = self.client.complete(prompt, model=self.model, temperature=0.1)
+            raw = self.client.complete(prompt, model=model, temperature=0.1)
             data = self._parse_plan_json(raw)
             if data is None:
                 repair = self.client.complete(
                     "Your previous output was not valid JSON. Fix it and return ONLY the plan JSON:\n" + raw[:3000],
-                    model=self.model,
+                    model=getattr(self.client, "active_model", None) or model,
                     temperature=0,
                 )
                 data = self._parse_plan_json(repair)
@@ -40,6 +42,18 @@ class Planner:
                 data = minimal_safe_plan(goal)
         except Exception:
             data = minimal_safe_plan(goal)
+
+        # Existing static HTML/CSS/JS projects should get an edit-oriented fallback.
+        from .web_scaffold import is_plain_web_workspace
+
+        if (
+            index
+            and is_plain_web_workspace(index.workspace)
+            and str(data.get("summary") or "").startswith("Plano mínimo seguro")
+        ):
+            data = minimal_safe_plan(
+                f"{goal}\n(contexto: projeto HTML/CSS/JS estático com index.html)"
+            )
 
         plan = self._to_plan(data, fallback_goal=goal)
 

@@ -4134,6 +4134,32 @@
         });
         setWorkingState(agentEl, "Cancelando…", "Parando no próximo ponto seguro", activity);
         break;
+      case "model_fallback": {
+        const fromModel = ev.from_model || "modelo grande";
+        const toModel = ev.to_model || "modelo menor";
+        updateActivity(activity, {
+          phaseId: "prepare",
+          stage: "Trocando modelo",
+          detail: `${fromModel} sem memória → usando ${toModel}`,
+          model: toModel,
+        });
+        setWorkingState(
+          agentEl,
+          `Trocando para ${toModel}`,
+          `${fromModel} falhou por memória no Ollama`,
+          activity
+        );
+        showToast(
+          `Modelo <strong>${escapeHtml(fromModel)}</strong> sem memória — continuando com <strong>${escapeHtml(toModel)}</strong>.`,
+          "info",
+          7000
+        );
+        if (toModel) {
+          setModelSelection(toModel);
+          rememberModelPreference(toModel);
+        }
+        break;
+      }
       case "planning":
         updateActivity(activity, {
           phaseId: "plan",

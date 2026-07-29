@@ -63,6 +63,7 @@ class CodingAgent:
         self.completed_tasks: List[str] = []
         self.all_validations: List[ValidationResult] = []
         self._deps_ensured = False
+
     def _event(self, kind: str, **fields: Any) -> None:
         if not self.event_sink:
             return
@@ -70,6 +71,26 @@ class CodingAgent:
             self.event_sink({"type": kind, **fields})
         except Exception:  # noqa: BLE001
             pass
+
+    def _emit_model_fallback_if_any(self) -> None:
+        consume = getattr(self.client, "consume_fallback_event", None)
+        if not callable(consume):
+            return
+        info = consume()
+        if not info:
+            return
+        from_model = info.get("from") or "?"
+        to_model = info.get("to") or "?"
+        self.errors.append(
+            f"Modelo '{from_model}' sem memória suficiente — continuando com '{to_model}'."
+        )
+        self.planner.model = to_model
+        self._event(
+            "model_fallback",
+            from_model=from_model,
+            to_model=to_model,
+            message=f"Modelo {from_model} falhou (memória). Usando {to_model}.",
+        )
 
     def _is_cancelled(self) -> bool:
         return bool(self.config.cancel_check and self.config.cancel_check())
@@ -142,6 +163,7 @@ class CodingAgent:
             index=self.index,
             conversation=conversation_context or "",
         )
+        self._emit_model_fallback_if_any()
         for task in plan.tasks:
             task.max_attempts = self.config.max_task_attempts
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))
@@ -248,9 +270,11 @@ class CodingAgent:
                     )
                 if self._is_cancelled():
                     return self._cancelled_report(goal, plan)
+                self._emit_model_fallback_if_any()
             except Exception as exc:  # noqa: BLE001
                 if self._is_cancelled() or "cancelled" in str(exc).lower():
                     return self._cancelled_report(goal, plan)
+                self._emit_model_fallback_if_any()
                 self.errors.append(f"LLM error: {exc}")
                 self._event("error", message=str(exc))
                 task.status = TaskStatus.FAILED

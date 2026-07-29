@@ -12,10 +12,15 @@ def looks_like_plain_web_goal(goal: str) -> bool:
     g = (goal or "").lower()
     if re.search(r"\b(react|vite|next\.?js|fastapi|flask|express|django|api rest|backend)\b", g):
         return False
-    has_web = bool(re.search(r"\b(html|css|javascript|\bjs\b|site|página|pagina|landing|aplicat|app)\b", g))
+    has_web = bool(
+        re.search(
+            r"\b(html|css|javascript|\bjs\b|site|página|pagina|landing|aplicat|app|se[cç][aã]o|section|layout)\b",
+            g,
+        )
+    )
     wants_create = bool(
         re.search(
-            r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|build|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit|atualiz|implement)\b",
+            r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|build|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit|atualiz|implement|inclu)\b",
             g,
         )
     )
