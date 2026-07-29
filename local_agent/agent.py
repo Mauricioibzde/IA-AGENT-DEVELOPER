@@ -129,7 +129,12 @@ class CodingAgent:
         relevant = self.index.relevant_summary(goal, limit=10)
         if relevant:
             index_summary = f"{index_summary}\n\n{relevant}"
-        plan = self.planner.create_plan(goal, index_summary, index=self.index)
+        plan = self.planner.create_plan(
+            goal,
+            index_summary,
+            index=self.index,
+            conversation=conversation_context or "",
+        )
         for task in plan.tasks:
             task.max_attempts = self.config.max_task_attempts
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))

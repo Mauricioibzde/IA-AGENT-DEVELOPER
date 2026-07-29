@@ -23,8 +23,9 @@ class Planner:
         project_summary: str,
         *,
         index: Optional[ProjectIndex] = None,
+        conversation: str = "",
     ) -> Plan:
-        prompt = planner_prompt(goal, project_summary)
+        prompt = planner_prompt(goal, project_summary, conversation=conversation)
         try:
             raw = self.client.complete(prompt, model=self.model, temperature=0.1)
             data = self._parse_plan_json(raw)

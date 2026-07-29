@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import json
+import re
 import time
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -114,7 +115,45 @@ def format_conversation_context(messages: List[Dict[str, Any]], limit: int = 16)
             meta = msg.get("meta") if isinstance(msg.get("meta"), dict) else {}
             status = meta.get("status")
             prefix = f"Agente ({status}): " if status else "Agente: "
-            lines.append(f"{prefix}{text[:800]}")
+            lines.append(f"{prefix}{text[:1600]}")
         else:
             lines.append(f"Sistema: {text[:400]}")
     return "\n".join(lines)
+
+
+def looks_like_implement_follow_up(goal: str) -> bool:
+    text = str(goal or "").strip().lower()
+    if not text:
+        return False
+    if re.search(
+        r"\b(implement(e|ar)?|aplique|aplica|realize|execute|adicione|fa[cç]a|coloque)\b",
+        text,
+    ) and re.search(
+        r"\b(isso|ess[ea]s?|aquilo|melhorias?|sugest\w*|altera[cç]\w*|mudan[cç]\w*|pedido|no projeto|no c[oó]digo|no chat)\b",
+        text,
+    ):
+        return True
+    if re.match(r"^implemente(\s+(vc|voc[eê]|as|isso|essas?))?", text):
+        return True
+    if re.match(r"^(aplica|aplique|fa[cç]a)\s+(as\s+)?(melhorias|sugest|mudan|altera)", text):
+        return True
+    return False
+
+
+def enrich_goal_with_conversation(goal: str, conversation: str) -> str:
+    """When the user says 'implement the suggestions', stitch chat context into the goal."""
+    goal_text = str(goal or "").strip()
+    conv = str(conversation or "").strip()
+    if not goal_text or not conv:
+        return goal_text
+    if "--- contexto" in goal_text.lower() or "aplique isto" in goal_text.lower():
+        return goal_text
+    if not looks_like_implement_follow_up(goal_text):
+        return goal_text
+    return (
+        f"{goal_text}\n\n"
+        "--- Contexto do chat anterior (APLIQUE no código do projeto) ---\n"
+        f"{conv[:4500]}\n"
+        "--- Fim do contexto ---\n"
+        "Edite os arquivos necessários agora; não responda só com texto."
+    )

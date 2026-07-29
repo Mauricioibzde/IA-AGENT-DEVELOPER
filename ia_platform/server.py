@@ -21,8 +21,14 @@ REPO_ROOT = ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ia_platform.conversations import append_message, clear_messages, format_conversation_context, list_recent_chats, load_messages
-from ia_platform.deploy import deploy_preflight, deploy_project
+from ia_platform.conversations import (
+    append_message,
+    clear_messages,
+    enrich_goal_with_conversation,
+    format_conversation_context,
+    list_recent_chats,
+    load_messages,
+)from ia_platform.deploy import deploy_preflight, deploy_project
 from ia_platform.project_ops import archive_project, duplicate_project, list_projects, rename_project
 from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
@@ -1623,7 +1629,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 self._send_sse(ev)
 
             agent = CodingAgent(config, event_sink=_sink)
-            report = agent.run(prompt, conversation_context=conversation)
+            run_goal = enrich_goal_with_conversation(prompt, conversation or "")
+            report = agent.run(run_goal, conversation_context=conversation)
             result = self._finalize_run(workspace, project_id, report, run_id=run_id, events=timeline)
             done_ev = {"type": "done", **result}
             run_manager.append_event(run_id, done_ev)

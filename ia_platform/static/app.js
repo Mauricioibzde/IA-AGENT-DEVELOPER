@@ -613,34 +613,85 @@
   }
 
   function getSelectedModel() {
-    const composerVal = els.composerModelSelect?.value;
-    if (composerVal) return composerVal;
+    return resolveModelForRequest();
+  }
+
+  function topBarModelValue() {
     const value = els.modelSelect?.value || "__auto__";
     if (value === "__auto__") return null;
     if (value === "__custom__") {
       const custom = els.modelCustomInput?.value.trim();
       return custom || null;
     }
-    return value;
+    return value || null;
   }
 
-  function setModelSelection(model) {
+  function resolveModelForRequest() {
+    const top = topBarModelValue();
+    const composerVal = els.composerModelSelect?.value || "";
+    // Prefer an explicit non-empty composer only when top is Auto.
+    if (!top && composerVal) return composerVal;
+    if (top) return top;
+    return null;
+  }
+
+  function syncModelSelectorsFromCanonical() {
+    const top = topBarModelValue();
+    const composerVal = els.composerModelSelect?.value || "";
+    // If they diverge, top bar wins (Work toolbar); mirror into composer.
+    if (top && els.composerModelSelect) {
+      const opts = Array.from(els.composerModelSelect.options).map((o) => o.value);
+      if (opts.includes(top)) els.composerModelSelect.value = top;
+    } else if (!top && composerVal) {
+      // Composer had a model while top was Auto — promote composer to top.
+      setModelSelection(composerVal, { skipComposer: true });
+    } else if (!top && els.composerModelSelect) {
+      els.composerModelSelect.value = "";
+    }
+  }
+
+  function pickFittingInstalledModel(avoidName) {
+    const catalog = state.modelRecommendations?.catalog || [];
+    const installed = state.models || [];
+    const avoid = String(avoidName || "").toLowerCase();
+    const recommended = state.recommendedModel;
+    if (
+      recommended &&
+      recommended.toLowerCase() !== avoid &&
+      installed.includes(recommended) &&
+      modelFitsHardware(recommended)
+    ) {
+      return recommended;
+    }
+    const fitting = catalog
+      .filter((e) => e.installed && e.fits !== false && String(e.ollama_name || "").toLowerCase() !== avoid)
+      .sort((a, b) => (b.score || 0) - (a.score || 0));
+    if (fitting[0]?.ollama_name) return fitting[0].ollama_name;
+    return installed.find((name) => name.toLowerCase() !== avoid && modelFitsHardware(name)) || null;
+  }
+
+  function setModelSelection(model, opts = {}) {
     if (!els.modelSelect) return;
     const options = Array.from(els.modelSelect.options).map((o) => o.value);
     if (!model) {
       els.modelSelect.value = "__auto__";
       els.modelCustomInput?.classList.add("hidden");
+      if (!opts.skipComposer && els.composerModelSelect) els.composerModelSelect.value = "";
       return;
     }
     if (options.includes(model)) {
       els.modelSelect.value = model;
       els.modelCustomInput?.classList.add("hidden");
-      return;
+    } else {
+      els.modelSelect.value = "__custom__";
+      if (els.modelCustomInput) {
+        els.modelCustomInput.value = model;
+        els.modelCustomInput.classList.remove("hidden");
+      }
     }
-    els.modelSelect.value = "__custom__";
-    if (els.modelCustomInput) {
-      els.modelCustomInput.value = model;
-      els.modelCustomInput.classList.remove("hidden");
+    if (!opts.skipComposer && els.composerModelSelect) {
+      const cOpts = Array.from(els.composerModelSelect.options).map((o) => o.value);
+      if (cOpts.includes(model)) els.composerModelSelect.value = model;
     }
   }
 
@@ -654,6 +705,8 @@
         recommendedNames.add(entry.ollama_name);
       }
     });
+
+    const previousCanonical = resolveModelForRequest();
 
     if (els.modelGroupInstalled) {
       els.modelGroupInstalled.innerHTML = (installed || [])
@@ -674,10 +727,16 @@
     if (els.composerModelSelect) {
       const opts = ['<option value="">Auto</option>']
         .concat((installed || []).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(modelOptionLabel(name, catalog))}</option>`));
-      const current = els.composerModelSelect.value;
       els.composerModelSelect.innerHTML = opts.join("");
-      if (current && (installed || []).includes(current)) els.composerModelSelect.value = current;
     }
+
+    // Restore a single canonical selection on both selectors.
+    const preferred = readModelPreference();
+    const restore =
+      (previousCanonical && (installed || []).includes(previousCanonical) && previousCanonical) ||
+      (preferred && (installed || []).includes(preferred) && preferred) ||
+      null;
+    setModelSelection(restore);
   }
 
   // ── API helpers ──
@@ -3044,9 +3103,22 @@
 
     if (!prompt || state.running || !state.current) return;
 
-    const selectedModel = getSelectedModel();
+    // Capture model once and keep selectors in sync before any routing.
+    syncModelSelectorsFromCanonical();
+    let selectedModel = resolveModelForRequest();
     if (selectedModel && !modelFitsHardware(selectedModel)) {
       warnIfModelTooLarge(selectedModel);
+      const fallback = pickFittingInstalledModel(selectedModel);
+      if (fallback) {
+        showToast(
+          `Modelo ${escapeHtml(selectedModel)} pode falhar por memória. Usando ${escapeHtml(fallback)} nesta execução.`,
+          "info",
+          6500
+        );
+        setModelSelection(fallback);
+        rememberModelPreference(fallback);
+        selectedModel = fallback;
+      }
     }
 
     // Keep surface mode and modeSelect aligned.
@@ -3090,16 +3162,29 @@
       );
     }
 
+    // Follow-ups like "implemente as melhorias" need prior chat suggestions attached.
+    const enrichedPrompt = enrichImplementPrompt(prompt);
+
     const mode = els.modeSelect?.value || "chat";
+    const explicitWork =
+      state.surfaceMode === "work" || mode === "execute" || mode === "plan" || mode === "dry";
+
     if (mode === "chat") {
-      if (looksLikeStrongCreateIntent(prompt) || (offlineScaffold && looksLikeCodeRequest(prompt))) {
+      if (
+        looksLikeImplementFollowUp(prompt) ||
+        looksLikeStrongCreateIntent(prompt) ||
+        (offlineScaffold && looksLikeCodeRequest(prompt))
+      ) {
         if (els.modeSelect) els.modeSelect.value = "execute";
         syncModeControls();
+        if (state.surfaceMode !== "work") setSurfaceMode("work");
         addMessage(
-          "Pedido claro de criação — executando no projeto.",
+          looksLikeImplementFollowUp(prompt)
+            ? "Pedido para aplicar melhorias — executando no projeto e editando arquivos."
+            : "Pedido claro de criação — executando no projeto.",
           "system"
         );
-        return sendAgentPrompt(prompt, "execute");
+        return sendAgentPrompt(enrichedPrompt, "execute", { displayPrompt: prompt, model: selectedModel });
       }
       if (looksLikeCodeRequest(prompt)) {
         addMessage(prompt, "user");
@@ -3112,24 +3197,90 @@
         );
         return;
       }
-      return sendChatPrompt(prompt);
+      return sendChatPrompt(prompt, { model: selectedModel });
     }
-    if (looksLikeConversationOnly(prompt)) {
+
+    // Explicit Executar / Work: never bounce short implement prompts back to Chat.
+    if (looksLikeConversationOnly(prompt) && !looksLikeImplementFollowUp(prompt) && !explicitWork) {
       if (els.modeSelect) els.modeSelect.value = "chat";
       syncModeControls();
       addMessage(
         "Isso parece só uma conversa — mudei para Chat (rápido). Use Executar código quando quiser alterar arquivos.",
         "system"
       );
-      return sendChatPrompt(prompt);
+      return sendChatPrompt(prompt, { model: selectedModel });
     }
-    return sendAgentPrompt(prompt, mode);
+    if (looksLikeConversationOnly(prompt) && explicitWork && looksLikePureGreeting(prompt)) {
+      if (els.modeSelect) els.modeSelect.value = "chat";
+      syncModeControls();
+      addMessage("Saudação detectada — respondendo no Chat.", "system");
+      return sendChatPrompt(prompt, { model: selectedModel });
+    }
+
+    return sendAgentPrompt(enrichedPrompt, mode, { displayPrompt: prompt, model: selectedModel });
+  }
+
+  function looksLikePureGreeting(text) {
+    const lower = String(text || "").trim().toLowerCase();
+    if (!lower) return false;
+    return /^(oi|ol[aá]|iae|e a[ií]|hey|hi|hello|bom dia|boa tarde|boa noite|tudo bem|como vai|obrigad[oa]|valeu|ok|beleza)[\s!.?]*$/i.test(
+      lower
+    );
+  }
+
+  function looksLikeImplementFollowUp(text) {
+    const t = String(text || "").toLowerCase().trim();
+    if (!t) return false;
+    if (
+      /\b(implement(e|ar)?|aplique|aplica|realize|execute|adicione|fa[cç]a|coloque|traga|ponha)\b/i.test(t) &&
+      /\b(isso|ess[ea]s?|aquilo|melhorias?|sugest\w*|altera[cç]\w*|mudan[cç]\w*|pedido|no projeto|no c[oó]digo|no chat|o que (voc[eê]|vc) (suger|falou|disse|propôs))\b/i.test(
+        t
+      )
+    ) {
+      return true;
+    }
+    // Common short imperatives from users after a Chat suggestion.
+    if (/^implemente(\s+(vc|voc[eê]|as|isso|essas?))?/i.test(t)) return true;
+    if (/^(aplica|aplique|fa[cç]a)\s+(as\s+)?(melhorias|sugest|mudan|altera)/i.test(t)) return true;
+    return false;
+  }
+
+  function lastAgentSuggestionText() {
+    if (!els.chatMessages) return "";
+    const msgs = [...els.chatMessages.querySelectorAll(".msg.agent")];
+    for (let i = msgs.length - 1; i >= 0; i -= 1) {
+      const el = msgs[i];
+      if (el.classList.contains("live") || el.classList.contains("error")) continue;
+      const text = (el.innerText || el.textContent || "").trim();
+      if (text.length > 60 && !/^erro:/i.test(text)) return text.slice(0, 4000);
+    }
+    return "";
+  }
+
+  function enrichImplementPrompt(prompt) {
+    if (!looksLikeImplementFollowUp(prompt)) return prompt;
+    const prior = lastAgentSuggestionText();
+    if (!prior) {
+      return (
+        `${prompt}\n\n` +
+        "Instrução: aplique no código do projeto atual as melhorias discutidas no chat. " +
+        "Edite os arquivos necessários (HTML/CSS/JS etc.); não responda só com texto."
+      );
+    }
+    return (
+      `${prompt}\n\n` +
+      "--- Contexto: última sugestão do assistente no chat (APLIQUE isto editando arquivos do projeto) ---\n" +
+      `${prior}\n` +
+      "--- Fim do contexto ---\n" +
+      "Faça as alterações de código agora. Não limite a resposta a explicações."
+    );
   }
 
   function looksLikeConversationOnly(text) {
     const t = String(text || "").trim();
     if (!t) return false;
     const lower = t.toLowerCase();
+    if (looksLikeImplementFollowUp(t) || looksLikeCodeRequest(t)) return false;
     // Meta questions about the agent itself should stay in Chat.
     if (
       /\b(descreva|objetivo|projetad[oa]|para que (voc[eê]|vc)|capaz de|voc[eê] (consegue|pode|foi)|seu (prop[oó]sito|objetivo)|o que (voc[eê]|vc) (é|e|faz))\b/i.test(
@@ -3138,10 +3289,8 @@
     ) {
       return true;
     }
-    if (looksLikeCodeRequest(t)) return false;
     if (t.length <= 120) {
-      if (/^(oi|ol[aá]|iae|e a[ií]|hey|hi|hello|bom dia|boa tarde|boa noite)\b/i.test(lower)) return true;
-      if (/^(tudo bem|como vai|obrigad[oa]|valeu|ok|beleza)\b/i.test(lower)) return true;
+      if (looksLikePureGreeting(t)) return true;
       if (
         /\b(pergunt|d[uú]vida|s[oó] (quero )?pergunt|conversar|me explica|explique|o que (é|e)|como funciona|por\s*qu[eê]|voc[eê] (é|e|pode))\b/i.test(
           lower
@@ -3150,7 +3299,8 @@
         return true;
       }
     }
-    return t.length <= 40 && !/[./\\]|\.(html|css|js|ts|py|tsx)\b/i.test(t);
+    // Do NOT treat every short imperative as chat — that blocked "implemente as melhorias".
+    return false;
   }
 
   function looksLikeOfflineScaffoldGoal(text) {
@@ -3178,7 +3328,8 @@
   function looksLikeCodeRequest(text) {
 
     const t = String(text || "").toLowerCase().trim();
-    if (t.length < 12) return false;
+    if (t.length < 8) return false;
+    if (looksLikeImplementFollowUp(t)) return true;
     // Capability / purpose questions are conversation, not build requests.
     if (
       /\b(descreva|objetivo|projetad[oa]|para que (voc[eê]|vc)|capaz de|voc[eê] (consegue|pode|foi)|seu (prop[oó]sito|objetivo))\b/i.test(
@@ -3196,11 +3347,11 @@
       return false;
     }
     const hasAction =
-      /\b(cri(e|ar)|faz(er)?|implement(e|ar)?|adicion(e|ar)?|alter(e|ar)?|edit(e|ar)?|corrig(a|ir)?|refator(e|ar)?|melhor(e|ar)|redesenh(e|ar)?|build|gera(r)?|escrev(a|er)|mont(e|ar)|atualiz(e|ar))\b/i.test(
+      /\b(cri(e|ar)|faz(er)?|implement(e|ar)?|adicion(e|ar)?|alter(e|ar)?|edit(e|ar)?|corrig(a|ir)?|refator(e|ar)?|melhor(e|ar)|redesenh(e|ar)?|build|gera(r)?|escrev(a|er)|mont(e|ar)|atualiz(e|ar)|aplique|aplica)\b/i.test(
         t
       );
     const hasTarget =
-      /\b(landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|layout|ui|ux|dashboard|backend|frontend|visual|estilo|navbar|hero|formul[aá]rio)\b/i.test(
+      /\b(landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|layout|ui|ux|dashboard|backend|frontend|visual|estilo|navbar|hero|formul[aá]rio|melhorias?|sugest\w*|mudan[cç]\w*|altera[cç]\w*|projeto)\b/i.test(
         t
       );
     return hasAction && hasTarget;
@@ -3230,7 +3381,7 @@
     return el;
   }
 
-  async function sendChatPrompt(prompt) {
+  async function sendChatPrompt(prompt, opts = {}) {
     state.pendingPrompt = null;
     hideBusyBanner();
     addMessage(prompt, "user");
@@ -3255,6 +3406,7 @@
         statusEl.textContent = `Chat · carregando resposta… ${elapsed}s (pode demorar se o modelo estiver frio)`;
       }
     }, 1000);
+    const modelForRequest = opts.model !== undefined ? opts.model : resolveModelForRequest();
 
     try {
       await persistMessage("user", prompt);
@@ -3265,7 +3417,7 @@
         body: JSON.stringify({
           prompt,
           workspace: state.current.path,
-          model: getSelectedModel() || "",
+          model: modelForRequest || "",
         }),
       });
 
@@ -3389,7 +3541,8 @@
       state._offlineScaffoldRetried = false;
     }
     state.pendingPrompt = null;
-    addMessage(prompt, "user");
+    const displayPrompt = opts.displayPrompt || prompt;
+    addMessage(displayPrompt, "user");
     els.promptInput.value = "";
     updateChatHeroVisibility();
     state.running = true;
@@ -3402,13 +3555,15 @@
     els.btnCancel.disabled = true;
 
     const progressEl = addMessage("", "progress");
-    const activity = createRunActivity(prompt);
+    const activity = createRunActivity(displayPrompt);
     startActivityTimer(progressEl, activity);
     const agentEl = addMessage("", "agent live");
     let wasAbort = false;
+    const modelForRequest =
+      opts.model !== undefined ? opts.model : resolveModelForRequest();
 
     try {
-      await persistMessage("user", prompt);
+      await persistMessage("user", displayPrompt);
 
       const res = await fetch("/api/run/stream", {
         method: "POST",
@@ -3417,7 +3572,7 @@
         body: JSON.stringify({
           prompt,
           workspace: state.current.path,
-          model: getSelectedModel(),
+          model: modelForRequest,
           max_steps: parseInt(els.maxStepsInput.value || "20", 10),
           plan_only: mode === "plan",
           dry_run: mode === "dry",
@@ -3436,6 +3591,7 @@
       const decoder = new TextDecoder();
       let buffer = "";
       let donePayload = null;
+      let streamError = null;
 
       while (true) {
         const { done, value } = await reader.read();
@@ -3449,6 +3605,9 @@
           if (ev.type === "done") {
             donePayload = ev;
             continue;
+          }
+          if (ev.type === "error") {
+            streamError = ev.error || ev.message || "Erro na execução";
           }
           handleStreamEvent(ev, progressEl, agentEl, activity);
         }
@@ -3474,8 +3633,13 @@
           summary: chatSummary,
         });
         window.setTimeout(() => removeMessage(progressEl), 4500);
+      } else if (streamError) {
+        const err = new Error(String(streamError));
+        err.streamError = true;
+        throw err;
       } else {
         agentEl.textContent = agentEl.textContent || "Execução finalizada sem relatório.";
+        agentEl.classList.add("error");
         window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
@@ -3493,14 +3657,14 @@
       } else if (e.status === 503 || e.data?.ollama_offline) {
         // Offline scaffolds should pass preflight; one soft retry only (avoid loops).
         if (
-          looksLikeOfflineScaffoldGoal(prompt) &&
+          looksLikeOfflineScaffoldGoal(displayPrompt) &&
           mode !== "plan" &&
           !state._offlineScaffoldRetried
         ) {
           state._offlineScaffoldRetried = true;
           state.ollamaOk = false;
           updateOllamaOfflineUI();
-          els.promptInput.value = prompt;
+          els.promptInput.value = displayPrompt;
           state.running = false;
           removeMessage(agentEl);
           removeMessage(progressEl);
@@ -3508,16 +3672,20 @@
             "Ollama offline — tentando scaffold determinístico (HTML/React/API)…",
             "system"
           );
-          return sendAgentPrompt(prompt, mode, { offlineRetry: true });
+          return sendAgentPrompt(prompt, mode, {
+            offlineRetry: true,
+            displayPrompt,
+            model: modelForRequest,
+          });
         }
         state._offlineScaffoldRetried = false;
         const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
         if (ready) {
-          els.promptInput.value = prompt;
+          els.promptInput.value = displayPrompt;
           state.running = false;
           removeMessage(agentEl);
           removeMessage(progressEl);
-          return sendAgentPrompt(prompt, mode);
+          return sendAgentPrompt(prompt, mode, { displayPrompt, model: modelForRequest });
         }
         state.ollamaOk = false;
         updateOllamaOfflineUI();
@@ -3527,6 +3695,28 @@
         openModelsModal();
       } else {
         const raw = String(e.message || "erro desconhecido");
+        const isOom =
+          /insufficient memory|n[aã]o cabe na mem[oó]ria|mem[oó]ria insuficiente|failed to allocate|out of memory|http error 500/i.test(
+            raw
+          );
+        if (isOom && !opts.oomRetried) {
+          const fallback = pickFittingInstalledModel(modelForRequest);
+          if (fallback && fallback !== modelForRequest) {
+            setModelSelection(fallback);
+            rememberModelPreference(fallback);
+            state.running = false;
+            removeMessage(agentEl);
+            addMessage(
+              `Modelo sem memória suficiente — repetindo a execução com <strong>${escapeHtml(fallback)}</strong>.`,
+              "system"
+            );
+            return sendAgentPrompt(prompt, mode, {
+              displayPrompt,
+              model: fallback,
+              oomRetried: true,
+            });
+          }
+        }
         const isNetwork =
           e.name === "TypeError" ||
           /failed to fetch|networkerror|network error|load failed|fetch/i.test(raw);
@@ -3541,11 +3731,11 @@
           if (e.data.model) {
             const pulled = await pullModel(e.data.model, { autoConfigure: true, showProgress: true });
             if (pulled) {
-              els.promptInput.value = prompt;
+              els.promptInput.value = displayPrompt;
               state.running = false;
               removeMessage(agentEl);
               removeMessage(progressEl);
-              return sendAgentPrompt(prompt, mode);
+              return sendAgentPrompt(prompt, mode, { displayPrompt, model: e.data.model });
             }
           }
         }
@@ -4745,7 +4935,8 @@
       showToast("Digite o nome do modelo Ollama personalizado.", "info");
       return;
     }
-    const selected = getSelectedModel();
+    syncModelSelectorsFromCanonical();
+    const selected = resolveModelForRequest();
     rememberModelPreference(selected);
     if (!selected) {
       showToast("Modelo: Auto (escolhe conforme o perfil de hardware)", "ok");
@@ -4811,7 +5002,7 @@
   els.composerModelSelect?.addEventListener("change", () => {
     const val = els.composerModelSelect.value;
     if (!val) {
-      if (els.modelSelect) els.modelSelect.value = "__auto__";
+      setModelSelection(null);
       rememberModelPreference(null);
       showToast("Modelo: Auto (escolhe conforme o perfil de hardware)", "ok");
       return;

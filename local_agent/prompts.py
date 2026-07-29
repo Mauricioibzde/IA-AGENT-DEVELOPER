@@ -97,7 +97,15 @@ def system_prompt(workspace: str) -> str:
     )
 
 
-def planner_prompt(goal: str, project_summary: str) -> str:
+def planner_prompt(goal: str, project_summary: str, conversation: str = "") -> str:
+    conversation_block = ""
+    if conversation and conversation.strip():
+        conversation_block = (
+            "\nRecent chat context (the user may ask to APPLY these suggestions in code):\n"
+            f"{conversation.strip()[:4500]}\n"
+            "If the user goal is to implement/apply improvements from chat, plan concrete file edits "
+            "based on that context — do not plan a generic explanation-only task.\n"
+        )
     return (
         "You are the PLANNER for a senior full-stack coding agent.\n"
         "Do NOT modify files. Return ONLY a JSON object.\n\n"
@@ -131,7 +139,8 @@ def planner_prompt(goal: str, project_summary: str) -> str:
         "- Prefer maintainable structure (components/services/tests) over one giant file.\n"
         "- Include a final validation/review task.\n"
         "- Identify files via relevant_files.\n\n"
-        f"User goal:\n{goal}\n\n"
+        f"User goal:\n{goal}\n"
+        f"{conversation_block}\n"
         f"Project summary:\n{project_summary}\n"
     )
 

@@ -43,7 +43,7 @@ class ContextManager:
     ) -> str:
         sections = {
             "goal": self._clip(goal, 1500),
-            "conversation": self._clip(conversation, 2500) if conversation else "",
+            "conversation": self._clip(conversation, 6000) if conversation else "",
             "task": self._clip(
                 f"id={task.id} title={task.title}\n{task.description}"
                 + (f"\nNotes: {task.notes}" if task.notes else ""),
