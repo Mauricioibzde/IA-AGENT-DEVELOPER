@@ -33,6 +33,7 @@ from ia_platform.run_manager import run_manager
 STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
 DEFAULT_WORKSPACE = ROOT.parent / "sandbox"
+PLATFORM_VERSION = 2
 IGNORE_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".agent", ".pytest_cache"}
 
 _HARDWARE_CACHE: Optional[tuple[float, Dict[str, Any]]] = None
@@ -662,6 +663,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "models": models[:20],
                 "recommended_model": recommended_name,
                 "projects_root": str(PROJECTS_ROOT),
+                "platform_version": PLATFORM_VERSION,
                 "features": {
                     "ollama_setup_stream": True,
                     "ollama_auto_install": True,
@@ -1164,7 +1166,8 @@ def main(argv: list[str] | None = None) -> int:
     PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)
     httpd = ThreadingHTTPServer((args.host, args.port), PlatformHandler)
     url = f"http://{args.host}:{args.port}"
-    print(f"Forge Platform running at {url}")
+    print(f"Forge Platform v{PLATFORM_VERSION} running at {url}")
+    print(f"Setup API: /api/setup/stream (auto-install Ollama + model)")
     print(f"Projects root: {PROJECTS_ROOT}")
     print("Press Ctrl+C to stop.")
     try:

@@ -34,6 +34,7 @@
     setupPlatform: null,
     setupInstallUrl: null,
     serverFeatures: null,
+    platformVersion: null,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -499,10 +500,21 @@
 
   function outdatedServerMessage() {
     const platform = (state.setupPlatform || navigator.platform || "").toLowerCase();
+    const verify = "Confirme em /api/health: platform_version=2 e full_setup_stream=true.";
     if (platform.includes("win")) {
-      return "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute: .\\scripts\\run-platform.ps1";
+      return (
+        "Backend desatualizado (processo antigo na porta 8787). " +
+        "Feche o terminal da plataforma (Ctrl+C) e execute:\n" +
+        "powershell -ExecutionPolicy Bypass -File .\\scripts\\run-platform.ps1\n" +
+        verify
+      );
     }
-    return "Servidor desatualizado. Pare a plataforma (Ctrl+C) e execute: ./scripts/run-platform.sh";
+    return (
+      "Backend desatualizado (processo antigo na porta 8787). " +
+      "Feche o terminal da plataforma (Ctrl+C) e execute:\n" +
+      "./scripts/run-platform.sh\n" +
+      verify
+    );
   }
 
   async function readJsonResponse(res) {
@@ -514,9 +526,19 @@
       const res = await fetch("/api/health");
       const d = await res.json().catch(() => ({}));
       state.serverFeatures = d.features || null;
+      state.platformVersion = d.platform_version || null;
+      if (d.platform_version >= 2) return true;
       if (d.features?.full_setup_stream === true) return true;
       if (d.features?.ollama_setup_stream === true || d.features?.ollama_auto_install === true) return true;
-      return false;
+    } catch {
+      /* try setup/status below */
+    }
+
+    try {
+      const res = await fetch("/api/setup/status");
+      if (res.ok) return true;
+      const data = await readJsonResponse(res);
+      return !isApiRouteMissing(data);
     } catch {
       return false;
     }
@@ -924,10 +946,14 @@
       const d = await api("/api/health");
       state.models = d.models || [];
       state.ollamaOk = !!(d.ollama && d.agent);
+      state.serverFeatures = d.features || null;
+      state.platformVersion = d.platform_version || null;
       updateModelOptions(state.models);
       applyRecommendedModel(d.recommended_model, state.models);
       const modelLabel = getSelectedModel() ? ` · ${getSelectedModel()}` : " · auto";
-      els.healthStatus.innerHTML = `<span class="status-dot ${state.ollamaOk ? "ok" : "err"}"></span>${state.ollamaOk ? "Ollama pronto" : "Ollama offline?"}${modelLabel}`;
+      const serverOld = !state.platformVersion && !state.serverFeatures?.full_setup_stream;
+      const serverHint = serverOld ? ' · <span class="status-warn">backend v1</span>' : "";
+      els.healthStatus.innerHTML = `<span class="status-dot ${state.ollamaOk ? "ok" : "err"}"></span>${state.ollamaOk ? "Ollama pronto" : "Ollama offline?"}${modelLabel}${serverHint}`;
       updateOllamaOfflineUI();
     } catch {
       state.ollamaOk = false;
