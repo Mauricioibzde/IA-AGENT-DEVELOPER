@@ -2398,11 +2398,10 @@
       }
       stopActivityTimer(activity);
       finishRunActivity(progressEl, activity, donePayload);
-      agentEl.classList.remove("live", "thinking");
       if (donePayload) {
         const fullReport = donePayload.report || "(sem relatório)";
         const chatSummary = donePayload.summary || fullReport;
-        setMessageContent(agentEl, chatSummary, "agent");
+        finalizeAgentMessage(agentEl, chatSummary);
         state.lastReport = fullReport;
         await syncWorkspaceAfterRun(donePayload);
         renderRunArtifacts({
@@ -2412,15 +2411,14 @@
           summary: chatSummary,
         });
         addMessage("Execução retomada e concluída.", "system");
-        window.setTimeout(() => removeMessage(progressEl), 4500);
+        window.setTimeout(() => removeMessage(progressEl), 6500);
       } else {
-        agentEl.textContent = agentEl.textContent || "Execução finalizada.";
+        finalizeAgentMessage(agentEl, "Execução finalizada.", { error: true });
+        window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
       stopActivityTimer(activity);
-      agentEl.classList.remove("live", "thinking");
-      agentEl.textContent = "Falha ao reconectar: " + (e.message || String(e));
-      agentEl.classList.add("error");
+      finalizeAgentMessage(agentEl, "Falha ao reconectar: " + (e.message || String(e)), { error: true });
     } finally {
       state.running = false;
       state.runId = null;
