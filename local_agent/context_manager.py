@@ -16,6 +16,17 @@ class ContextManager:
     def __init__(self, config: AgentConfig) -> None:
         self.config = config
         self._file_cache: Dict[str, str] = {}
+        self.last_read_paths: List[str] = []
+
+    def invalidate(self, path: str) -> None:
+        rel = path.replace("\\", "/")
+        abs_path = (self.config.workspace / rel).resolve()
+        self._file_cache.pop(str(abs_path), None)
+        self._file_cache.pop(rel, None)
+
+    def invalidate_many(self, paths: List[str]) -> None:
+        for path in paths:
+            self.invalidate(path)
 
     def build(
         self,
@@ -31,7 +42,11 @@ class ContextManager:
     ) -> str:
         sections = {
             "goal": self._clip(goal, 1500),
-            "task": self._clip(f"id={task.id} title={task.title}\n{task.description}", 1500),
+            "task": self._clip(
+                f"id={task.id} title={task.title}\n{task.description}"
+                + (f"\nNotes: {task.notes}" if task.notes else ""),
+                1500,
+            ),
             "project_map": self._clip(project_index.summary(limit=20), 3000),
             "memory": self._clip(memory.relevant_summary(), 2000),
             "relevant_files": self._clip(
@@ -103,10 +118,12 @@ class ContextManager:
                     break
 
         chunks: List[str] = []
+        self.last_read_paths = []
         for rel in wanted[:15]:
             snippet = self.read_file_for_context(Path(rel))
             if snippet:
                 chunks.append(snippet)
+                self.last_read_paths.append(rel)
 
         return "\n\n".join(chunks) if chunks else "(no file snippets — use read_file tool to inspect files)"
 

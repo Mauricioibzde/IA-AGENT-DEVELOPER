@@ -79,8 +79,20 @@ class AgentMemory:
         if self.long_term.get("known_issues"):
             chunks.append("Known issues: " + "; ".join(map(str, self.long_term["known_issues"][:5])))
         for event in self.recent(limit):
-            chunks.append(f"- [{event.kind}] {event.summary}")
+            detail = ""
+            if event.kind in {"tools", "reflection", "validation"} and event.payload:
+                detail = f" | {json.dumps(event.payload, ensure_ascii=False)[:200]}"
+            chunks.append(f"- [{event.kind}] {event.summary}{detail}")
+        if self.long_term.get("decisions"):
+            chunks.append("Recent decisions: " + "; ".join(map(str, self.long_term["decisions"][-3:])))
         return "\n".join(chunks)
+
+    def record_decision(self, text: str) -> None:
+        decisions = list(self.long_term.get("decisions") or [])
+        if text and text not in decisions:
+            decisions.append(text[:300])
+        self.long_term["decisions"] = decisions[-20:]
+        self.save()
 
     def update_project_summary(self, summary: str) -> None:
         self.long_term["project_summary"] = summary[:2000]

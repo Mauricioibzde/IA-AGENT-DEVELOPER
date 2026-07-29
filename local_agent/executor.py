@@ -33,6 +33,14 @@ class Executor:
         self.read_files: Set[str] = set()
         self.step_diffs: List[str] = []
 
+    def mark_read(self, path: str) -> None:
+        if path:
+            self.read_files.add(str(path))
+
+    def mark_reads(self, paths: List[str]) -> None:
+        for path in paths:
+            self.mark_read(path)
+
     def parse_calls(self, model_text: str) -> List[Dict[str, Any]]:
         calls = parse_tool_calls(model_text)
         if calls:
@@ -68,6 +76,30 @@ class Executor:
                 path = args.get("path") if isinstance(args, dict) else None
                 if path:
                     self.read_files.add(str(path))
+
+            # Enforce read-before-edit on existing files.
+            if name in MUTATING_TOOLS:
+                path = args.get("path") if isinstance(args, dict) else None
+                if path:
+                    rel = str(path)
+                    abs_path = self.config.workspace / rel
+                    if abs_path.exists() and rel not in self.read_files and rel not in self.created_files:
+                        result = ToolResult(
+                            ok=False,
+                            error=f"Must read_file '{rel}' before editing. Read the file first, then retry.",
+                        )
+                        results.append({"tool": name, "result": result.to_dict()})
+                        continue
+
+            if name in MUTATING_TOOLS and not self.config.dry_run:
+                touched = len(set(self.modified_files + self.created_files))
+                if touched >= self.config.max_modified_files:
+                    result = ToolResult(
+                        ok=False,
+                        error=f"Modified file budget exceeded ({self.config.max_modified_files}). Finish or validate current changes.",
+                    )
+                    results.append({"tool": name, "result": result.to_dict()})
+                    continue
 
             started = time.time()
             result = self.registry.execute(

@@ -88,19 +88,31 @@ def executor_prompt(
     tools: ToolRegistry,
     context: str,
     *,
+    workspace: str = "",
     previous_results: Optional[str] = None,
+    recent_diffs: Optional[str] = None,
+    no_progress: bool = False,
 ) -> str:
     parts = [
-        system_prompt(""),
         "You are the EXECUTOR. Return JSON tool call(s) ONLY.\n",
+        f"Workspace root: {workspace}\n",
         f"\n{CORE_RULES}\n",
         f"\nTool call examples:\n{TOOL_CALL_EXAMPLES}\n",
         f"\nAvailable tools:\n{tools.descriptions_for_prompt()}\n",
         f"\n## Overall goal\n{goal}\n",
         f"\n## Current task\nid={task.id} title={task.title}\n{task.description}\n",
     ]
+    if task.notes:
+        parts.append(f"\n## Task notes\n{task.notes}\n")
+    if no_progress:
+        parts.append(
+            "\n## Warning\nYour last tool call repeated without progress. "
+            "Use a DIFFERENT tool or different arguments.\n"
+        )
     if previous_results:
-        parts.append(f"\n## Previous tool results in this step\n{previous_results}\n")
+        parts.append(f"\n## Previous tool results (same task — learn from these)\n{previous_results}\n")
+    if recent_diffs:
+        parts.append(f"\n## Recent diffs\n{recent_diffs}\n")
     parts.append(f"\n## Context\n{context}\n")
     parts.append(
         "\nThink step by step:\n"

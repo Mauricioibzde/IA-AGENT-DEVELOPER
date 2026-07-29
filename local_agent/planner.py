@@ -47,7 +47,7 @@ class Planner:
             self._enrich_with_index(plan, index, goal)
 
         # Ensure at least one validation command per mutating task.
-        self._ensure_validation_commands(plan)
+        self._ensure_validation_commands(plan, index)
 
         return plan
 
@@ -87,16 +87,47 @@ class Planner:
                     break
             task.relevant_files = candidates[:5]
 
-    def _ensure_validation_commands(self, plan: Plan) -> None:
-        """Ensure mutating tasks have validation commands."""
+    def _ensure_validation_commands(self, plan: Plan, index: Optional[ProjectIndex] = None) -> None:
+        """Ensure mutating tasks have project-aware validation commands."""
+        mutate_words = ["create", "write", "edit", "modify", "refactor", "fix", "add", "remove", "delete", "implement"]
         for task in plan.tasks:
             if task.validation_commands:
                 continue
             desc_lower = task.description.lower()
-            if any(word in desc_lower for word in ["create", "write", "edit", "modify", "refactor", "fix", "add", "remove", "delete"]):
-                task.validation_commands = ["python -m compileall ."]
+            if not any(word in desc_lower for word in mutate_words):
+                continue
+
+            cmds: List[str] = []
+            if index:
+                for key in ("test", "lint", "build"):
+                    detected = index.detected_commands.get(key) or []
+                    if detected:
+                        cmds.append(detected[0])
+                        break
+                if not cmds and index.package_scripts:
+                    if "test" in index.package_scripts:
+                        cmds.append("npm test")
+                    elif "lint" in index.package_scripts:
+                        cmds.append("npm run lint")
+                    elif "build" in index.package_scripts:
+                        cmds.append("npm run build")
+
+            if not cmds and index:
+                has_python = any(f.language == "python" for f in index.files)
+                if has_python:
+                    cmds = ["python -m compileall ."]
+
+            if not cmds:
+                cmds = ["python -m compileall ."]
+
+            task.validation_commands = cmds
             if "test" in desc_lower or "validate" in desc_lower:
-                task.validation_commands.append("python -m pytest -q --tb=short")
+                if index and index.detected_commands.get("test"):
+                    extra = index.detected_commands["test"][0]
+                    if extra not in task.validation_commands:
+                        task.validation_commands.append(extra)
+                elif "python -m pytest -q --tb=short" not in task.validation_commands:
+                    task.validation_commands.append("python -m pytest -q --tb=short")
 
     def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
         content = text.strip()

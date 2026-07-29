@@ -76,7 +76,9 @@ class CodingAgent:
                 self.logger.warn("baseline_failed", message=str(exc))
 
         # Create plan.
-        plan = self.planner.create_plan(goal, self.index.summary())
+        plan = self.planner.create_plan(goal, self.index.summary(), index=self.index)
+        for task in plan.tasks:
+            task.max_attempts = self.config.max_task_attempts
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))
         self.memory.add_event("plan", plan.summary or plan.goal, {"tasks": [t.id for t in plan.tasks]})
         self._event(
@@ -101,11 +103,26 @@ class CodingAgent:
         steps = 0
         final_answer = ""
         consecutive_failures = 0
+        current_task_id: Optional[str] = None
+        last_results_json = ""
+        last_validation = ""
+        last_diffs = ""
+        step_had_failures = False
+        pending_no_progress = False
 
         while steps < self.config.max_steps:
             task = self._next_task(plan)
             if task is None:
                 break
+
+            if task.id != current_task_id:
+                current_task_id = task.id
+                last_results_json = ""
+                last_validation = ""
+                last_diffs = ""
+                step_had_failures = False
+                pending_no_progress = False
+
             steps += 1
             task.status = TaskStatus.RUNNING
             task.attempts += 1
@@ -118,26 +135,33 @@ class CodingAgent:
                 task_title=task.title,
             )
 
-            # Build context with auto-read files.
+            # Build context with feedback from prior attempts on this task.
             context = self.context_manager.build(
                 goal=goal,
                 task=task,
                 project_index=self.index,
                 memory=self.memory,
                 errors=self.errors[-5:],
+                validation=last_validation,
+                previous_results=last_results_json or None,
             )
+            self.executor.mark_reads(self.context_manager.last_read_paths)
+
             prompt = executor_prompt(
-                goal, task, self.registry, context,
-                previous_results=None,
+                goal,
+                task,
+                self.registry,
+                context,
+                workspace=str(self.config.workspace),
+                previous_results=last_results_json or None,
+                recent_diffs=last_diffs or None,
+                no_progress=pending_no_progress,
             )
 
             try:
                 sys_msg = system_prompt(str(self.config.workspace))
                 if self.event_sink:
-                    chunks: List[str] = []
-
                     def _on_chunk(text: str) -> None:
-                        chunks.append(text)
                         self._event("llm_chunk", text=text)
 
                     model_text = self.client.stream_chat(
@@ -164,19 +188,38 @@ class CodingAgent:
 
             calls = self.executor.parse_calls(model_text)
             if not calls:
-                final_answer = model_text
-                task.status = TaskStatus.COMPLETED
-                self.completed_tasks.append(task.title)
-                break
+                repair_text = self._repair_tool_calls(model_text)
+                if repair_text:
+                    calls = self.executor.parse_calls(repair_text)
+            if not calls:
+                self.errors.append(f"Task {task.id}: model returned no valid tool calls")
+                last_results_json = json.dumps(
+                    [{"error": "no_valid_tool_calls", "raw": model_text[:800]}],
+                    ensure_ascii=False,
+                )
+                if task.attempts >= task.max_attempts:
+                    task.status = TaskStatus.FAILED
+                else:
+                    task.status = TaskStatus.PENDING
+                continue
 
             # Detect no-progress loops.
             signature = self._signature(task.id, calls)
             no_progress = signature in self.seen_signatures
+            pending_no_progress = no_progress
             self.seen_signatures.add(signature)
 
             # Execute tools.
             results, finished = self.executor.run_calls(calls)
-            self.memory.add_event("tools", f"{task.id}: {len(results)} tools", {"tools": [r["tool"] for r in results]})
+            last_results_json = self._format_tool_results(results)
+            last_diffs = "\n".join(self.executor.step_diffs[-3:])
+            step_had_failures = any(not r.get("result", {}).get("ok", False) for r in results)
+
+            self.memory.add_event(
+                "tools",
+                f"{task.id}: {len(results)} tools",
+                {"tools": [r["tool"] for r in results], "ok": sum(1 for r in results if r.get("result", {}).get("ok"))},
+            )
             consecutive_failures = 0
             self._event(
                 "tools",
@@ -185,20 +228,28 @@ class CodingAgent:
                 ok=sum(1 for r in results if r.get("result", {}).get("ok", False)),
             )
 
-            # Track analyzed files.
+            # Track analyzed files and refresh index after writes.
             for rel in task.relevant_files:
                 if rel not in self.analyzed_files:
                     self.analyzed_files.append(rel)
+
+            wrote_files = self.executor.had_writes_this_step(results)
+            if wrote_files:
+                changed_paths = self._paths_from_results(results)
+                self.context_manager.invalidate_many(changed_paths)
+                self.index.build()
+                self.memory.update_project_summary(self.index.summary(limit=20)[:1500])
 
             if finished:
                 final_answer = results[-1]["result"].get("answer", "")
                 task.status = TaskStatus.COMPLETED
                 self.completed_tasks.append(task.title)
+                if step_had_failures is False and self.errors:
+                    self.fixed_errors.append(f"Recovered on task {task.id}")
                 break
 
             # Auto-validate after filesystem writes.
             validation_results: List[ValidationResult] = []
-            wrote_files = self.executor.had_writes_this_step(results)
 
             if task.validation_commands:
                 validation_results = [self.validator.run_one(cmd) for cmd in task.validation_commands]
@@ -207,11 +258,12 @@ class CodingAgent:
                 if quick_checks:
                     validation_results = [self.validator.run_one(cmd) for cmd in quick_checks]
 
-            if any(r.get("result", {}).get("ok") is False for r in results) and not validation_results:
+            if step_had_failures and not validation_results:
                 validation_results = self.validator.run_all()[:2]
 
             self.all_validations.extend(validation_results)
             validation_summary = self.validator.summarize(validation_results)
+            last_validation = validation_summary
             for item in validation_results:
                 if not item.success and item.category == "introduced":
                     self.errors.append(f"{item.command}: {item.stderr[:200]}")
@@ -219,35 +271,52 @@ class CodingAgent:
             # Reflect.
             decision = self.reflector.reflect(
                 task,
-                json.dumps(results, ensure_ascii=False)[:4000],
+                last_results_json[:4000],
                 validation_summary,
                 no_progress=no_progress,
             )
             self.logger.info("reflection", message=f"{decision.status.value}: {decision.analysis[:120]}")
             self.memory.add_event("reflection", decision.analysis[:300], {"status": decision.status.value})
+            self.memory.record_decision(decision.next_action[:200] if decision.next_action else decision.analysis[:200])
             self._event(
                 "reflection",
                 status=decision.status.value,
                 analysis=decision.analysis[:240],
             )
 
+            if decision.relevant_files:
+                task.relevant_files = list(dict.fromkeys(task.relevant_files + decision.relevant_files))
+            if decision.next_action:
+                task.notes = decision.next_action[:500]
+
+            all_ok = all(r.get("result", {}).get("ok", False) for r in results)
+            validations_ok = all(v.success for v in validation_results) if validation_results else True
+
+            if step_had_failures is False and self.errors and all_ok and validations_ok:
+                fix_note = f"Task {task.id} succeeded after prior errors"
+                if fix_note not in self.fixed_errors:
+                    self.fixed_errors.append(fix_note)
+
             # Act on reflection.
             if decision.status == ReflectionStatus.FINISH:
-                task.status = TaskStatus.COMPLETED
-                self.completed_tasks.append(task.title)
-                final_answer = decision.next_action or final_answer
-                if not self._next_task(plan):
-                    break
+                if all_ok and validations_ok:
+                    task.status = TaskStatus.COMPLETED
+                    self.completed_tasks.append(task.title)
+                    final_answer = decision.next_action or final_answer
+                    if not self._next_task(plan):
+                        break
+                else:
+                    task.status = TaskStatus.PENDING
                 continue
 
             if decision.status == ReflectionStatus.CONTINUE:
-                all_ok = all(r.get("result", {}).get("ok", False) for r in results)
-                validations_ok = all(v.success for v in validation_results) if validation_results else True
                 if all_ok and validations_ok:
                     task.status = TaskStatus.COMPLETED
                     self.completed_tasks.append(task.title)
                 elif task.attempts >= task.max_attempts:
                     task.status = TaskStatus.FAILED
+                else:
+                    task.status = TaskStatus.PENDING
                 continue
 
             if decision.status == ReflectionStatus.RETRY:
@@ -260,13 +329,19 @@ class CodingAgent:
 
             if decision.status == ReflectionStatus.REPLAN or decision.should_replan:
                 plan = self.planner.update_plan(plan, decision.analysis or "replan")
+                for t in plan.tasks:
+                    if t.max_attempts == 3:
+                        t.max_attempts = self.config.max_task_attempts
                 task.status = TaskStatus.PENDING
                 self.logger.info("replan", message="Plan updated after reflection")
                 continue
 
             if decision.status == ReflectionStatus.ROLLBACK:
-                task.status = TaskStatus.FAILED
-                self.errors.append(f"Rollback requested: {decision.analysis[:200]}")
+                self._rollback_recent_changes()
+                self.index.build()
+                task.status = TaskStatus.PENDING
+                self.errors.append(f"Rollback applied: {decision.analysis[:200]}")
+                last_results_json = json.dumps([{"action": "rollback", "analysis": decision.analysis[:300]}])
                 continue
 
             if decision.status in {ReflectionStatus.ABORT, ReflectionStatus.ASK_USER}:
@@ -275,6 +350,52 @@ class CodingAgent:
                 break
 
         return self._build_report(goal, plan, final_answer)
+
+    def _repair_tool_calls(self, model_text: str) -> str:
+        try:
+            return self.client.complete(
+                "Your previous response was not valid JSON tool call(s).\n"
+                "Return ONLY one JSON object or JSON array of tool calls. No markdown, no prose.\n\n"
+                f"Previous output:\n{model_text[:2500]}",
+                model=self.config.coder_model,
+                temperature=0,
+            )
+        except Exception:  # noqa: BLE001
+            return ""
+
+    def _format_tool_results(self, results: List[Dict[str, object]]) -> str:
+        compact = []
+        for item in results:
+            res = item.get("result", {})
+            entry = {"tool": item.get("tool"), "ok": res.get("ok")}
+            if res.get("error"):
+                entry["error"] = str(res.get("error"))[:400]
+            if res.get("path"):
+                entry["path"] = res.get("path")
+            if res.get("stdout"):
+                entry["stdout"] = str(res.get("stdout"))[:400]
+            if res.get("stderr"):
+                entry["stderr"] = str(res.get("stderr"))[:400]
+            if res.get("diff"):
+                entry["diff"] = str(res.get("diff"))[:600]
+            compact.append(entry)
+        return json.dumps(compact, ensure_ascii=False, indent=2)
+
+    def _paths_from_results(self, results: List[Dict[str, object]]) -> List[str]:
+        paths: List[str] = []
+        for item in results:
+            res = item.get("result", {})
+            if isinstance(res, dict):
+                if res.get("path"):
+                    paths.append(str(res["path"]))
+                if res.get("dst"):
+                    paths.append(str(res["dst"]))
+        return paths
+
+    def _rollback_recent_changes(self) -> None:
+        for path in reversed(self.executor.modified_files[-5:]):
+            self.executor.run_calls([{"tool": "rollback_file", "args": {"path": path}}])
+        self.executor.step_diffs.clear()
 
     def _next_task(self, plan: Plan) -> Optional[Task]:
         done = {t.id for t in plan.tasks if t.status == TaskStatus.COMPLETED}
@@ -288,7 +409,18 @@ class CodingAgent:
         return None
 
     def _signature(self, task_id: str, calls: List[Dict[str, object]]) -> str:
-        blob = json.dumps({"task": task_id, "calls": calls}, sort_keys=True, ensure_ascii=False)
+        normalized = []
+        for call in calls:
+            args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            normalized.append(
+                {
+                    "task": task_id,
+                    "tool": call.get("tool"),
+                    "path": args.get("path"),
+                    "keys": sorted(args.keys()) if isinstance(args, dict) else [],
+                }
+            )
+        blob = json.dumps(normalized, sort_keys=True, ensure_ascii=False)
         return hashlib.sha256(blob.encode("utf-8")).hexdigest()
 
     def _render_plan(self, plan: Plan) -> str:
