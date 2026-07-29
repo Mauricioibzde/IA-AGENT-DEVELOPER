@@ -27,6 +27,7 @@
     fileSearchTimer: null,
     ollamaOk: false,
     previewDevice: "desktop",
+    healthInFlight: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -256,6 +257,8 @@
   }
 
   async function checkHealth() {
+    if (state.healthInFlight) return;
+    state.healthInFlight = true;
     try {
       const d = await api("/api/health");
       state.models = d.models || [];
@@ -269,6 +272,8 @@
       state.ollamaOk = false;
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
       updateOllamaOfflineUI();
+    } finally {
+      state.healthInFlight = false;
     }
   }
 
@@ -757,6 +762,17 @@
     const prompt = els.promptInput.value.trim();
     if (!prompt || state.running || !state.current) return;
 
+    if (!state.ollamaOk) {
+      addMessage("Ollama offline. Abra um terminal e execute: ollama serve", "system");
+      openModelsModal();
+      return;
+    }
+    if (!state.models.length) {
+      addMessage("Nenhum modelo instalado. Abra Modelos IA para baixar um modelo coder.", "system");
+      openModelsModal();
+      return;
+    }
+
     addMessage(prompt, "user");
     els.promptInput.value = "";
     updateChatHeroVisibility();
@@ -857,6 +873,14 @@
         wasAbort = true;
         agentEl.textContent = "Cancelando...";
         agentEl.classList.add("error");
+      } else if (e.status === 503 || e.data?.ollama_offline) {
+        state.ollamaOk = false;
+        updateOllamaOfflineUI();
+        const err = e.message || "Ollama offline — execute 'ollama serve' em outro terminal.";
+        agentEl.textContent = "Erro: " + err;
+        agentEl.classList.add("error");
+        addMessage("Depois de iniciar o Ollama, recarregue a página ou aguarde o status na sidebar.", "system");
+        openModelsModal();
       } else {
         const err = "Erro: " + e.message;
         agentEl.textContent = err;
@@ -864,7 +888,7 @@
         if (e.data?.missing_model) {
           addMessage(`Modelo ausente: ${e.data.model}. Abra Modelos IA para baixar.`, "system");
           openModelsModal();
-          if (e.data.model) pullModel(e.data.model);
+          if (e.data.model && state.ollamaOk) pullModel(e.data.model);
         }
         await persistMessage("agent", err).catch(() => {});
       }
@@ -1342,7 +1366,7 @@
     syncSidebarToggle();
     setPreviewDevice(state.previewDevice);
     checkHealth();
-    setInterval(checkHealth, 15000);
+    setInterval(checkHealth, 30000);
     try {
       await loadProjects();
       if (state.projects.length) {

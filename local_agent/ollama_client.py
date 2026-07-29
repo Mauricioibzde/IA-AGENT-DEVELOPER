@@ -203,11 +203,11 @@ class OllamaClient:
         finally:
             response.close()
 
-    def check_available(self) -> bool:
+    def check_available(self, timeout: int = 5) -> bool:
         """Return True if Ollama is reachable."""
         try:
             req = urllib.request.Request(f"{self.config.ollama_host}/api/tags")
-            with urllib.request.urlopen(req, timeout=5):
+            with urllib.request.urlopen(req, timeout=timeout):
                 return True
         except Exception:
             return False

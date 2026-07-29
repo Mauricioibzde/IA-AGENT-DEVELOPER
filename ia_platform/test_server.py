@@ -23,6 +23,17 @@ DEFAULT_WORKSPACE = _mod.DEFAULT_WORKSPACE
 PROJECTS_ROOT = _mod.PROJECTS_ROOT
 
 
+def _patch_ollama_online(monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeClient:
+        def check_available(self, timeout: int = 5) -> bool:
+            return True
+
+        def list_models(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+
+
 @pytest.fixture
 def platform_url() -> str:
     httpd = ThreadingHTTPServer(("127.0.0.1", 0), PlatformHandler)
@@ -219,6 +230,7 @@ def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: py
             return True
 
     monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+    _patch_ollama_online(monkeypatch)
 
     req = urllib.request.Request(
         f"{platform_url}/api/run/stream",
@@ -276,6 +288,7 @@ def test_run_stream_rejects_busy_workspace(platform_url: str, tmp_path: Path, mo
             return True
 
     monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+    _patch_ollama_online(monkeypatch)
 
     from ia_platform.run_manager import run_manager
 
@@ -406,6 +419,7 @@ def test_run_preflight_missing_model(platform_url: str, tmp_path: Path, monkeypa
             return False
 
     monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+    _patch_ollama_online(monkeypatch)
 
     req = urllib.request.Request(
         f"{platform_url}/api/run",
@@ -418,4 +432,28 @@ def test_run_preflight_missing_model(platform_url: str, tmp_path: Path, monkeypa
     assert exc.value.code == 400
     body = json.loads(exc.value.read().decode())
     assert body.get("missing_model") is True
+
+
+def test_run_preflight_ollama_offline(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "demo"
+    project_dir.mkdir(parents=True)
+
+    class FakeClient:
+        def check_available(self, timeout: int = 5) -> bool:
+            return False
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/run/stream",
+        data=json.dumps({"prompt": "teste", "workspace": "projects/demo"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(req, timeout=5)
+    assert exc.value.code == 503
+    body = json.loads(exc.value.read().decode())
+    assert body.get("ollama_offline") is True
 

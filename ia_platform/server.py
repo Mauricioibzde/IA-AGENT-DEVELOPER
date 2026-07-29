@@ -7,6 +7,7 @@ import json
 import mimetypes
 import re
 import sys
+import time
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
@@ -31,6 +32,19 @@ STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
 DEFAULT_WORKSPACE = ROOT.parent / "sandbox"
 IGNORE_DIRS = {".git", "node_modules", ".venv", "__pycache__", ".agent", ".pytest_cache"}
+
+_HARDWARE_CACHE: Optional[tuple[float, Dict[str, Any]]] = None
+_HARDWARE_CACHE_TTL = 60.0
+
+
+def _cached_hardware() -> Dict[str, Any]:
+    global _HARDWARE_CACHE
+    now = time.time()
+    if _HARDWARE_CACHE and now - _HARDWARE_CACHE[0] < _HARDWARE_CACHE_TTL:
+        return _HARDWARE_CACHE[1]
+    hw = detect_hardware()
+    _HARDWARE_CACHE = (now, hw)
+    return hw
 
 PROJECT_TEMPLATES: Dict[str, Dict[str, str]] = {
     "blank": {},
@@ -400,12 +414,13 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
         client = OllamaClient(cfg)
-        ollama_ok = client.check_available()
+        ollama_ok = client.check_available(timeout=2)
         models = client.list_models() if ollama_ok else []
-        recommendation = None
+        recommended_name = None
         if ollama_ok:
-            hw = detect_hardware()
+            hw = _cached_hardware()
             recommendation = recommend_models(hw, models).get("primary")
+            recommended_name = recommendation.get("ollama_name") if recommendation else None
         self._send_json(
             200,
             {
@@ -413,7 +428,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "agent": True,
                 "ollama": ollama_ok,
                 "models": models[:20],
-                "recommended_model": recommendation.get("ollama_name") if recommendation else None,
+                "recommended_model": recommended_name,
                 "projects_root": str(PROJECTS_ROOT),
             },
         )
@@ -690,11 +705,32 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
     def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[Dict[str, str], str, Optional[Dict[str, Any]]]:
         """Resolve models, build conversation context, preflight availability."""
+        from local_agent.config import AgentConfig
+        from local_agent.ollama_client import OllamaClient
+
+        cfg = AgentConfig.from_args(workspace, no_memory=True)
+        if not OllamaClient(cfg).check_available(timeout=3):
+            return {}, "", {
+                "error": "Ollama offline. Execute 'ollama serve' em outro terminal e tente novamente.",
+                "ollama_offline": True,
+            }
+
         mgr = self._ollama_manager()
         installed = mgr.list_names()
-        hardware = detect_hardware()
+        hardware = _cached_hardware()
         models = resolve_models_for_run(data.get("model"), installed, hardware)
         coder = models["coder"]
+
+        if not installed:
+            primary = recommend_models(hardware, installed).get("primary", {})
+            suggested = primary.get("ollama_name") or coder
+            return models, "", {
+                "error": f"Nenhum modelo instalado. Baixe '{suggested}' em Modelos IA ou execute: ollama pull {suggested}",
+                "model": suggested,
+                "missing_model": True,
+                "pull_available": True,
+                "recommended": primary,
+            }
 
         for role, name in models.items():
             if not mgr.has_model(name):
@@ -713,6 +749,11 @@ class PlatformHandler(BaseHTTPRequestHandler):
             prior = messages
         conversation = format_conversation_context(prior, limit=10)
         return models, conversation, None
+
+    def _preflight_status(self, preflight_error: Dict[str, Any]) -> int:
+        if preflight_error.get("ollama_offline"):
+            return 503
+        return 400
 
     def _finalize_run(
         self,
@@ -782,7 +823,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         models, conversation, preflight_error = self._prepare_run(data, workspace)
         if preflight_error:
-            return self._send_json(400, preflight_error)
+            return self._send_json(self._preflight_status(preflight_error), preflight_error)
 
         if run_manager.is_workspace_busy(workspace):
             return self._send_json(
@@ -836,7 +877,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         models, conversation, preflight_error = self._prepare_run(data, workspace)
         if preflight_error:
-            return self._send_json(400, preflight_error)
+            return self._send_json(self._preflight_status(preflight_error), preflight_error)
 
         if run_manager.is_workspace_busy(workspace):
             return self._send_json(
