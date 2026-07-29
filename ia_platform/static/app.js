@@ -2554,11 +2554,11 @@
   async function cancelRun() {
     hideBusyBanner();
     const runId = state.runId;
-    const workspace = state.current?.path;
+    const projectId = state.current?.id;
     const payload = { force: true };
     if (runId) payload.run_id = runId;
-    else if (workspace) payload.workspace = workspace;
-    if (runId || workspace) {
+    else if (projectId) payload.workspace = `projects/${projectId}`;
+    if (runId || projectId) {
       try {
         await fetch("/api/run/cancel", {
           method: "POST",
