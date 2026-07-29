@@ -315,6 +315,22 @@
           <p class="setup-status" id="modelsSetupStatus">Aguarde...</p>
         </div>
       </div>
+
+      <div class="model-action-feedback hidden" id="modelActionFeedback" role="status" aria-live="polite"></div>
+
+      <div class="pull-progress hidden" id="pullProgress">
+        <div class="pull-progress-head">
+          <div>
+            <strong id="pullTitle">Download do modelo</strong>
+            <p class="pull-model-name" id="pullModelName"></p>
+          </div>
+          <span class="pull-percent" id="pullPercent">0%</span>
+        </div>
+        <div class="pull-bar"><div class="pull-bar-fill" id="pullBarFill"></div></div>
+        <p id="pullStatus">Preparando download...</p>
+        <p class="pull-error hidden" id="pullError"></p>
+      </div>
+
       <div class="models-layout">
         <section class="models-hardware" id="hardwarePanel">
           <div class="hardware-head">
@@ -344,10 +360,6 @@
           <h4>Catálogo</h4>
           <div id="modelsCatalog" class="models-list"></div>
         </section>
-      </div>
-      <div class="pull-progress hidden" id="pullProgress">
-        <div class="pull-bar"><div class="pull-bar-fill" id="pullBarFill"></div></div>
-        <p id="pullStatus">Baixando...</p>
       </div>
       <div class="modal-actions">
         <button type="button" class="btn btn-ghost" id="btnCloseModels">Fechar</button>

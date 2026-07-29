@@ -21,6 +21,7 @@
     modelRecommendations: null,
     recommendedModel: null,
     pullingModel: false,
+    pullingModelName: null,
     devStatus: null,
     previewMode: "static",
     deploying: false,
@@ -131,6 +132,11 @@
     pullProgress: $("pullProgress"),
     pullBarFill: $("pullBarFill"),
     pullStatus: $("pullStatus"),
+    pullTitle: $("pullTitle"),
+    pullModelName: $("pullModelName"),
+    pullPercent: $("pullPercent"),
+    pullError: $("pullError"),
+    modelActionFeedback: $("modelActionFeedback"),
     modelHint: $("modelHint"),
     chatHero: $("chatHero"),
     previewViewport: $("previewViewport"),
@@ -1154,16 +1160,185 @@
       entry.fits ? '<span class="model-tag ok">compatível</span>' : '<span class="model-tag warn">pode não caber</span>',
       entry.recommended ? '<span class="model-tag accent">recomendado</span>' : "",
     ].join("");
+    const name = escapeHtml(entry.ollama_name);
     return `
       <h5>${escapeHtml(entry.name)}</h5>
       <p>${escapeHtml(entry.description || "")}</p>
       <div class="model-meta">${tags}${statusTags}</div>
-      <p class="model-meta">Ollama: <code>${escapeHtml(entry.ollama_name)}</code> · ~${entry.size_gb} GB · RAM ${entry.ram_gb} GB · VRAM ${entry.vram_gb} GB</p>
+      <p class="model-meta">Ollama: <code>${name}</code> · ~${entry.size_gb} GB · RAM ${entry.ram_gb} GB · VRAM ${entry.vram_gb} GB</p>
       <div class="model-actions">
-        <button type="button" class="btn btn-primary btn-sm" data-action="use" data-model="${escapeHtml(entry.ollama_name)}">Usar</button>
-        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${escapeHtml(entry.ollama_name)}" ${entry.installed ? "disabled" : ""}>Baixar</button>
+        <button type="button" class="btn btn-primary btn-sm" data-action="use" data-model="${name}" data-installed="${entry.installed ? "1" : "0"}">Usar</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${name}" ${entry.installed ? "disabled" : ""}>${entry.installed ? "Instalado" : "Baixar"}</button>
+      </div>
+      <div class="model-pull-slot hidden" data-pull-slot>
+        <div class="pull-bar"><div class="pull-bar-fill" data-pull-fill></div></div>
+        <p class="model-pull-status" data-pull-status>Preparando...</p>
       </div>
     `;
+  }
+
+  function showModelFeedback(message, kind = "info") {
+    if (!els.modelActionFeedback) return;
+    els.modelActionFeedback.classList.remove("hidden", "ok", "err", "info");
+    els.modelActionFeedback.classList.add(kind === "ok" ? "ok" : kind === "err" ? "err" : "info");
+    els.modelActionFeedback.innerHTML = message;
+  }
+
+  function hideModelFeedback() {
+    els.modelActionFeedback?.classList.add("hidden");
+  }
+
+  function formatPullBytes(value) {
+    const n = Number(value) || 0;
+    if (n <= 0) return "";
+    if (n >= 1024 ** 3) return `${(n / 1024 ** 3).toFixed(1)} GB`;
+    if (n >= 1024 ** 2) return `${Math.round(n / 1024 ** 2)} MB`;
+    if (n >= 1024) return `${Math.round(n / 1024)} KB`;
+    return `${n} B`;
+  }
+
+  function explainPullError(raw) {
+    const msg = String(raw || "Falha desconhecida no download");
+    const lower = msg.toLowerCase();
+    if (/connection refused|errno 111|ollama offline|failed to connect/i.test(msg)) {
+      return {
+        title: "Ollama offline",
+        detail: `${msg}\n\nInicie o Ollama neste PC (ícone da llama) ou use “Configurar automaticamente”. O download acontece na máquina onde o Forge/Ollama estão rodando.`,
+      };
+    }
+    if (/timeout|timed out/i.test(lower)) {
+      return {
+        title: "Tempo esgotado",
+        detail: `${msg}\n\nO download demorou demais. Verifique a internet e tente de novo.`,
+      };
+    }
+    if (/no space|enospc|disk/i.test(lower)) {
+      return {
+        title: "Sem espaço em disco",
+        detail: `${msg}\n\nLibere espaço e tente novamente.`,
+      };
+    }
+    if (/not found|404|pull model/i.test(lower)) {
+      return {
+        title: "Modelo não encontrado",
+        detail: `${msg}\n\nConfira o nome do modelo no catálogo Ollama.`,
+      };
+    }
+    return { title: "Falha no download", detail: msg };
+  }
+
+  function findModelCards(model) {
+    return Array.from(document.querySelectorAll(".model-card")).filter((card) =>
+      Array.from(card.querySelectorAll("[data-model]")).some((el) => el.dataset.model === model)
+    );
+  }
+
+  function setModelCardsPulling(model, active) {
+    findModelCards(model).forEach((card) => {
+      card.classList.toggle("pulling", !!active);
+      const slot = card.querySelector("[data-pull-slot]");
+      if (slot) slot.classList.toggle("hidden", !active);
+    });
+    document.querySelectorAll('[data-action="pull"], [data-action="use"]').forEach((btn) => {
+      if (active) {
+        btn.dataset.prevDisabled = btn.disabled ? "1" : "0";
+        btn.disabled = true;
+      } else if (btn.dataset.prevDisabled != null) {
+        btn.disabled = btn.dataset.prevDisabled === "1";
+        delete btn.dataset.prevDisabled;
+      }
+    });
+  }
+
+  function updateCardPullProgress(model, percent, statusText) {
+    findModelCards(model).forEach((card) => {
+      const fill = card.querySelector("[data-pull-fill]");
+      const status = card.querySelector("[data-pull-status]");
+      if (fill) {
+        if (percent == null) {
+          fill.classList.add("indeterminate");
+        } else {
+          fill.classList.remove("indeterminate");
+          fill.style.width = `${Math.max(0, Math.min(100, percent))}%`;
+        }
+      }
+      if (status) status.textContent = statusText;
+    });
+  }
+
+  function resetPullProgressUi() {
+    els.pullProgress?.classList.remove("is-error", "is-success");
+    if (els.pullError) {
+      els.pullError.textContent = "";
+      els.pullError.classList.add("hidden");
+    }
+    if (els.pullBarFill) {
+      els.pullBarFill.classList.remove("indeterminate");
+      els.pullBarFill.style.width = "0%";
+    }
+    if (els.pullPercent) els.pullPercent.textContent = "0%";
+  }
+
+  function showPullProgress(model, statusText) {
+    resetPullProgressUi();
+    els.pullProgress?.classList.remove("hidden");
+    if (els.pullTitle) els.pullTitle.textContent = "Baixando e instalando modelo";
+    if (els.pullModelName) els.pullModelName.textContent = model;
+    if (els.pullStatus) els.pullStatus.textContent = statusText || `Iniciando download de ${model}...`;
+    if (els.pullPercent) els.pullPercent.textContent = "…";
+    els.pullBarFill?.classList.add("indeterminate");
+    els.pullProgress?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+  }
+
+  function updatePullProgress(model, ev) {
+    const pct = ev.percent != null ? Math.round(Number(ev.percent)) : null;
+    const completed = formatPullBytes(ev.completed);
+    const total = formatPullBytes(ev.total);
+    const sizeBit = completed && total ? ` (${completed} / ${total})` : completed ? ` (${completed})` : "";
+    const statusText = `${ev.status || `Baixando ${model}...`}${sizeBit}${pct != null ? ` — ${pct}%` : ""}`;
+
+    if (els.pullStatus) els.pullStatus.textContent = statusText;
+    if (pct != null) {
+      els.pullBarFill?.classList.remove("indeterminate");
+      if (els.pullBarFill) els.pullBarFill.style.width = `${pct}%`;
+      if (els.pullPercent) els.pullPercent.textContent = `${pct}%`;
+    } else {
+      els.pullBarFill?.classList.add("indeterminate");
+      if (els.pullPercent) els.pullPercent.textContent = "…";
+    }
+    updateCardPullProgress(model, pct, statusText);
+  }
+
+  function finishPullProgress(model, success, errorMsg) {
+    els.pullBarFill?.classList.remove("indeterminate");
+    if (success) {
+      els.pullProgress?.classList.add("is-success");
+      els.pullProgress?.classList.remove("is-error");
+      if (els.pullBarFill) els.pullBarFill.style.width = "100%";
+      if (els.pullPercent) els.pullPercent.textContent = "100%";
+      if (els.pullTitle) els.pullTitle.textContent = "Modelo instalado";
+      if (els.pullStatus) els.pullStatus.textContent = `${model} pronto para uso neste servidor Forge/Ollama.`;
+      if (els.pullError) els.pullError.classList.add("hidden");
+      updateCardPullProgress(model, 100, "Instalado com sucesso");
+      showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> baixado e selecionado.`, "ok");
+    } else {
+      const explained = explainPullError(errorMsg);
+      els.pullProgress?.classList.add("is-error");
+      els.pullProgress?.classList.remove("is-success");
+      if (els.pullTitle) els.pullTitle.textContent = explained.title;
+      if (els.pullStatus) els.pullStatus.textContent = "O download não foi concluído.";
+      if (els.pullError) {
+        els.pullError.textContent = explained.detail;
+        els.pullError.classList.remove("hidden");
+      }
+      if (els.pullPercent) els.pullPercent.textContent = "Erro";
+      updateCardPullProgress(model, null, explained.title);
+      showModelFeedback(`Falha ao baixar <strong>${escapeHtml(model)}</strong>: ${escapeHtml(explained.title)}`, "err");
+    }
+  }
+
+  function isSetupModalVisible() {
+    return !!(els.setupModal && !els.setupModal.classList.contains("hidden"));
   }
 
   function bindModelCardActions(container) {
@@ -1172,11 +1347,23 @@
         const model = btn.dataset.model;
         if (!model) return;
         if (btn.dataset.action === "use") {
+          const installed = btn.dataset.installed === "1";
+          if (!installed) {
+            showModelFeedback(
+              `O modelo <strong>${escapeHtml(model)}</strong> ainda não está instalado. Iniciando download...`,
+              "info"
+            );
+            pullModel(model, { autoConfigure: true, showProgress: true, setupUI: false });
+            return;
+          }
           setModelSelection(model);
-          closeModelsModal();
+          showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> selecionado para as próximas execuções.`, "ok");
           return;
         }
-        if (btn.dataset.action === "pull") pullModel(model, { autoConfigure: true, setupUI: true });
+        if (btn.dataset.action === "pull") {
+          showModelFeedback(`Iniciando download de <strong>${escapeHtml(model)}</strong>...`, "info");
+          pullModel(model, { autoConfigure: true, showProgress: true, setupUI: false });
+        }
       });
     });
   }
@@ -1197,18 +1384,25 @@
     renderHardwareMismatch(data.hardware, client);
     if (data.primary) {
       els.primaryModelCard.innerHTML = modelCardHtml(data.primary, true);
+      els.primaryModelCard.dataset.model = data.primary.ollama_name || "";
       bindModelCardActions(els.primaryModelCard);
     }
     els.modelsCatalog.innerHTML = (data.catalog || [])
-      .map((entry) => `<div class="model-card">${modelCardHtml(entry, false)}</div>`)
+      .map((entry) => `<div class="model-card" data-model="${escapeHtml(entry.ollama_name)}">${modelCardHtml(entry, false)}</div>`)
       .join("");
     bindModelCardActions(els.modelsCatalog);
+    if (state.pullingModel && state.pullingModelName) {
+      setModelCardsPulling(state.pullingModelName, true);
+    }
     updateOllamaOfflineUI();
   }
 
   function openModelsModal() {
     els.modelsModal.classList.remove("hidden");
-    els.pullProgress.classList.add("hidden");
+    if (!state.pullingModel) {
+      els.pullProgress?.classList.add("hidden");
+      hideModelFeedback();
+    }
     updateOllamaOfflineUI();
     renderClientHardware();
     loadModelRecommendations({ refresh: true }).catch((e) => {
@@ -1217,36 +1411,53 @@
   }
 
   function closeModelsModal() {
-    if (state.pullingModel) return;
+    if (state.pullingModel) {
+      showModelFeedback("Aguarde o download terminar antes de fechar.", "info");
+      els.pullProgress?.scrollIntoView({ behavior: "smooth", block: "nearest" });
+      return;
+    }
     els.modelsModal.classList.add("hidden");
   }
 
   async function pullModel(model, options = {}) {
     const { showProgress = true, autoConfigure = false, setupUI = false } = options;
-    if (state.pullingModel) return false;
+    if (state.pullingModel) {
+      showModelFeedback(`Já há um download em andamento (${escapeHtml(state.pullingModelName || "modelo")}).`, "info");
+      return false;
+    }
+
+    const useSetupUi = setupUI && isSetupModalVisible();
+    const useModalProgress = showProgress || (els.modelsModal && !els.modelsModal.classList.contains("hidden"));
 
     if (!state.ollamaOk) {
-      const ok = await ensureOllamaRunning(showProgress || setupUI);
+      if (useModalProgress) {
+        showPullProgress(model, "Ollama offline — tentando iniciar/configurar...");
+        showModelFeedback("Ollama offline. Tentando iniciar antes do download...", "info");
+      }
+      const ok = await ensureOllamaRunning(showProgress || setupUI || useModalProgress);
       if (!ok) {
-        if (showProgress && !setupUI) {
-          els.pullProgress?.classList.remove("hidden");
-          els.pullStatus.textContent = "Ollama offline — use Configurar automaticamente.";
-        }
+        const err = "Ollama offline — use “Configurar automaticamente” ou inicie o Ollama neste PC.";
+        if (useModalProgress) finishPullProgress(model, false, err);
+        else if (useSetupUi) finishSetupError(err);
         return false;
       }
     }
 
     state.pullingModel = true;
-    if (setupUI) {
+    state.pullingModelName = model;
+    setModelCardsPulling(model, true);
+
+    if (useSetupUi) {
       setSetupStep("model", "active");
       updateSetupProgress(52, `Baixando modelo ${model}...`, "model");
-    } else if (showProgress) {
-      els.pullProgress?.classList.remove("hidden");
-      els.pullBarFill.style.width = "0%";
-      els.pullStatus.textContent = `Iniciando download de ${model}...`;
+    }
+    if (useModalProgress) {
+      showPullProgress(model, `Conectando ao Ollama para baixar ${model}...`);
+      updateCardPullProgress(model, null, "Conectando ao Ollama...");
     }
 
     let success = false;
+    let lastError = "";
     try {
       const res = await fetch("/api/models/pull/stream", {
         method: "POST",
@@ -1256,7 +1467,10 @@
       if (!res.ok || !res.body) {
         const errData = await res.json().catch(() => ({}));
         if (res.status === 503 || errData.ollama_offline) {
-          const started = await ensureOllamaRunning(showProgress || setupUI);
+          const started = await ensureOllamaRunning(showProgress || setupUI || useModalProgress);
+          state.pullingModel = false;
+          state.pullingModelName = null;
+          setModelCardsPulling(model, false);
           if (started) return pullModel(model, options);
           state.ollamaOk = false;
           updateOllamaOfflineUI();
@@ -1279,22 +1493,24 @@
           const line = block.split("\n").find((l) => l.startsWith("data: "));
           if (!line) continue;
           const ev = JSON.parse(line.slice(6));
+          if (ev.type === "started") {
+            if (useModalProgress) updatePullProgress(model, { status: "Download iniciado", percent: 0 });
+          }
           if (ev.type === "progress") {
             const pct = ev.percent != null ? Math.round(ev.percent) : null;
-            if (setupUI) {
+            if (useSetupUi) {
               const overall = pct != null ? 52 + Math.round(pct * 0.4) : 55;
               const label = pct != null
                 ? `Baixando ${model}... ${pct}%${ev.status ? " — " + ev.status : ""}`
                 : ev.status || `Baixando ${model}...`;
               updateSetupProgress(overall, label, "model");
-            } else if (showProgress) {
-              if (pct != null) els.pullBarFill.style.width = `${pct}%`;
-              els.pullStatus.textContent = ev.status || `Baixando ${model}...`;
             }
+            if (useModalProgress) updatePullProgress(model, ev);
           }
           if (ev.type === "done") {
             success = !!ev.ok;
-            if (setupUI) {
+            lastError = ev.error || "";
+            if (useSetupUi) {
               if (success) {
                 setSetupStep("model", "done");
                 setSetupStep("config", "active");
@@ -1302,18 +1518,17 @@
               } else {
                 finishSetupError(`Falha ao baixar ${model}: ${ev.error || "desconhecido"}`);
               }
-            } else if (showProgress) {
-              els.pullBarFill.style.width = "100%";
-              els.pullStatus.textContent = ev.ok ? `Modelo ${model} pronto!` : `Falha: ${ev.error || "desconhecido"}`;
             }
+            if (useModalProgress) finishPullProgress(model, success, lastError || "desconhecido");
           }
           if (ev.type === "error") {
+            lastError = ev.error || "download falhou";
             if (ev.ollama_offline) {
               state.ollamaOk = false;
               updateOllamaOfflineUI();
             }
-            if (setupUI) finishSetupError("Erro: " + (ev.error || "download falhou"));
-            else if (showProgress) els.pullStatus.textContent = "Erro: " + (ev.error || "download falhou");
+            if (useSetupUi) finishSetupError("Erro: " + lastError);
+            if (useModalProgress) finishPullProgress(model, false, lastError);
           }
         }
       }
@@ -1323,14 +1538,20 @@
         setModelSelection(model);
         applyRecommendedModel(model, state.models);
         if (els.modelHint) els.modelHint.classList.add("hidden");
-        if (setupUI) setSetupStep("config", "done");
+        if (useSetupUi) setSetupStep("config", "done");
+        if (useModalProgress) {
+          showModelFeedback(`Modelo <strong>${escapeHtml(model)}</strong> instalado e selecionado.`, "ok");
+        }
       }
     } catch (e) {
-      if (setupUI) finishSetupError("Erro: " + e.message);
-      else if (showProgress) els.pullStatus.textContent = "Erro: " + e.message;
+      lastError = e.message || String(e);
+      if (useSetupUi) finishSetupError("Erro: " + lastError);
+      if (useModalProgress) finishPullProgress(model, false, lastError);
       success = false;
     } finally {
       state.pullingModel = false;
+      state.pullingModelName = null;
+      setModelCardsPulling(model, false);
     }
     return success;
   }

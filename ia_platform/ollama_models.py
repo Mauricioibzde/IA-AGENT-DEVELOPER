@@ -77,16 +77,24 @@ class OllamaModelManager:
                     data = json.loads(text)
                 except json.JSONDecodeError:
                     continue
+                if data.get("error"):
+                    message = str(data.get("error"))
+                    last = {"ok": False, "model": model, "error": message, "status": "error"}
+                    if on_event:
+                        on_event({"type": "error", "error": message, "model": model})
+                    return last
                 event = self._normalize_pull_event(model, data)
                 last.update(event)
                 if on_event:
                     on_event(event)
-                if data.get("status") == "success" or (data.get("completed") and data.get("total") and data["completed"] >= data["total"]):
+                if data.get("status") == "success":
                     last["ok"] = True
         finally:
             response.close()
 
-        if "error" not in last and last.get("status") != "error":
+        if last.get("status") == "success":
+            last["ok"] = True
+        elif "error" not in last and last.get("completed") and last.get("total") and last["completed"] >= last["total"]:
             last["ok"] = True
         return last
 
