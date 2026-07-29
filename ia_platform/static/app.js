@@ -1800,9 +1800,11 @@
         if (els.modeSelect) els.modeSelect.value = "execute";
         syncModeControls();
         addMessage(
-          "Pedido de desenvolvimento — executando no projeto (como no Lovable). Use Chat só para perguntas.",
+          "Modo: Executar código — pedido de desenvolvimento detectado. O agente vai alterar arquivos neste projeto.",
           "system"
         );
+        document.body.classList.add("mode-execute-flash");
+        window.setTimeout(() => document.body.classList.remove("mode-execute-flash"), 1200);
         return sendAgentPrompt(prompt, "execute");
       }
       return sendChatPrompt(prompt);
@@ -1824,10 +1826,14 @@
     if (!t) return false;
     if (looksLikeCodeRequest(t)) return false;
     const lower = t.toLowerCase();
-    if (t.length <= 80) {
+    if (t.length <= 120) {
       if (/^(oi|ol[aá]|iae|e a[ií]|hey|hi|hello|bom dia|boa tarde|boa noite)\b/i.test(lower)) return true;
-      if (/^(tudo bem|como vai|obrigad[oa]|valeu|ok|beleza|valeu)\b/i.test(lower)) return true;
-      if (/\b(pergunt|d[uú]vida|s[oó] (quero )?pergunt|conversar|me explica|o que (é|e)|voc[eê] (é|e|pode))\b/i.test(lower)) {
+      if (/^(tudo bem|como vai|obrigad[oa]|valeu|ok|beleza)\b/i.test(lower)) return true;
+      if (
+        /\b(pergunt|d[uú]vida|s[oó] (quero )?pergunt|conversar|me explica|explique|o que (é|e)|como funciona|por\s*qu[eê]|voc[eê] (é|e|pode))\b/i.test(
+          lower
+        )
+      ) {
         return true;
       }
     }
@@ -1835,11 +1841,25 @@
   }
 
   function looksLikeCodeRequest(text) {
-    const t = String(text || "").toLowerCase();
-    if (t.length < 8) return false;
-    return /\b(cri(e|ar)|faz(er)?|implement|adicion|alter|edit|corrig|refator|build|landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|melhor(e|ar)|redesen|layout|ui|ux)\b/i.test(
-      t
-    );
+    const t = String(text || "").toLowerCase().trim();
+    if (t.length < 12) return false;
+    // Pure questions / explanations stay in Chat even if they mention "site"/"app".
+    if (
+      /^(me )?(explica|explique|o que|qual|como funciona|por\s*qu[eê]|pode (me )?(dizer|explicar))\b/i.test(t) ||
+      (/\b(me explica|o que (é|e|significa)|s[oó] (uma )?pergunt|como funciona)\b/i.test(t) &&
+        !/\b(cri(e|ar)|implement|adicion|alter|edit|corrig|refator|melhor(e|ar)|faz(er)?)\b/i.test(t))
+    ) {
+      return false;
+    }
+    const hasAction =
+      /\b(cri(e|ar)|faz(er)?|implement(e|ar)?|adicion(e|ar)?|alter(e|ar)?|edit(e|ar)?|corrig(a|ir)?|refator(e|ar)?|melhor(e|ar)|redesenh(e|ar)?|build|gera(r)?|escrev(a|er)|mont(e|ar)|atualiz(e|ar))\b/i.test(
+        t
+      );
+    const hasTarget =
+      /\b(landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|layout|ui|ux|dashboard|backend|frontend|visual|estilo|navbar|hero|formul[aá]rio)\b/i.test(
+        t
+      );
+    return hasAction && hasTarget;
   }
 
   function addExecuteHandoff(prompt, reason) {

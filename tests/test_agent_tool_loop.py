@@ -116,6 +116,33 @@ def test_scaffold_python_project(tmp_path):
     assert (tmp_path / "demo" / "pyproject.toml").exists()
 
 
+def test_scaffold_python_project_into_workspace_root(tmp_path):
+    result = execute_tool(
+        "scaffold_project",
+        {"name": "demo", "path": ".", "template": "python"},
+        workspace=str(tmp_path),
+    )
+    assert result["ok"] is True
+    assert (tmp_path / "src" / "main.py").exists()
+    assert (tmp_path / "pyproject.toml").exists()
+    assert not (tmp_path / "demo" / "src" / "main.py").exists()
+
+
+def test_scaffold_react_includes_vite_preview_config(tmp_path):
+    result = execute_tool(
+        "scaffold_project",
+        {"name": "ui-app", "path": ".", "template": "react"},
+        workspace=str(tmp_path),
+    )
+    assert result["ok"] is True
+    vite = (tmp_path / "vite.config.js").read_text(encoding="utf-8")
+    assert "127.0.0.1" in vite
+    assert "PORT" in vite
+    pkg = json.loads((tmp_path / "package.json").read_text(encoding="utf-8"))
+    assert pkg["name"] == "ui-app"
+    assert "dev" in pkg.get("scripts", {})
+    assert (tmp_path / "src" / "App.jsx").is_file()
+
 def test_create_multiple_files(tmp_path):
     result = execute_tool(
         "create_multiple_files",

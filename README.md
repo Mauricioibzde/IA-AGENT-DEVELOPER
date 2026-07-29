@@ -1,6 +1,6 @@
-# IA Agent Developer v1.0 — MVP Local
+# IA Agent Developer v1.0 — MVP Local (Forge)
 
-Agente local de programação com Ollama + interface web para criar sites/apps por conversa.
+Agente local de programação com Ollama + interface web **Forge** para criar sites/apps por conversa (fluxo estilo Lovable).
 
 ## Terminar o projeto hoje (3 passos)
 
@@ -25,16 +25,20 @@ python3 -m pytest -q
 bash scripts/run-platform.sh
 ```
 
+Requisitos extras para preview React: **Node.js + npm**.
+
 ---
 
 ## Modos de uso
 
 | Modo | Comando | Para quê |
 |------|---------|----------|
-| **Web UI** | `scripts/run-platform.ps1` | Chat estilo plataforma (local) |
+| **Web UI (Forge)** | `scripts/run-platform.ps1` / `run-platform.sh` | Chat + Executar + Preview ao vivo |
 | **CLI** | `python -m local_agent "..." --workspace sandbox` | Terminal / automação |
 | **VS Code** | `Ctrl+Shift+P` → Tasks → *IA Agent* | Atalhos no editor |
 | **Legado** | `python ollama_agent.py "..."` | Compatibilidade |
+
+Na UI, o modo **Chat** responde rápido; pedidos claros de desenvolvimento (criar/editar app, landing, API…) são roteados automaticamente para **Executar código**.
 
 ---
 
@@ -49,7 +53,7 @@ Crie uma API FastAPI com endpoint /health e testes pytest
 ```
 
 ```
-Crie um app React simples com navbar e hero section na pasta sandbox/site
+Crie um app React simples com navbar e hero section
 ```
 
 ```
@@ -62,10 +66,13 @@ Analise o projeto e corrija erros de sintaxe Python
 
 ```text
 local_agent/          # motor do agente (planner, tools, validator, reflector)
-ia_platform/             # UI web local + API /api/run
+ia_platform/          # UI web Forge + API /api/run + preview/dev
 scripts/              # setup, run-platform, start-today
-sandbox/              # projetos gerados pelo agente
+projects/             # projetos criados pela UI (sandbox seguro)
+sandbox/              # workspace CLI / legado
 ```
+
+Workspaces da API ficam restritos a `projects/` e `sandbox/`.
 
 ---
 
@@ -74,6 +81,7 @@ sandbox/              # projetos gerados pelo agente
 - Python 3.11+
 - [Ollama](https://ollama.com/)
 - Modelo recomendado: `qwen2.5-coder:7b` (leve) ou `qwen3-coder:30b` (melhor, precisa GPU)
+- Node.js (opcional, para `npm run dev` / preview React)
 
 ```powershell
 ollama pull qwen2.5-coder:7b
@@ -87,7 +95,7 @@ ollama pull qwen2.5-coder:7b
 python -m pytest -q
 ```
 
-46+ testes unitários (sem depender de Ollama para a maioria).
+100+ testes unitários (sem depender de Ollama para a maioria).
 
 ---
 
@@ -102,7 +110,7 @@ python -m pytest -q
 
 ## Segurança
 
-- Paths confinados ao workspace
+- Paths confinados ao workspace (`projects/` / `sandbox/` na plataforma)
 - Comandos perigosos bloqueados
 - `--dry-run` para simular sem escrever disco
 - Backups `.bak` em edições
@@ -114,6 +122,7 @@ python -m pytest -q
 - [ ] Embeddings/RAG para projetos grandes
 - [x] Preview automático (npm run dev)
 - [x] Deploy 1-clique (Vercel)
+- [x] Chat rápido + auto-execução de pedidos de build
 - [ ] Multi-usuário + cloud beta
 
 ---

@@ -78,7 +78,7 @@ RULES:
 8. For complex edits prefer edit_file or apply_patch over write_file.
 9. Keep edits minimal and focused — change only what is needed for the goal.
 10. If you need more context, read more files before deciding.
-11. For web UI apps prefer React + Vite (scaffold_project template=react) or solid HTML/CSS.
+11. For web UI apps prefer React + Vite (scaffold_project template=react, path=".") or solid HTML/CSS.
 12. Never leave a React app without package.json, vite.config, index.html, and a mounted main entry.
 13. Apply SENIOR ENGINEERING STANDARDS: clean architecture, FE+BE quality, security, tests.
 14. Choose validation by stack: Python→pytest/compileall; Node/React→npm test|build;

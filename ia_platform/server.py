@@ -33,7 +33,7 @@ from ia_platform.model_catalog import (
 )
 from ia_platform.ollama_models import OllamaModelManager
 from ia_platform.ollama_service import ollama_service
-from ia_platform.project_templates import PROJECT_TEMPLATES
+from ia_platform.project_templates import PROJECT_TEMPLATES, get_template_files
 from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
 
@@ -70,12 +70,33 @@ def _project_path(project_id: str) -> Path:
 
 
 def _resolve_workspace(raw: str | None) -> Path:
-    if raw and raw.startswith("projects/"):
-        return _project_path(raw.split("/", 1)[1])
-    path = Path(raw or "sandbox")
-    if not path.is_absolute():
-        path = (ROOT.parent / path).resolve()
-    return path
+    """Resolve a workspace path, confined to projects/ or sandbox/."""
+    if raw and str(raw).startswith("projects/"):
+        return _project_path(str(raw).split("/", 1)[1])
+
+    projects_root = PROJECTS_ROOT.resolve()
+    sandbox_root = DEFAULT_WORKSPACE.resolve()
+
+    if not raw or str(raw).strip() in {"", "sandbox", "sandbox/"}:
+        DEFAULT_WORKSPACE.mkdir(parents=True, exist_ok=True)
+        return sandbox_root
+
+    path = Path(str(raw).strip())
+    if path.is_absolute():
+        raise ValueError("Absolute workspace paths are not allowed; use projects/<id> or sandbox/")
+
+    candidate = (ROOT.parent / path).resolve()
+    for root in (projects_root, sandbox_root):
+        try:
+            candidate.relative_to(root)
+            return candidate
+        except ValueError:
+            continue
+    raise ValueError("Workspace must be under projects/ or sandbox/")
+
+
+def _project_has_dev_script(project_dir: Path) -> bool:
+    return dev_manager.detect_dev_script(project_dir) is not None
 
 
 def _should_skip_path(path: Path) -> bool:
@@ -113,7 +134,7 @@ def _list_files(base: Path, rel: str = "", recursive: bool = False) -> List[Dict
 
 
 def _apply_template(project_dir: Path, template: str) -> None:
-    files = PROJECT_TEMPLATES.get(template) or {}
+    files = get_template_files(template, project_dir.name)
     for rel_path, content in files.items():
         target = project_dir / rel_path
         target.parent.mkdir(parents=True, exist_ok=True)
@@ -594,7 +615,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         project_dir.mkdir(parents=True, exist_ok=True)
         template = str(data.get("template") or "blank")
         readme = f"# {name}\n\nGerado pela plataforma IA Agent Developer.\n"
-        if template == "blank" or template not in PROJECT_TEMPLATES:
+        known = set(PROJECT_TEMPLATES) | {"react"}
+        if template == "blank" or template not in known:
             (project_dir / "README.md").write_text(readme, encoding="utf-8")
         else:
             _apply_template(project_dir, template)
@@ -608,8 +630,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "name": name,
                 "path": f"projects/{name}",
                 "template": template,
-                "has_dev_script": (project_dir / "package.json").is_file()
-                and template in {"react"},
+                "has_dev_script": _project_has_dev_script(project_dir),
             },
         )
 

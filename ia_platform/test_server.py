@@ -214,12 +214,15 @@ def test_create_react_template(platform_url: str, tmp_path: Path, monkeypatch: p
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
     assert data["template"] == "react"
+    assert data["has_dev_script"] is True
     project_dir = tmp_path / "projects" / "my-react"
     assert (project_dir / "package.json").is_file()
     assert (project_dir / "vite.config.js").is_file()
     assert (project_dir / "src" / "App.jsx").is_file()
     pkg = json.loads((project_dir / "package.json").read_text(encoding="utf-8"))
+    assert pkg["name"] == "my-react"
     assert "dev" in pkg.get("scripts", {})
+    assert "my-react" in (project_dir / "index.html").read_text(encoding="utf-8")
 
 
 def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -574,4 +577,36 @@ def test_ollama_ensure_starts_daemon(platform_url: str, monkeypatch: pytest.Monk
         data = json.loads(resp.read().decode())
     assert data["ok"] is True
     assert data.get("started") is True
+
+
+def test_resolve_workspace_projects_and_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects = tmp_path / "projects"
+    sandbox = tmp_path / "sandbox"
+    projects.mkdir()
+    sandbox.mkdir()
+    (projects / "demo").mkdir()
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", projects)
+    monkeypatch.setattr(_mod, "DEFAULT_WORKSPACE", sandbox)
+    monkeypatch.setattr(_mod, "ROOT", tmp_path / "ia_platform")
+
+    assert _mod._resolve_workspace("projects/demo") == (projects / "demo").resolve()
+    assert _mod._resolve_workspace(None) == sandbox.resolve()
+    assert _mod._resolve_workspace("sandbox") == sandbox.resolve()
+    nested = _mod._resolve_workspace("sandbox/nested")
+    assert nested == (sandbox / "nested").resolve()
+
+
+def test_resolve_workspace_rejects_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects = tmp_path / "projects"
+    sandbox = tmp_path / "sandbox"
+    projects.mkdir()
+    sandbox.mkdir()
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", projects)
+    monkeypatch.setattr(_mod, "DEFAULT_WORKSPACE", sandbox)
+    monkeypatch.setattr(_mod, "ROOT", tmp_path / "ia_platform")
+
+    with pytest.raises(ValueError, match="not allowed|must be under"):
+        _mod._resolve_workspace("/tmp/evil")
+    with pytest.raises(ValueError, match="must be under"):
+        _mod._resolve_workspace("../outside")
 

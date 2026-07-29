@@ -9,6 +9,7 @@ from typing import Dict
 
 def _pkg_name(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "-", (name or "app").strip().lower())[:64]
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-_")
     return cleaned or "app"
 
 
@@ -315,7 +316,12 @@ main { padding: 2rem; }
 """,
         "app.js": "console.log('Dashboard pronto — peça melhorias no chat da plataforma.');\n",
     },
-    "react": {},  # filled below with react_vite_files()
 }
 
-PROJECT_TEMPLATES["react"] = react_vite_files("forge-react-app")
+
+def get_template_files(template: str, project_name: str) -> Dict[str, str]:
+    """Return starter files for a template, parameterized by project name."""
+    if template == "react":
+        return react_vite_files(project_name)
+    files = PROJECT_TEMPLATES.get(template) or {}
+    return dict(files)
