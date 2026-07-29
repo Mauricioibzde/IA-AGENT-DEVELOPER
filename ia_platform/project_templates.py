@@ -250,31 +250,8 @@ body {
 .features p { color: #94a3b8; font-size: 0.92rem; line-height: 1.5; }
 """,
     },
-    "api": {
-        "main.py": '''"""API REST simples — peça ao agente para expandir endpoints."""
+    "api": {},  # filled dynamically via fastapi_files in get_template_files
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            body = json.dumps({"ok": True}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        self.send_response(404)
-        self.end_headers()
-
-
-if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
-''',
-        "README.md": "# API\n\nRode: `python main.py`\n\nPeça ao agente novos endpoints via chat.\n",
-    },
     "dashboard": {
         "index.html": """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -333,6 +310,9 @@ def get_template_files(template: str, project_name: str) -> Dict[str, str]:
     """Return starter files for a template, parameterized by project name."""
     if template == "react":
         return react_vite_files(project_name)
+    if template == "api":
+        from local_agent.web_scaffold import fastapi_files
+        return fastapi_files(project_name)
     files = dict(PROJECT_TEMPLATES.get(template) or {})
     if template == "landing" and "index.html" in files:
         files["index.html"] = files["index.html"].replace(

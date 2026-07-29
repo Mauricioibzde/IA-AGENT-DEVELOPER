@@ -282,6 +282,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_archive_project(project_id)
         if project_id and sub == "dev/clear-error":
             return self._handle_dev_clear_error(project_id)
+        if project_id and sub == "file":
+            return self._handle_write_file(project_id)
         self._send_json(404, {"error": "not found"})
 
     def _ollama_host(self) -> str:
@@ -756,6 +758,56 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(415, {"error": "binary file"})
         self._send_json(200, {"path": file_path, "content": content})
 
+    def _handle_write_file(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        file_path = str(data.get("path") or "").strip().replace("\\", "/")
+        if not file_path or file_path.startswith("/") or ".." in file_path.split("/"):
+            return self._send_json(400, {"error": "invalid path"})
+        if not isinstance(data.get("content"), str):
+            return self._send_json(400, {"error": "content (string) is required"})
+        content = data["content"]
+        if len(content.encode("utf-8")) > 500_000:
+            return self._send_json(413, {"error": "file too large"})
+        target = (base / file_path).resolve()
+        try:
+            target.relative_to(base.resolve())
+        except ValueError:
+            return self._send_json(403, {"error": "access denied"})
+        # Block writes into platform metadata / hidden agent dirs.
+        rel_parts = Path(file_path).parts
+        if rel_parts and rel_parts[0] in {".forge", ".git", "node_modules", "__pycache__"}:
+            return self._send_json(403, {"error": "path not writable"})
+        target.parent.mkdir(parents=True, exist_ok=True)
+        backup = None
+        if target.is_file():
+            bak = target.with_suffix(target.suffix + ".bak")
+            try:
+                bak.write_bytes(target.read_bytes())
+                backup = str(bak.relative_to(base.resolve())).replace("\\", "/")
+            except OSError:
+                backup = None
+        tmp = target.with_suffix(target.suffix + ".tmp")
+        try:
+            tmp.write_text(content, encoding="utf-8")
+            tmp.replace(target)
+        except OSError as exc:
+            if tmp.exists():
+                try:
+                    tmp.unlink()
+                except OSError:
+                    pass
+            return self._send_json(500, {"error": f"write failed: {exc}"})
+        return self._send_json(
+            200,
+            {"ok": True, "path": file_path, "bytes": len(content.encode("utf-8")), "backup": backup},
+        )
+
     def _handle_get_chat(self, project_id: str) -> None:
         try:
             base = _project_path(project_id)
@@ -884,9 +936,9 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def _prepare_run(self, data: Dict[str, Any], workspace: Path) -> tuple[Dict[str, str], str, Optional[Dict[str, Any]]]:
         """Resolve models, build conversation context, preflight availability."""
         prompt = str(data.get("prompt") or data.get("goal") or "").strip()
-        from local_agent.web_scaffold import looks_like_plain_web_goal
+        from local_agent.web_scaffold import looks_like_offline_scaffold_goal
 
-        allow_offline_scaffold = looks_like_plain_web_goal(prompt) and not bool(data.get("plan_only"))
+        allow_offline_scaffold = looks_like_offline_scaffold_goal(prompt) and not bool(data.get("plan_only"))
 
         offline = self._ensure_ollama_online()
         if offline and not allow_offline_scaffold:

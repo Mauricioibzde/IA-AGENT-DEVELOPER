@@ -15,13 +15,34 @@ def looks_like_plain_web_goal(goal: str) -> bool:
     has_web = bool(re.search(r"\b(html|css|javascript|\bjs\b|site|página|pagina|landing|aplicat|app)\b", g))
     wants_create = bool(
         re.search(
-            r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|build|pequena|simples|mini)\b",
+            r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|build|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit|atualiz)\b",
             g,
         )
     )
-    # Explicit stack mention is enough even without a create verb.
     has_stack = bool(re.search(r"\bhtml\b", g) and re.search(r"\b(css|javascript|\bjs\b)\b", g))
     return has_web and (wants_create or has_stack)
+
+
+def looks_like_react_goal(goal: str) -> bool:
+    g = (goal or "").lower()
+    if re.search(r"\b(fastapi|flask|django|api rest)\b", g) and not re.search(r"\b(react|vite)\b", g):
+        return False
+    return bool(re.search(r"\b(react|vite|next\.?js|spa)\b", g)) and bool(
+        re.search(r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|app|aplicat|site|dashboard|landing)\b", g)
+    )
+
+
+def looks_like_fastapi_goal(goal: str) -> bool:
+    g = (goal or "").lower()
+    if re.search(r"\b(react|vite|html|css)\b", g) and not re.search(r"\b(fastapi|api|endpoint|backend)\b", g):
+        return False
+    has_api = bool(re.search(r"\b(fastapi|api rest|endpoint|/health|backend python)\b", g))
+    wants = bool(re.search(r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|implement)\b", g))
+    return has_api and wants
+
+
+def looks_like_offline_scaffold_goal(goal: str) -> bool:
+    return looks_like_plain_web_goal(goal) or looks_like_react_goal(goal) or looks_like_fastapi_goal(goal)
 
 
 def _title_from_goal(goal: str) -> str:
@@ -206,3 +227,112 @@ def write_plain_web_app(workspace: Path, goal: str = "") -> Tuple[List[str], str
         path.write_text(content, encoding="utf-8")
         created.append(rel.replace("\\", "/"))
     return created, title
+
+
+def fastapi_files(project_name: str = "forge-api") -> Dict[str, str]:
+    name = re.sub(r"[^a-zA-Z0-9_-]", "-", (project_name or "forge-api").strip().lower())[:64] or "forge-api"
+    return {
+        "main.py": '''"""API FastAPI gerada pelo Forge."""
+
+from fastapi import FastAPI
+from pydantic import BaseModel
+
+app = FastAPI(title="Forge API", version="0.1.0")
+
+
+class Health(BaseModel):
+    ok: bool
+    service: str = "forge-api"
+
+
+@app.get("/health", response_model=Health)
+def health() -> Health:
+    return Health(ok=True)
+
+
+@app.get("/")
+def root() -> dict:
+    return {"message": "API pronta — peça novos endpoints no chat."}
+''',
+        "requirements.txt": "fastapi>=0.115.0\nuvicorn[standard]>=0.32.0\npytest>=8.0\nhttpx>=0.27.0\n",
+        "tests/test_health.py": '''from fastapi.testclient import TestClient
+
+from main import app
+
+client = TestClient(app)
+
+
+def test_health():
+    resp = client.get("/health")
+    assert resp.status_code == 200
+    assert resp.json()["ok"] is True
+''',
+        "README.md": f"""# {name}
+
+API FastAPI gerada pelo Forge.
+
+```bash
+pip install -r requirements.txt
+uvicorn main:app --reload --host 127.0.0.1 --port 8000
+```
+
+Health: http://127.0.0.1:8000/health
+
+Testes: `pytest -q`
+""",
+    }
+
+
+def write_react_app(workspace: Path, goal: str = "") -> Tuple[List[str], str]:
+    from ia_platform.project_templates import react_vite_files
+
+    title = "Forge React App"
+    g = (goal or "").strip()
+    if 3 < len(g) <= 40:
+        title = g
+    files = react_vite_files(title)
+    created: List[str] = []
+    workspace = Path(workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    for rel, content in files.items():
+        path = workspace / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        created.append(rel.replace("\\", "/"))
+    return created, title
+
+
+def write_fastapi_app(workspace: Path, goal: str = "") -> Tuple[List[str], str]:
+    title = "forge-api"
+    files = fastapi_files(title)
+    created: List[str] = []
+    workspace = Path(workspace)
+    workspace.mkdir(parents=True, exist_ok=True)
+    for rel, content in files.items():
+        path = workspace / rel
+        path.parent.mkdir(parents=True, exist_ok=True)
+        path.write_text(content, encoding="utf-8")
+        created.append(rel.replace("\\", "/"))
+    return created, title
+
+
+def validate_plain_web(workspace: Path) -> List[str]:
+    """Return list of problems for a static HTML/CSS/JS app (empty = ok)."""
+    problems: List[str] = []
+    root = Path(workspace)
+    index = root / "index.html"
+    if not index.is_file():
+        problems.append("index.html ausente")
+        return problems
+    html = index.read_text(encoding="utf-8", errors="ignore")
+    if 'href="style.css"' in html or "href='style.css'" in html:
+        if not (root / "style.css").is_file():
+            problems.append("style.css referenciado mas ausente")
+    if 'src="app.js"' in html or "src='app.js'" in html:
+        if not (root / "app.js").is_file():
+            problems.append("app.js referenciado mas ausente")
+    for name in ("style.css", "app.js"):
+        path = root / name
+        if path.is_file() and path.stat().st_size == 0:
+            problems.append(f"{name} está vazio")
+    return problems

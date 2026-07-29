@@ -42,6 +42,11 @@ class Validator:
     def establish_baseline(self) -> List[ValidationResult]:
         results = self.run_all()
         self.baseline_failures = {r.command for r in results if not r.success}
+        # run_all() categorizes before baseline_failures is known — re-tag so
+        # pre-existing failures are not treated as agent-introduced regressions.
+        for item in results:
+            if not item.success and item.command in self.baseline_failures:
+                item.category = "pre_existing"
         return results
 
     def run_all(self, preferred: Optional[List[str]] = None) -> List[ValidationResult]:

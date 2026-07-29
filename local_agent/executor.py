@@ -97,11 +97,16 @@ class Executor:
                         continue
 
             if name in MUTATING_TOOLS and not self.config.dry_run:
-                touched = len(set(self.modified_files + self.created_files))
-                if touched >= self.config.max_modified_files:
+                new_paths = self._mutation_new_paths(name, args if isinstance(args, dict) else {})
+                already = set(self.modified_files + self.created_files)
+                projected = already | new_paths
+                if len(projected) > self.config.max_modified_files:
                     result = ToolResult(
                         ok=False,
-                        error=f"Modified file budget exceeded ({self.config.max_modified_files}). Finish or validate current changes.",
+                        error=(
+                            f"Modified file budget exceeded ({self.config.max_modified_files}). "
+                            "Finish or validate current changes."
+                        ),
                     )
                     results.append({"tool": name, "result": result.to_dict()})
                     continue
@@ -140,6 +145,40 @@ class Executor:
             if tool in MUTATING_TOOLS and res.get("ok") and not res.get("dry_run"):
                 return True
         return False
+
+    def _mutation_new_paths(self, name: str, args: Dict[str, Any]) -> Set[str]:
+        """Paths this mutation would newly count against the file budget."""
+        already = set(self.modified_files + self.created_files)
+        candidates: Set[str] = set()
+
+        def add(raw: str | None) -> None:
+            if not raw:
+                return
+            rel = self._rel(str(raw))
+            if rel and rel not in already:
+                candidates.add(rel)
+
+        if name in {"write_file", "create_file", "create_directory", "append_file", "append_to_file",
+                    "replace_in_file", "edit_file", "apply_patch"}:
+            add(str(args.get("path") or ""))
+        elif name == "create_multiple_files":
+            files = args.get("files")
+            if isinstance(files, list):
+                for entry in files:
+                    if isinstance(entry, dict):
+                        add(str(entry.get("path") or ""))
+                    elif isinstance(entry, str):
+                        add(entry)
+        elif name == "scaffold_project":
+            add(str(args.get("path") or "."))
+        elif name == "move_file":
+            add(str(args.get("path") or args.get("src") or ""))
+            add(str(args.get("dst") or ""))
+        elif name == "copy_file":
+            add(str(args.get("dst") or ""))
+        elif name == "delete_file":
+            add(str(args.get("path") or ""))
+        return candidates
 
     def _track(self, name: str, result: ToolResult, args: Dict[str, Any]) -> None:
         data = result.data
@@ -185,8 +224,10 @@ class Executor:
         elif name in {"apply_patch", "replace_in_file", "edit_file", "append_file", "append_to_file"}:
             _add_modified(str(data.get("path") or args.get("path") or ""))
         elif name == "move_file":
-            _add_modified(str(data.get("path") or args.get("path") or ""))
+            _add_modified(str(data.get("path") or args.get("path") or args.get("src") or ""))
             if data.get("dst") or args.get("dst"):
                 _add_modified(str(data.get("dst") or args.get("dst")))
         elif name == "copy_file":
             _add_created(str(data.get("dst") or args.get("dst") or ""))
+        elif name == "delete_file":
+            _add_modified(str(data.get("path") or args.get("path") or ""))

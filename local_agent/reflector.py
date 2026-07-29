@@ -79,11 +79,24 @@ class Reflector:
         return parsed if isinstance(parsed, dict) and "status" in parsed else None
 
     def _from_dict(self, data: Dict[str, Any]) -> ReflectionDecision:
-        status_raw = str(data.get("status", "continue")).lower()
-        try:
-            status = ReflectionStatus(status_raw)
-        except ValueError:
+        status_raw = str(data.get("status", "")).lower().strip()
+        if not status_raw:
+            # Empty status from model → treat like heuristic later if needed; default continue.
             status = ReflectionStatus.CONTINUE
+        else:
+            try:
+                status = ReflectionStatus(status_raw)
+            except ValueError:
+                # Invalid status token — prefer finish only when caller re-checks; keep CONTINUE
+                # and let agent use tool/validation signals, but map common aliases.
+                aliases = {
+                    "done": ReflectionStatus.FINISH,
+                    "complete": ReflectionStatus.FINISH,
+                    "completed": ReflectionStatus.FINISH,
+                    "ok": ReflectionStatus.FINISH,
+                    "success": ReflectionStatus.FINISH,
+                }
+                status = aliases.get(status_raw, ReflectionStatus.CONTINUE)
         risk_raw = str(data.get("risk_level", "low")).lower()
         try:
             risk = RiskLevel(risk_raw)
@@ -100,12 +113,18 @@ class Reflector:
         )
 
     def _heuristic(self, task: Task, tool_results: str, validation_summary: str) -> ReflectionDecision:
-        failed = "FAIL" in validation_summary or '"ok": false' in tool_results.lower() or '"ok":false' in tool_results.lower()
+        failed = (
+            "FAIL" in validation_summary
+            or '"ok": false' in tool_results.lower()
+            or '"ok":false' in tool_results.lower()
+        )
         if not failed:
+            # Successful tools/validation → finish the task (CONTINUE would loop forever).
             return ReflectionDecision(
-                status=ReflectionStatus.CONTINUE,
-                analysis="No failure signals in latest results; more work may remain on this task",
-                next_action="Continue implementing remaining requirements for this task",
+                status=ReflectionStatus.FINISH,
+                analysis="Tools and validation look successful — completing this task",
+                next_action="Proceed to the next task or finalize",
+                risk_level=RiskLevel.LOW,
             )
         return ReflectionDecision(
             status=ReflectionStatus.RETRY,

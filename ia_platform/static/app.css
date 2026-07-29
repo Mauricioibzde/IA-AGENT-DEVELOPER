@@ -1303,6 +1303,34 @@ body.mode-execute-flash #modeSelect {
   gap: 8px;
 }
 
+.file-editor-shell {
+  margin-top: 10px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+  min-height: 0;
+}
+.file-editor-toolbar {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  min-height: 28px;
+}
+.file-editor-path {
+  flex: 1;
+  min-width: 0;
+  font-size: 0.72rem;
+  color: var(--muted);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+  font-family: "JetBrains Mono", "Fira Code", monospace;
+}
+.file-editor-dirty {
+  color: var(--accent, #38bdf8);
+  font-size: 1.2rem;
+  line-height: 1;
+}
 .file-viewer {
   background: var(--surface-2);
   border: 1px solid var(--border);
@@ -1311,11 +1339,15 @@ body.mode-execute-flash #modeSelect {
   font-family: "JetBrains Mono", "Fira Code", monospace;
   font-size: 0.74rem;
   line-height: 1.45;
-  white-space: pre-wrap;
-  word-break: break-all;
-  max-height: 400px;
+  white-space: pre;
+  word-break: normal;
+  max-height: 420px;
+  min-height: 180px;
   overflow: auto;
-  margin-top: 10px;
+  margin: 0;
+  width: 100%;
+  color: inherit;
+  resize: vertical;
 }
 
 /* ── Empty state ── */

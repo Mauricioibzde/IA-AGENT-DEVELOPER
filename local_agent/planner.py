@@ -43,6 +43,7 @@ class Planner:
         plan = self._to_plan(data, fallback_goal=goal)
 
         # Post-process: auto-discover relevant_files if the planner left them empty.
+        self._last_index = index
         if index:
             self._enrich_with_index(plan, index, goal)
 
@@ -51,7 +52,7 @@ class Planner:
 
         return plan
 
-    def update_plan(self, plan: Plan, error: str) -> Plan:
+    def update_plan(self, plan: Plan, error: str, index: Optional[ProjectIndex] = None) -> Plan:
         prompt = (
             "Update this JSON plan after the error. Return ONLY JSON plan.\n"
             f"Error: {error}\nCurrent plan:\n{json.dumps(self._plan_to_dict(plan), ensure_ascii=False)}"
@@ -67,6 +68,8 @@ class Planner:
             if task.id in done:
                 task.status = TaskStatus.COMPLETED
                 task.attempts = done[task.id].attempts
+        idx = index if index is not None else getattr(self, "_last_index", None)
+        self._ensure_validation_commands(updated, idx)
         return updated
 
     def _enrich_with_index(self, plan: Plan, index: ProjectIndex, goal: str) -> None:
@@ -230,12 +233,67 @@ class Planner:
         if not tasks:
             safe = minimal_safe_plan(fallback_goal)
             return self._to_plan(safe, fallback_goal=fallback_goal)
+        tasks = self._normalize_tasks(tasks)
         return Plan(
             goal=str(data.get("goal") or fallback_goal),
             summary=str(data.get("summary") or ""),
             tasks=tasks,
             risks=[str(r) for r in data.get("risks") or []],
         )
+
+    @staticmethod
+    def _normalize_tasks(tasks: List[Task]) -> List[Task]:
+        """Deduplicate IDs and drop invalid/cyclic dependencies so _next_task never stalls."""
+        seen: Dict[str, int] = {}
+        for task in tasks:
+            base = task.id.strip() or "task"
+            if base not in seen:
+                seen[base] = 1
+                task.id = base
+            else:
+                seen[base] += 1
+                task.id = f"{base}-{seen[base]}"
+
+        ids = {t.id for t in tasks}
+        for task in tasks:
+            deps: List[str] = []
+            for dep in task.dependencies:
+                if dep == task.id:
+                    continue
+                if dep not in ids:
+                    continue
+                if dep not in deps:
+                    deps.append(dep)
+            task.dependencies = deps
+
+        # Break cycles by dropping the back-edge that closes a cycle.
+        adj = {t.id: list(t.dependencies) for t in tasks}
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        drop: set[tuple[str, str]] = set()
+
+        def dfs(node: str, stack: List[str]) -> None:
+            visiting.add(node)
+            stack.append(node)
+            for dep in adj.get(node, []):
+                if dep in visiting:
+                    # cycle: node -> dep is a back edge into the stack
+                    drop.add((node, dep))
+                    continue
+                if dep not in visited:
+                    dfs(dep, stack)
+            stack.pop()
+            visiting.discard(node)
+            visited.add(node)
+
+        for tid in list(adj):
+            if tid not in visited:
+                dfs(tid, [])
+
+        if drop:
+            for task in tasks:
+                task.dependencies = [d for d in task.dependencies if (task.id, d) not in drop]
+        return tasks
 
     @staticmethod
     def _plan_to_dict(plan: Plan) -> Dict[str, Any]:

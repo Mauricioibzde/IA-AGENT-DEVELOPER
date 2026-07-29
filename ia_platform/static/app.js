@@ -9,6 +9,8 @@
     current: null,
     files: [],
     selectedFile: null,
+    fileEditorOriginal: "",
+    fileEditorDirty: false,
     lastReport: "",
     running: false,
     runId: null,
@@ -72,6 +74,10 @@
     btnDeploy: $("btnDeploy"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
+    fileEditorShell: $("fileEditorShell"),
+    fileEditorPath: $("fileEditorPath"),
+    fileEditorDirty: $("fileEditorDirty"),
+    btnFileSave: $("btnFileSave"),
     previewFrame: $("previewFrame"),
     previewHint: $("previewHint"),
     previewEmpty: $("previewEmpty"),
@@ -1347,16 +1353,19 @@
       body: JSON.stringify({ name, template }),
     });
     await loadProjects();
+    const live =
+      !!d.has_dev_script || template === "react" || template === "api";
     await selectProject(d.id, {
-      preferDev: !!d.has_dev_script || template === "react",
-      autoStart: !!d.has_dev_script || template === "react",
+      preferDev: live,
+      autoStart: live,
     });
-    await persistMessage(
-      "system",
-      d.has_dev_script || template === "react"
-        ? "Projeto React criado. Preview ao vivo iniciando (npm run dev)…"
-        : "Projeto criado. Descreva o que quer construir — pedidos de app executam no projeto automaticamente."
-    );
+    const intro =
+      template === "api"
+        ? "API FastAPI criada. Preview ao vivo (uvicorn /docs) pode ser iniciado no painel."
+        : d.has_dev_script || template === "react"
+          ? "Projeto React criado. Preview ao vivo iniciando (npm run dev)…"
+          : "Projeto criado. Descreva o que quer construir — pedidos de app executam no projeto automaticamente.";
+    await persistMessage("system", intro);
   }
 
   async function selectProject(id, options = {}) {
@@ -1373,8 +1382,11 @@
     state.previewLoadRetried = false;
     els.previewMode.value = "static";
     if (els.fileSearchInput) els.fileSearchInput.value = "";
-    els.fileViewer.classList.add("hidden");
-    els.fileViewer.textContent = "";
+    els.fileEditorShell?.classList.add("hidden");
+    if (els.fileViewer) els.fileViewer.value = "";
+    state.fileEditorOriginal = "";
+    state.fileEditorDirty = false;
+    syncFileEditorDirty();
     els.projectTitle.textContent = project.name;
     els.emptyView.classList.add("hidden");
     els.workspaceView.classList.remove("hidden");
@@ -1408,7 +1420,7 @@
           : "Este projeto usa Vite. Inicie o preview ao vivo para ver o app."
       );
     }
-    if (autoStart && !state.devStatus?.running && state.devStatus?.npm_available) {
+    if (autoStart && !state.devStatus?.running && canStartDevPreview()) {
       await startDevServer();
       syncDevPolling();
       return true;
@@ -1971,8 +1983,23 @@
     const prompt = els.promptInput.value.trim();
     if (!prompt || state.running || !state.current) return;
 
-    const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
-    if (!ready) {
+    const offlineScaffold = looksLikeOfflineScaffoldGoal(prompt);
+    let ready = !!state.ollamaOk;
+    if (!ready && !offlineScaffold) {
+      ready = await ensureEnvironment({
+        pullRecommended: true,
+        showProgress: true,
+      });
+    } else if (!ready && offlineScaffold) {
+      // Soft health refresh without blocking on Ollama install.
+      try {
+        await checkHealth();
+        ready = !!state.ollamaOk;
+      } catch (_) {
+        ready = false;
+      }
+    }
+    if (!ready && !offlineScaffold) {
       addMessage(
         "Ambiente não configurado. Use Modelos IA → Configurar automaticamente (Ollama + modelo recomendado).",
         "system"
@@ -1981,9 +2008,24 @@
       state.pendingPrompt = prompt;
       return;
     }
+    if (!ready && offlineScaffold) {
+      addMessage(
+        "Ollama offline — vou criar o starter (HTML/React/API) sem modelo. Depois você pode melhorar com IA.",
+        "system"
+      );
+    }
 
     const mode = els.modeSelect?.value || "chat";
     if (mode === "chat") {
+      if (looksLikeStrongCreateIntent(prompt) || (offlineScaffold && looksLikeCodeRequest(prompt))) {
+        if (els.modeSelect) els.modeSelect.value = "execute";
+        syncModeControls();
+        addMessage(
+          "Pedido claro de criação — executando no projeto.",
+          "system"
+        );
+        return sendAgentPrompt(prompt, "execute");
+      }
       if (looksLikeCodeRequest(prompt)) {
         addMessage(prompt, "user");
         els.promptInput.value = "";
@@ -2028,7 +2070,30 @@
     return t.length <= 40 && !/[./\\]|\.(html|css|js|ts|py|tsx)\b/i.test(t);
   }
 
+  function looksLikeOfflineScaffoldGoal(text) {
+    const t = String(text || "").toLowerCase();
+    if (!t) return false;
+    const react = /\b(react|vite|next\.?js)\b/.test(t) && /\b(cri(e|ar)|faz(er)?|mont(e|ar)|app|aplicat|site|dashboard)\b/.test(t);
+    const api = /\b(fastapi|api rest|endpoint|\/health|backend python)\b/.test(t) && /\b(cri(e|ar)|faz(er)?|implement|mont(e|ar))\b/.test(t);
+    const plain =
+      !/\b(react|vite|fastapi|flask|django)\b/.test(t) &&
+      (/\bhtml\b/.test(t) && /\b(css|javascript|\bjs\b)\b/.test(t) ||
+        /\b(html|css|javascript|site|p[aá]gina|landing|aplicat|app)\b/.test(t)) &&
+      /\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit)\b/.test(t);
+    return react || api || plain;
+  }
+
+  function looksLikeStrongCreateIntent(text) {
+    const t = String(text || "").toLowerCase().trim();
+    if (t.length < 14) return false;
+    return (
+      /\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?)\b/.test(t) &&
+      /\b(app|aplicat|site|landing|dashboard|api|react|html|p[aá]gina)\b/.test(t)
+    );
+  }
+
   function looksLikeCodeRequest(text) {
+
     const t = String(text || "").toLowerCase().trim();
     if (t.length < 12) return false;
     // Pure questions / explanations stay in Chat even if they mention "site"/"app".
@@ -2211,7 +2276,10 @@
     }
   }
 
-  async function sendAgentPrompt(prompt, mode) {
+  async function sendAgentPrompt(prompt, mode, opts = {}) {
+    if (!opts.offlineRetry) {
+      state._offlineScaffoldRetried = false;
+    }
     state.pendingPrompt = null;
     addMessage(prompt, "user");
     els.promptInput.value = "";
@@ -2315,6 +2383,26 @@
         agentEl.textContent = "Cancelando...";
         agentEl.classList.add("error");
       } else if (e.status === 503 || e.data?.ollama_offline) {
+        // Offline scaffolds should pass preflight; one soft retry only (avoid loops).
+        if (
+          looksLikeOfflineScaffoldGoal(prompt) &&
+          mode !== "plan" &&
+          !state._offlineScaffoldRetried
+        ) {
+          state._offlineScaffoldRetried = true;
+          state.ollamaOk = false;
+          updateOllamaOfflineUI();
+          els.promptInput.value = prompt;
+          state.running = false;
+          removeMessage(agentEl);
+          removeMessage(progressEl);
+          addMessage(
+            "Ollama offline — tentando scaffold determinístico (HTML/React/API)…",
+            "system"
+          );
+          return sendAgentPrompt(prompt, mode, { offlineRetry: true });
+        }
+        state._offlineScaffoldRetried = false;
         const ready = await ensureEnvironment({ pullRecommended: true, showProgress: true });
         if (ready) {
           els.promptInput.value = prompt;
@@ -2715,12 +2803,24 @@
 
   async function openFile(path, options = {}) {
     if (!state.current || !path) return;
+    if (state.fileEditorDirty && state.selectedFile && state.selectedFile !== path) {
+      if (!window.confirm("Descartar alterações não salvas em " + state.selectedFile + "?")) {
+        return;
+      }
+    }
     state.selectedFile = path;
     renderFileTree();
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/file?path=${encodeURIComponent(path)}`);
-      els.fileViewer.classList.remove("hidden");
-      els.fileViewer.textContent = d.content;
+      els.fileEditorShell?.classList.remove("hidden");
+      if (els.fileViewer) {
+        els.fileViewer.value = d.content ?? "";
+        els.fileViewer.readOnly = false;
+      }
+      if (els.fileEditorPath) els.fileEditorPath.textContent = path;
+      state.fileEditorOriginal = d.content ?? "";
+      state.fileEditorDirty = false;
+      syncFileEditorDirty();
       if (options.preferPreview !== false && /\.html?$/i.test(path)) {
         switchTab("preview");
         updatePreview(path);
@@ -2728,9 +2828,62 @@
         switchTab("files");
       }
     } catch (e) {
-      els.fileViewer.classList.remove("hidden");
-      els.fileViewer.textContent = "Erro: " + e.message;
+      els.fileEditorShell?.classList.remove("hidden");
+      if (els.fileViewer) {
+        els.fileViewer.value = "Erro: " + e.message;
+        els.fileViewer.readOnly = true;
+      }
+      if (els.fileEditorPath) els.fileEditorPath.textContent = path;
+      state.fileEditorOriginal = "";
+      state.fileEditorDirty = false;
+      syncFileEditorDirty();
       if (options.switchToFiles) switchTab("files");
+    }
+  }
+
+  function syncFileEditorDirty() {
+    const dirty = !!state.fileEditorDirty;
+    els.fileEditorDirty?.classList.toggle("hidden", !dirty);
+    if (els.btnFileSave) els.btnFileSave.disabled = !dirty || !state.selectedFile;
+  }
+
+  function onFileEditorInput() {
+    if (!els.fileViewer || els.fileViewer.readOnly) return;
+    state.fileEditorDirty = els.fileViewer.value !== state.fileEditorOriginal;
+    syncFileEditorDirty();
+  }
+
+  async function saveCurrentFile() {
+    if (!state.current || !state.selectedFile || !els.fileViewer || els.fileViewer.readOnly) return;
+    if (!state.fileEditorDirty) return;
+    const path = state.selectedFile;
+    const content = els.fileViewer.value;
+    els.btnFileSave && (els.btnFileSave.disabled = true);
+    try {
+      await api(`/api/projects/${encodeURIComponent(state.current.id)}/file`, {
+        method: "POST",
+        body: JSON.stringify({ path, content }),
+      });
+      state.fileEditorOriginal = content;
+      state.fileEditorDirty = false;
+      syncFileEditorDirty();
+      if (els.fileEditorPath) {
+        els.fileEditorPath.textContent = path + " · salvo";
+        window.setTimeout(() => {
+          if (state.selectedFile === path && els.fileEditorPath) {
+            els.fileEditorPath.textContent = path;
+          }
+        }, 1600);
+      }
+      await loadFiles().catch(() => {});
+      if (/\.html?$|\.css$|\.js$/i.test(path)) {
+        updatePreview(/\.html?$/i.test(path) ? path : findPreviewPath());
+      }
+    } catch (e) {
+      if (els.fileEditorPath) {
+        els.fileEditorPath.textContent = path + " · erro: " + (e.message || String(e));
+      }
+      syncFileEditorDirty();
     }
   }
 
@@ -2783,7 +2936,7 @@
         state.previewMode === "dev" &&
         state.devStatus?.has_dev_script &&
         !state.previewLoadRetried &&
-        state.devStatus?.npm_available
+        canStartDevPreview()
       ) {
         state.previewLoadRetried = true;
         await startDevServer();
@@ -2815,20 +2968,30 @@
 
     if (state.previewMode === "dev" && state.devStatus?.has_dev_script && !state.devStatus?.running) {
       els.previewFrame.src = "about:blank";
-      setPreviewEmptyVisible(
-        true,
-        state.devStatus?.npm_available
-          ? "Este projeto precisa do Vite. Clique em Iniciar preview ao vivo."
-          : "Instale Node.js para rodar o preview ao vivo deste app."
-      );
+      const runtime = state.devStatus?.runtime || state.devStatus?.script;
+      let msg = "Clique em Iniciar preview ao vivo.";
+      if (runtime === "uvicorn") {
+        msg =
+          state.devStatus?.python_available === false
+            ? "Instale Python para rodar a API FastAPI."
+            : "API FastAPI detectada — inicie o preview ao vivo (uvicorn).";
+      } else if (!state.devStatus?.npm_available) {
+        msg = "Instale Node.js para rodar o preview ao vivo deste app.";
+      } else {
+        msg = "Este projeto precisa do Vite. Clique em Iniciar preview ao vivo.";
+      }
+      setPreviewEmptyVisible(true, msg);
       return;
     }
 
     const path = explicitPath || findPreviewPath();
     if (!path) {
       els.previewFrame.src = "about:blank";
+      const runtime = state.devStatus?.runtime || state.devStatus?.script;
       const msg = state.devStatus?.has_dev_script
-        ? "Apps React/Vite precisam de npm run dev — clique em Iniciar preview ao vivo."
+        ? runtime === "uvicorn"
+          ? "API FastAPI — clique em Iniciar preview ao vivo (abre /docs)."
+          : "Apps React/Vite precisam de npm run dev — clique em Iniciar preview ao vivo."
         : "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
       setPreviewEmptyVisible(true, msg);
       return;
@@ -2953,7 +3116,7 @@
     const packageTouched = changed.some((p) => /(^|\/)package\.json$/i.test(p) || /(^|\/)vite\.config\./i.test(p));
     const hasDev = !!state.devStatus?.has_dev_script;
 
-    if (hasDev && (packageTouched || uiChanged) && !state.devStatus?.running && state.devStatus?.npm_available) {
+    if (hasDev && (packageTouched || uiChanged) && !state.devStatus?.running && canStartDevPreview()) {
       await maybeEnableDevPreview({ preferDev: true, autoStart: true });
     } else if (hasDev) {
       await maybeEnableDevPreview({ preferDev: true, autoStart: false });
@@ -3009,9 +3172,17 @@
     }
   }
 
+  function canStartDevPreview(status = state.devStatus) {
+    if (!status?.has_dev_script) return false;
+    const runtime = status.runtime || (status.script === "uvicorn" ? "uvicorn" : "npm");
+    if (runtime === "uvicorn") return status.python_available !== false;
+    return !!status.npm_available;
+  }
+
   function renderDevControls() {
     const s = state.devStatus || {};
     const hasScript = s.has_dev_script;
+    const runtime = s.runtime || (s.script === "uvicorn" ? "uvicorn" : "npm");
     els.btnDevStart.classList.toggle("hidden", !hasScript || s.running);
     els.btnDevStop.classList.toggle("hidden", !s.running);
     els.btnDevClear?.classList.toggle("hidden", !hasScript || !s.last_error);
@@ -3019,18 +3190,23 @@
     els.previewMode.querySelector('option[value="dev"]').disabled = !hasScript;
 
     if (!hasScript) {
-      els.devStatus.textContent = "Sem package.json dev/start";
+      els.devStatus.textContent = "Sem preview ao vivo (npm ou FastAPI)";
     } else if (s.running) {
-      els.devStatus.textContent = `Rodando :${s.port} (${s.script})`;
+      const label = runtime === "uvicorn" ? "uvicorn" : s.script;
+      els.devStatus.textContent = `Rodando :${s.port} (${label})`;
       els.devErrorLog?.classList.add("hidden");
-    } else if (!s.npm_available) {
+    } else if (runtime === "uvicorn" && s.python_available === false) {
+      els.devStatus.textContent = "Instale Python para rodar FastAPI";
+    } else if (runtime !== "uvicorn" && !s.npm_available) {
       els.devStatus.textContent = "Instale Node.js para dev server";
     } else if (s.last_error) {
-      els.devStatus.textContent = "Último erro no dev server";
+      els.devStatus.textContent = "Último erro no preview";
       if (els.devErrorLog) {
         els.devErrorLog.textContent = s.last_error;
         els.devErrorLog.classList.remove("hidden");
       }
+    } else if (runtime === "uvicorn") {
+      els.devStatus.textContent = "Pronto: uvicorn main:app";
     } else {
       els.devStatus.textContent = `Pronto: npm run ${s.script}`;
     }
@@ -3048,7 +3224,7 @@
     renderDevControls();
     if (wasRunning && !isRunning && state.previewMode === "dev" && !state.devAutoRestarted) {
       state.devAutoRestarted = true;
-      if (state.devStatus?.has_dev_script && state.devStatus?.npm_available) {
+      if (canStartDevPreview()) {
         await startDevServer();
       }
     }
@@ -3063,7 +3239,11 @@
   async function startDevServer() {
     if (!state.current) return;
     els.btnDevStart.disabled = true;
-    els.devStatus.textContent = "Iniciando (npm install pode demorar)...";
+    const runtime = state.devStatus?.runtime || state.devStatus?.script;
+    els.devStatus.textContent =
+      runtime === "uvicorn"
+        ? "Iniciando uvicorn (pip install pode demorar)..."
+        : "Iniciando (npm install pode demorar)...";
     els.devErrorLog?.classList.add("hidden");
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/start`, {
@@ -3377,6 +3557,22 @@
   els.btnDevStart.addEventListener("click", startDevServer);
   els.btnDevStop.addEventListener("click", stopDevServer);
   els.btnDevClear?.addEventListener("click", clearDevError);
+  els.btnFileSave?.addEventListener("click", () => {
+    saveCurrentFile().catch(() => {});
+  });
+  els.fileViewer?.addEventListener("input", onFileEditorInput);
+  els.fileViewer?.addEventListener("keydown", (e) => {
+    if ((e.ctrlKey || e.metaKey) && e.key.toLowerCase() === "s") {
+      e.preventDefault();
+      saveCurrentFile().catch(() => {});
+    }
+  });
+  window.addEventListener("beforeunload", (e) => {
+    if (state.fileEditorDirty) {
+      e.preventDefault();
+      e.returnValue = "";
+    }
+  });
   els.btnDevRestart?.addEventListener("click", startDevServer);
   const MODE_PREF_KEY = "forge.mode";
 

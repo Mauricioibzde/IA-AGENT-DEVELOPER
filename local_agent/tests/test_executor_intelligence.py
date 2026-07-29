@@ -47,3 +47,38 @@ def test_mark_read_allows_edit(tmp_path: Path) -> None:
         [{"tool": "write_file", "args": {"path": "existing.py", "content": "x = 2\n"}}]
     )
     assert results[0]["result"]["ok"] is True
+
+
+def test_mutation_budget_allows_reedit_same_file(tmp_path: Path) -> None:
+    cfg = AgentConfig.from_args(tmp_path, no_memory=True)
+    cfg.max_modified_files = 1
+    executor = Executor(build_default_registry(include_git=False), cfg, AgentLogger(cfg))
+    r1, _ = executor.run_calls([{"tool": "write_file", "args": {"path": "a.txt", "content": "1"}}])
+    assert r1[0]["result"]["ok"] is True
+    r2, _ = executor.run_calls([{"tool": "write_file", "args": {"path": "a.txt", "content": "2"}}])
+    assert r2[0]["result"]["ok"] is True
+    r3, _ = executor.run_calls([{"tool": "write_file", "args": {"path": "b.txt", "content": "x"}}])
+    assert r3[0]["result"]["ok"] is False
+    assert "budget" in r3[0]["result"]["error"].lower()
+
+
+def test_create_multiple_files_respects_budget(tmp_path: Path) -> None:
+    cfg = AgentConfig.from_args(tmp_path, no_memory=True)
+    cfg.max_modified_files = 2
+    executor = Executor(build_default_registry(include_git=False), cfg, AgentLogger(cfg))
+    results, _ = executor.run_calls(
+        [
+            {
+                "tool": "create_multiple_files",
+                "args": {
+                    "files": [
+                        {"path": "a.txt", "content": "a"},
+                        {"path": "b.txt", "content": "b"},
+                        {"path": "c.txt", "content": "c"},
+                    ]
+                },
+            }
+        ]
+    )
+    assert results[0]["result"]["ok"] is False
+    assert "budget" in results[0]["result"]["error"].lower()

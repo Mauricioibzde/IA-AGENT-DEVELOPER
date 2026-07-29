@@ -168,13 +168,20 @@
                 <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
               </div>
               <ul class="file-tree" id="fileTree"></ul>
-              <pre class="file-viewer hidden" id="fileViewer"></pre>
+              <div class="file-editor-shell hidden" id="fileEditorShell">
+                <div class="file-editor-toolbar">
+                  <span class="file-editor-path" id="fileEditorPath"></span>
+                  <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas">•</span>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnFileSave" disabled>Salvar</button>
+                </div>
+                <textarea class="file-viewer" id="fileViewer" spellcheck="false" aria-label="Editor de arquivo"></textarea>
+              </div>
             </div>
             <div class="panel-content" id="panelPreview">
               <div class="preview-toolbar">
                 <select id="previewMode" title="Modo de preview" class="control-select">
                   <option value="static">Estático</option>
-                  <option value="dev">npm run dev</option>
+                  <option value="dev">Preview ao vivo</option>
                 </select>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnDevStart">Iniciar dev</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevStop">Parar</button>
