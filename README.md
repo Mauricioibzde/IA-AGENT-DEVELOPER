@@ -3,12 +3,12 @@
 This repository contains a local Ollama-based agent prototype for file creation, project scaffolding, and simple validation tasks.
 
 ## What it does
-- Creates files in the workspace
+- Creates files inside the workspace
 - Creates simple starter projects
 - Validates that files or folders exist
 - Uses Ollama as the reasoning engine through the local API
 
-## Files
+## Project structure
 - `ollama_agent.py`: main agent implementation
 - `ollama-create-file.ps1`: PowerShell helper for creating files via Ollama
 - `verify_agent.py`: simple verification script
@@ -19,18 +19,18 @@ This repository contains a local Ollama-based agent prototype for file creation,
 - A model available, such as `qwen3-coder:30b`
 - Python 3.10+
 
-## Setup
-1. Start Ollama:
+## Quick start
+1. Start the Ollama service:
    ```powershell
    ollama serve
    ```
-2. Run the agent:
+2. Run the agent from this folder:
    ```powershell
    & "c:/Users/Mauricio ibz/.local/bin/python3.14.exe" .\ollama_agent.py "Create a file called demo.txt with the content hello"
    ```
 
-## Examples
-Create a project:
+## Example commands
+Create a starter project:
 ```powershell
 & "c:/Users/Mauricio ibz/.local/bin/python3.14.exe" .\ollama_agent.py "Create a starter project called app_demo in a folder app_demo"
 ```
@@ -41,4 +41,4 @@ Validate files:
 ```
 
 ## Notes
-This project is intentionally isolated from the AzubiForge application so it can evolve as a separate agent prototype.
+This project is intentionally isolated from the AzubiForge application so it can evolve as a separate agent prototype and be shared independently.
