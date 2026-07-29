@@ -54,6 +54,11 @@
     setupInstallUrl: null,
     serverFeatures: null,
     platformVersion: null,
+    surfaceMode: "chat", // chat | work
+    attachments: [],
+    chats: [],
+    chatsExpanded: true,
+    projectsShowAll: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -67,6 +72,30 @@
     fileSearchInput: $("fileSearchInput"),
     runHistoryList: $("runHistoryList"),
     projectList: $("projectList"),
+    chatList: $("chatList"),
+    btnToggleChats: $("btnToggleChats"),
+    btnNewChat: $("btnNewChat"),
+    btnProjectsMore: $("btnProjectsMore"),
+    btnSurfaceChat: $("btnSurfaceChat"),
+    btnSurfaceWork: $("btnSurfaceWork"),
+    emptyTitle: $("emptyTitle"),
+    emptySub: $("emptySub"),
+    workHomeActions: $("workHomeActions"),
+    btnChooseProjectEmpty: $("btnChooseProjectEmpty"),
+    btnNewProjectEmpty: $("btnNewProjectEmpty"),
+    heroKicker: $("heroKicker"),
+    heroTitle: $("heroTitle"),
+    heroSub: $("heroSub"),
+    composer: $("composer"),
+    composerMenu: $("composerMenu"),
+    btnComposerPlus: $("btnComposerPlus"),
+    btnAttachFiles: $("btnAttachFiles"),
+    attachFileInput: $("attachFileInput"),
+    attachmentChips: $("attachmentChips"),
+    composerModelSelect: $("composerModelSelect"),
+    btnPickProject: $("btnPickProject"),
+    composerProjectLabel: $("composerProjectLabel"),
+    composerToolbar: $("composerToolbar"),
     projectSearch: $("projectSearch"),
     modeChip: $("modeChip"),
     emptyView: $("emptyView"),
@@ -431,6 +460,8 @@
   }
 
   function getSelectedModel() {
+    const composerVal = els.composerModelSelect?.value;
+    if (composerVal) return composerVal;
     const value = els.modelSelect?.value || "__auto__";
     if (value === "__auto__") return null;
     if (value === "__custom__") {
@@ -485,6 +516,14 @@
       els.modelGroupRecommended.innerHTML = unique
         .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
         .join("");
+    }
+
+    if (els.composerModelSelect) {
+      const opts = ['<option value="">Auto</option>']
+        .concat((installed || []).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`));
+      const current = els.composerModelSelect.value;
+      els.composerModelSelect.innerHTML = opts.join("");
+      if (current && (installed || []).includes(current)) els.composerModelSelect.value = current;
     }
   }
 
@@ -1668,8 +1707,212 @@
     return new Date(ts * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
   }
 
-  function closeProjectMenu() {
-    document.querySelectorAll(".project-menu").forEach((menu) => menu.remove());
+  function setSurfaceMode(mode) {
+    state.surfaceMode = mode === "work" ? "work" : "chat";
+    document.body.classList.toggle("surface-work", state.surfaceMode === "work");
+    document.body.classList.toggle("surface-chat", state.surfaceMode === "chat");
+    els.btnSurfaceChat?.classList.toggle("active", state.surfaceMode === "chat");
+    els.btnSurfaceWork?.classList.toggle("active", state.surfaceMode === "work");
+    els.btnSurfaceChat?.setAttribute("aria-selected", state.surfaceMode === "chat" ? "true" : "false");
+    els.btnSurfaceWork?.setAttribute("aria-selected", state.surfaceMode === "work" ? "true" : "false");
+
+    if (els.modeSelect) {
+      if (state.surfaceMode === "work" && els.modeSelect.value === "chat") {
+        els.modeSelect.value = "execute";
+      } else if (state.surfaceMode === "chat" && els.modeSelect.value === "execute") {
+        els.modeSelect.value = "chat";
+      }
+      syncModeControls();
+    }
+
+    if (els.emptyTitle) {
+      els.emptyTitle.textContent =
+        state.surfaceMode === "work" ? "No que vamos trabalhar?" : "No que você está pensando hoje?";
+    }
+    if (els.emptySub) {
+      els.emptySub.textContent =
+        state.surfaceMode === "work"
+          ? "Escolha um projeto ou template. No Work o agente edita código e o preview atualiza."
+          : "Converse no Chat ou mude para Work para criar e editar apps no projeto.";
+    }
+    if (els.promptInput) {
+      els.promptInput.placeholder =
+        state.surfaceMode === "work" ? "Trabalhe no que quiser…" : "No que você está pensando?";
+    }
+    if (els.heroTitle) {
+      els.heroTitle.textContent =
+        state.surfaceMode === "work" ? "No que vamos trabalhar?" : "O que você quer saber?";
+    }
+    if (els.heroSub) {
+      els.heroSub.textContent =
+        state.surfaceMode === "work"
+          ? "Peça mudanças no código — anexos entram no projeto e o agente aplica o padrão sênior."
+          : "Pergunte qualquer coisa. Para alterar arquivos, mude para Work.";
+    }
+    syncComposerProjectLabel();
+    try {
+      localStorage.setItem("forge_surface_mode", state.surfaceMode);
+    } catch (_) {
+      /* ignore */
+    }
+  }
+
+  function syncComposerProjectLabel() {
+    if (els.composerProjectLabel) {
+      els.composerProjectLabel.textContent = state.current
+        ? `Projeto: ${state.current.name}`
+        : "Sem projeto";
+    }
+  }
+
+  function renderChatList() {
+    if (!els.chatList) return;
+    els.chatList.innerHTML = "";
+    if (!state.chats.length) {
+      els.chatList.innerHTML = '<p class="sidebar-empty">Nenhum chat ainda</p>';
+      return;
+    }
+    state.chats.forEach((chat) => {
+      const btn = document.createElement("button");
+      btn.type = "button";
+      btn.className = "chat-item" + (state.current?.id === chat.project_id ? " active" : "");
+      btn.innerHTML = `
+        <div class="name">${escapeHtml(chat.title || chat.project_name)}</div>
+        <div class="meta">${escapeHtml(chat.project_name)} · ${formatDate(chat.updated)}</div>`;
+      btn.addEventListener("click", () => {
+        setSurfaceMode("chat");
+        selectProject(chat.project_id);
+        closeSidebar();
+      });
+      els.chatList.appendChild(btn);
+    });
+  }
+
+  async function loadChats() {
+    try {
+      const data = await api("/api/chats?limit=40");
+      state.chats = data.chats || [];
+      renderChatList();
+    } catch (_) {
+      state.chats = [];
+      renderChatList();
+    }
+  }
+
+  function renderAttachmentChips() {
+    if (!els.attachmentChips) return;
+    if (!state.attachments.length) {
+      els.attachmentChips.classList.add("hidden");
+      els.attachmentChips.innerHTML = "";
+      return;
+    }
+    els.attachmentChips.classList.remove("hidden");
+    els.attachmentChips.innerHTML = state.attachments
+      .map(
+        (file, idx) =>
+          `<span class="attachment-chip"><span>${escapeHtml(file.name)}</span><button type="button" data-idx="${idx}" aria-label="Remover">×</button></span>`
+      )
+      .join("");
+    els.attachmentChips.querySelectorAll("button[data-idx]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        state.attachments.splice(Number(btn.dataset.idx), 1);
+        renderAttachmentChips();
+      });
+    });
+  }
+
+  function readFileAsAttachment(file) {
+    return new Promise((resolve, reject) => {
+      const reader = new FileReader();
+      const isText = /^(text\/|application\/(json|xml|javascript|typescript)|.*\+(json|xml))/.test(file.type) ||
+        /\.(txt|md|json|js|ts|tsx|jsx|css|html|htm|py|rs|go|java|sql|yml|yaml|toml|env|sh|svg)$/i.test(file.name);
+      reader.onerror = () => reject(new Error(`Falha ao ler ${file.name}`));
+      reader.onload = () => {
+        if (isText) {
+          resolve({
+            name: file.name,
+            mime: file.type || "text/plain",
+            kind: "text",
+            content: String(reader.result || ""),
+          });
+        } else {
+          const result = String(reader.result || "");
+          const base64 = result.includes(",") ? result.split(",")[1] : result;
+          resolve({
+            name: file.name,
+            mime: file.type || "application/octet-stream",
+            kind: "binary",
+            content_base64: base64,
+          });
+        }
+      };
+      if (isText) reader.readAsText(file);
+      else reader.readAsDataURL(file);
+    });
+  }
+
+  async function addLocalFiles(fileList) {
+    const files = Array.from(fileList || []);
+    for (const file of files.slice(0, 8)) {
+      if (file.size > 2_000_000) {
+        showToast(`Arquivo grande demais: ${escapeHtml(file.name)} (máx. 2 MB)`, "err");
+        continue;
+      }
+      try {
+        const attachment = await readFileAsAttachment(file);
+        state.attachments.push(attachment);
+      } catch (err) {
+        showToast(err.message || "Falha ao ler arquivo", "err");
+      }
+    }
+    renderAttachmentChips();
+  }
+
+  async function uploadAttachmentsForSend() {
+    if (!state.attachments.length) return [];
+    if (!state.current) {
+      showToast("Abra ou crie um projeto para anexar arquivos.", "err");
+      throw new Error("project required for attachments");
+    }
+    const uploaded = [];
+    for (const file of state.attachments) {
+      const body = {
+        name: file.name,
+        mime: file.mime,
+      };
+      if (file.kind === "text") body.content = file.content;
+      else body.content_base64 = file.content_base64;
+      const saved = await api(`/api/projects/${encodeURIComponent(state.current.id)}/attachments`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      uploaded.push(saved);
+    }
+    return uploaded;
+  }
+
+  function buildPromptWithAttachments(prompt, uploaded) {
+    if (!uploaded?.length) return prompt;
+    const parts = [prompt.trim(), "", "Arquivos anexados pelo usuário:"];
+    uploaded.forEach((file) => {
+      parts.push(`- ${file.path} (${file.mime || "file"}, ${file.bytes || 0} bytes)`);
+      if (file.kind === "text" && file.preview) {
+        parts.push("```");
+        parts.push(file.preview);
+        parts.push("```");
+      }
+    });
+    parts.push("");
+    parts.push("Use esses arquivos no contexto da resposta ou das edições.");
+    return parts.join("\n");
+  }
+
+  function closeComposerMenu() {
+    els.composerMenu?.classList.add("hidden");
+  }
+
+  function toggleComposerMenu() {
+    els.composerMenu?.classList.toggle("hidden");
   }
 
   function renderProjectList() {
@@ -1677,9 +1920,12 @@
     els.projectList.innerHTML = "";
     if (!state.projects.length) {
       els.projectList.innerHTML = '<p class="sidebar-empty">Nenhum projeto ainda</p>';
+      els.btnProjectsMore?.classList.add("hidden");
       return;
     }
-    state.projects.forEach((p) => {
+    const limit = state.projectsShowAll ? state.projects.length : 8;
+    const visible = state.projects.slice(0, limit);
+    visible.forEach((p) => {
       const item = document.createElement("div");
       item.className = "project-item" + (state.current?.id === p.id ? " active" : "");
       item.dataset.id = p.id;
@@ -1692,6 +1938,7 @@
           <button type="button" class="project-menu-btn" title="Ações do projeto" aria-label="Ações">⋯</button>
         </div>`;
       item.querySelector(".project-item-main")?.addEventListener("click", () => {
+        setSurfaceMode("work");
         selectProject(p.id);
         closeSidebar();
       });
@@ -1701,6 +1948,15 @@
       });
       els.projectList.appendChild(item);
     });
+    if (els.btnProjectsMore) {
+      const more = state.projects.length > 8;
+      els.btnProjectsMore.classList.toggle("hidden", !more);
+      els.btnProjectsMore.textContent = state.projectsShowAll ? "Ver menos" : "Ver mais";
+    }
+  }
+
+  function closeProjectMenu() {
+    document.querySelectorAll(".project-menu").forEach((menu) => menu.remove());
   }
 
   function openProjectMenu(project, anchor) {
@@ -1785,6 +2041,7 @@
     const d = await api(url);
     state.projects = d.projects || [];
     renderProjectList();
+    loadChats().catch(() => {});
   }
 
   async function createProject(name, template) {
@@ -1831,6 +2088,8 @@
     els.projectTitle.textContent = project.name;
     els.emptyView.classList.add("hidden");
     els.workspaceView.classList.remove("hidden");
+    syncComposerProjectLabel();
+    renderChatList();
     try {
       localStorage.setItem(LAST_PROJECT_KEY, id);
     } catch {
@@ -1840,6 +2099,7 @@
     closeSidebar();
     await loadChat();
     await loadRunHistory();
+    await loadChats().catch(() => {});
     await loadFiles();
     await refreshDevStatus();
     await maybeEnableDevPreview({ preferDev: options.preferDev, autoStart: !!options.autoStart });
@@ -2576,8 +2836,46 @@
   }
 
   async function sendPrompt() {
-    const prompt = els.promptInput.value.trim();
+    let prompt = els.promptInput.value.trim();
+    if ((!prompt && !state.attachments.length) || state.running) return;
+
+    if (!state.current) {
+      if (state.surfaceMode === "work" || state.attachments.length) {
+        showToast("Escolha ou crie um projeto para continuar no Work / anexos.", "info");
+        openNewProjectModal(state.selectedTemplate || "blank");
+        return;
+      }
+      // Chat without project: create a quick inbox-style project.
+      const name = `chat-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
+      await createProject(name, "blank");
+      if (!state.current) return;
+    }
+
+    let uploaded = [];
+    try {
+      uploaded = await uploadAttachmentsForSend();
+    } catch (err) {
+      showToast(err.message || "Falha ao enviar anexos", "err");
+      return;
+    }
+    if (uploaded.length) {
+      prompt = buildPromptWithAttachments(prompt || "Analise os arquivos anexados.", uploaded);
+      state.attachments = [];
+      renderAttachmentChips();
+      loadFiles().catch(() => {});
+      showToast(`${uploaded.length} arquivo(s) anexado(s) ao projeto.`, "ok");
+    }
+
     if (!prompt || state.running || !state.current) return;
+
+    // Keep surface mode and modeSelect aligned.
+    if (state.surfaceMode === "work" && els.modeSelect?.value === "chat") {
+      els.modeSelect.value = "execute";
+      syncModeControls();
+    }
+    if (state.surfaceMode === "chat" && els.modeSelect?.value === "execute") {
+      // Stay chat unless strong create intent below flips it.
+    }
 
     const offlineScaffold = looksLikeOfflineScaffoldGoal(prompt);
     let ready = !!state.ollamaOk;
@@ -4281,6 +4579,57 @@
   });
 
   els.btnNewProject.addEventListener("click", () => openNewProjectModal("blank"));
+  els.btnNewChat?.addEventListener("click", () => {
+    setSurfaceMode("chat");
+    openNewProjectModal("blank");
+  });
+  els.btnProjectsMore?.addEventListener("click", () => {
+    state.projectsShowAll = !state.projectsShowAll;
+    renderProjectList();
+  });
+  els.btnToggleChats?.addEventListener("click", () => {
+    state.chatsExpanded = !state.chatsExpanded;
+    els.btnToggleChats.closest(".sidebar-chats-section")?.classList.toggle("collapsed", !state.chatsExpanded);
+    els.btnToggleChats.setAttribute("aria-expanded", state.chatsExpanded ? "true" : "false");
+  });
+  els.btnSurfaceChat?.addEventListener("click", () => setSurfaceMode("chat"));
+  els.btnSurfaceWork?.addEventListener("click", () => setSurfaceMode("work"));
+  els.btnChooseProjectEmpty?.addEventListener("click", () => {
+    setSurfaceMode("work");
+    els.projectSearch?.focus();
+    openSidebar();
+  });
+  els.btnNewProjectEmpty?.addEventListener("click", () => openNewProjectModal("blank"));
+  els.btnPickProject?.addEventListener("click", () => {
+    setSurfaceMode("work");
+    openSidebar();
+    els.projectSearch?.focus();
+  });
+  els.btnComposerPlus?.addEventListener("click", (e) => {
+    e.stopPropagation();
+    toggleComposerMenu();
+  });
+  els.btnAttachFiles?.addEventListener("click", () => {
+    closeComposerMenu();
+    els.attachFileInput?.click();
+  });
+  els.attachFileInput?.addEventListener("change", async () => {
+    await addLocalFiles(els.attachFileInput.files);
+    els.attachFileInput.value = "";
+  });
+  document.addEventListener("click", (e) => {
+    if (!els.composer?.contains(e.target)) closeComposerMenu();
+  });
+  els.composerModelSelect?.addEventListener("change", () => {
+    const val = els.composerModelSelect.value;
+    if (!val) {
+      if (els.modelSelect) els.modelSelect.value = "__auto__";
+      showToast("Modelo: Auto (recomendado)", "ok");
+      return;
+    }
+    setModelSelection(val);
+    showToast(`Modelo selecionado: ${val}`, "ok");
+  });
   els.btnCancelProject.addEventListener("click", closeNewProjectModal);
   els.btnCreateProject.addEventListener("click", submitNewProject);
   els.newProjectModal.addEventListener("click", (e) => {
@@ -4467,6 +4816,12 @@
   async function init() {
     restoreSidebarCollapsed();
     syncSidebarToggle();
+    try {
+      const savedSurface = localStorage.getItem("forge_surface_mode");
+      setSurfaceMode(savedSurface === "work" ? "work" : "chat");
+    } catch (_) {
+      setSurfaceMode("chat");
+    }
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);

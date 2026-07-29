@@ -21,7 +21,7 @@ REPO_ROOT = ROOT.parent
 if str(REPO_ROOT) not in sys.path:
     sys.path.insert(0, str(REPO_ROOT))
 
-from ia_platform.conversations import append_message, clear_messages, format_conversation_context, load_messages
+from ia_platform.conversations import append_message, clear_messages, format_conversation_context, list_recent_chats, load_messages
 from ia_platform.deploy import deploy_preflight, deploy_project
 from ia_platform.project_ops import archive_project, duplicate_project, list_projects, rename_project
 from ia_platform.dev_server import DevServerError, dev_manager
@@ -222,6 +222,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_models_installed()
         if path == "/api/projects":
             return self._handle_list_projects(qs)
+        if path == "/api/chats":
+            return self._handle_list_chats(qs)
         if path == "/api/deploy/status":
             return self._handle_deploy_status_global()
         if path.startswith("/preview/"):
@@ -310,6 +312,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_dev_clear_error(project_id)
         if project_id and sub == "file":
             return self._handle_write_file(project_id)
+        if project_id and sub == "attachments":
+            return self._handle_upload_attachment(project_id)
         if project_id and sub.startswith("runs/") and sub.endswith("/undo"):
             parts = sub.split("/")
             if len(parts) == 3:
@@ -668,6 +672,82 @@ class PlatformHandler(BaseHTTPRequestHandler):
         include_archived = str((qs.get("archived") or ["0"])[0]).lower() in {"1", "true", "yes"}
         projects = list_projects(PROJECTS_ROOT, query=query, include_archived=include_archived)
         self._send_json(200, {"projects": projects})
+
+    def _handle_list_chats(self, qs: Optional[Dict[str, List[str]]] = None) -> None:
+        qs = qs or {}
+        try:
+            limit = int((qs.get("limit") or ["40"])[0])
+        except ValueError:
+            limit = 40
+        chats = list_recent_chats(PROJECTS_ROOT, limit=max(1, min(limit, 100)))
+        self._send_json(200, {"chats": chats})
+
+    def _handle_upload_attachment(self, project_id: str) -> None:
+        import base64
+        import unicodedata
+
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+
+        data = self._read_json()
+        raw_name = str(data.get("name") or data.get("filename") or "anexo.txt").strip()
+        raw_name = unicodedata.normalize("NFKD", raw_name)
+        safe = re.sub(r"[^\w.\-]+", "_", raw_name, flags=re.UNICODE).strip("._") or "anexo.txt"
+        if len(safe) > 120:
+            stem = Path(safe).stem[:80]
+            suffix = Path(safe).suffix[:20]
+            safe = f"{stem}{suffix}"
+
+        text = data.get("content")
+        b64 = data.get("content_base64")
+        mime = str(data.get("mime") or "application/octet-stream")
+        uploads = base / "uploads"
+        uploads.mkdir(parents=True, exist_ok=True)
+        target = uploads / safe
+        # Avoid overwrite collisions.
+        if target.exists():
+            stamp = str(int(time.time()))[-6:]
+            target = uploads / f"{Path(safe).stem}_{stamp}{Path(safe).suffix}"
+
+        try:
+            if isinstance(text, str):
+                payload = text.encode("utf-8")
+                kind = "text"
+            elif isinstance(b64, str) and b64.strip():
+                payload = base64.b64decode(b64, validate=False)
+                kind = "binary"
+            else:
+                return self._send_json(400, {"error": "content or content_base64 is required"})
+        except Exception as exc:
+            return self._send_json(400, {"error": f"invalid attachment payload: {exc}"})
+
+        if len(payload) > 2_000_000:
+            return self._send_json(413, {"error": "anexo muito grande (máx. 2 MB)"})
+
+        target.write_bytes(payload)
+        rel = str(target.relative_to(base.resolve())).replace("\\", "/")
+        preview = ""
+        if kind == "text":
+            try:
+                preview = payload.decode("utf-8")[:4000]
+            except UnicodeDecodeError:
+                preview = ""
+        self._send_json(
+            201,
+            {
+                "ok": True,
+                "path": rel,
+                "name": target.name,
+                "bytes": len(payload),
+                "mime": mime,
+                "kind": kind,
+                "preview": preview,
+            },
+        )
 
     def _handle_rename_project(self, project_id: str) -> None:
         data = self._read_json()

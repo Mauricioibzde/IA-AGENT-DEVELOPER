@@ -69,6 +69,34 @@ def clear_messages(project_dir: Path) -> None:
     save_messages(project_dir, [])
 
 
+def list_recent_chats(projects_root: Path, *, limit: int = 40) -> List[Dict[str, Any]]:
+    """Summaries of project conversations for the sidebar Chats section."""
+    projects_root.mkdir(parents=True, exist_ok=True)
+    chats: List[Dict[str, Any]] = []
+    for entry in projects_root.iterdir():
+        if not entry.is_dir() or entry.name.startswith("."):
+            continue
+        messages = load_messages(entry)
+        if not messages:
+            continue
+        first_user = next((m for m in messages if m.get("role") == "user" and str(m.get("text") or "").strip()), None)
+        last = messages[-1]
+        title_src = str((first_user or last).get("text") or entry.name).strip().replace("\n", " ")
+        title = title_src[:64] + ("…" if len(title_src) > 64 else "")
+        chats.append(
+            {
+                "project_id": entry.name,
+                "project_name": entry.name,
+                "title": title or entry.name,
+                "updated": float(last.get("ts") or entry.stat().st_mtime),
+                "message_count": len(messages),
+                "last_role": last.get("role"),
+            }
+        )
+    chats.sort(key=lambda item: item.get("updated") or 0, reverse=True)
+    return chats[:limit]
+
+
 def format_conversation_context(messages: List[Dict[str, Any]], limit: int = 16) -> str:
     """Format prior chat turns for injection into the agent context."""
     if not messages:
