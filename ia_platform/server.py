@@ -392,6 +392,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_model_pull_stream()
         if path == "/api/ollama/ensure":
             return self._handle_ollama_ensure()
+        if path == "/api/ollama/setup/stream":
+            return self._handle_ollama_setup_stream()
         project_id, sub = _parse_project_route(path)
         if project_id and sub == "chat":
             return self._handle_post_chat(project_id)
@@ -411,8 +413,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def _ollama_manager(self) -> OllamaModelManager:
         return OllamaModelManager(self._ollama_host())
 
-    def _ensure_ollama_online(self) -> Optional[Dict[str, Any]]:
-        """Try to reach Ollama; auto-start local daemon when possible."""
+    def _ensure_ollama_online(self, auto_install: bool = True) -> Optional[Dict[str, Any]]:
+        """Try to reach Ollama; install/start local daemon when possible."""
         from local_agent.config import AgentConfig
         from local_agent.ollama_client import OllamaClient
 
@@ -420,15 +422,22 @@ class PlatformHandler(BaseHTTPRequestHandler):
         cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
         if OllamaClient(cfg).check_available(timeout=2):
             return None
-        result = ollama_service.ensure_running(host)
+        result = ollama_service.ensure_running(host, auto_install=auto_install)
         if result.get("ok"):
             return None
         return result
+
+    def _ollama_setup_auto_install(self, data: Dict[str, Any]) -> bool:
+        if "install" not in data:
+            return True
+        return bool(data.get("install"))
 
     def _handle_ollama_ensure(self) -> None:
         from local_agent.config import AgentConfig
         from local_agent.ollama_client import OllamaClient
 
+        data = self._read_json()
+        auto_install = self._ollama_setup_auto_install(data)
         host = self._ollama_host()
         cfg = AgentConfig.from_args(PROJECTS_ROOT, no_memory=True)
         if OllamaClient(cfg).check_available(timeout=2):
@@ -442,9 +451,40 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "message": "Ollama já está online.",
                 },
             )
-        result = ollama_service.ensure_running(host)
+        result = ollama_service.ensure_running(host, auto_install=auto_install)
         status = 200 if result.get("ok") else (503 if result.get("installed", True) else 404)
         return self._send_json(status, result)
+
+    def _handle_ollama_setup_stream(self) -> None:
+        data = self._read_json()
+        auto_install = self._ollama_setup_auto_install(data)
+        host = self._ollama_host()
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        def emit(payload: Dict[str, Any]) -> None:
+            self._send_sse(payload)
+
+        def status_cb(message: str) -> None:
+            emit({"type": "status", "message": message})
+
+        try:
+            emit({"type": "started"})
+            if ollama_service.is_api_ready(host):
+                emit({"type": "status", "message": "Ollama já está online."})
+                emit({"type": "done", "ok": True, "ollama": True, "installed": True, "started": False})
+                return
+
+            result = ollama_service.ensure_running(host, auto_install=auto_install, status_cb=status_cb)
+            emit({"type": "done", **result})
+        except Exception as exc:
+            emit({"type": "error", "error": str(exc)})
+            emit({"type": "done", "ok": False, "ollama": False, "error": str(exc)})
 
     def _handle_health(self) -> None:
         from local_agent.config import AgentConfig

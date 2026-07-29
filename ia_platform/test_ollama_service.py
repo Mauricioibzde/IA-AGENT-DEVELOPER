@@ -35,10 +35,10 @@ def test_ensure_running_not_installed() -> None:
     mgr = OllamaServiceManager()
     with mock.patch.object(mgr, "is_api_ready", return_value=False):
         with mock.patch.object(mgr, "is_installed", return_value=False):
-            result = mgr.ensure_running("http://127.0.0.1:11434")
+            result = mgr.ensure_running("http://127.0.0.1:11434", auto_install=False)
     assert result["ok"] is False
     assert result["installed"] is False
-    assert "install" in result["error"].lower() or "ollama.com" in result["error"]
+    assert "configurar" in result["error"].lower() or "automaticamente" in result["error"].lower()
 
 
 def test_ensure_running_starts_process() -> None:
@@ -55,3 +55,31 @@ def test_ensure_running_starts_process() -> None:
     assert result["ok"] is True
     assert result["started"] is True
     popen.assert_called_once()
+
+
+def test_ensure_running_auto_install_when_missing(monkeypatch: pytest.MonkeyPatch) -> None:
+    mgr = OllamaServiceManager()
+    with mock.patch.object(mgr, "is_api_ready", return_value=False):
+        with mock.patch.object(mgr, "is_installed", return_value=False):
+            with mock.patch.object(
+                mgr,
+                "install",
+                return_value={"ok": True, "installed": True, "message": "installed"},
+            ) as install:
+                with mock.patch.object(mgr, "_start_process"):
+                    with mock.patch.object(mgr, "is_api_ready", side_effect=[False, True]):
+                        result = mgr.ensure_running("http://127.0.0.1:11434", auto_install=True)
+    install.assert_called_once()
+    assert result["ok"] is True
+
+
+def test_install_windows_winget(monkeypatch: pytest.MonkeyPatch) -> None:
+    mgr = OllamaServiceManager()
+    with mock.patch("platform.system", return_value="Windows"):
+        with mock.patch.object(mgr, "is_installed", side_effect=[False, True]):
+            with mock.patch("shutil.which", side_effect=lambda name: "winget.exe" if name == "winget" else None):
+                with mock.patch("subprocess.run") as run:
+                    with mock.patch.object(mgr, "_wait_for_binary", return_value=True):
+                        result = mgr.install()
+    run.assert_called_once()
+    assert result["ok"] is True

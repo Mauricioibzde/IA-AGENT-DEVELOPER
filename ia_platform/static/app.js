@@ -268,7 +268,7 @@
     if (els.ollamaOfflineText) {
       if (state.ollamaInstalled === false) {
         els.ollamaOfflineText.textContent =
-          "Instale o Ollama em ollama.com e reinicie a aplicação. Depois clique em Configurar automaticamente.";
+          "Ollama não detectado. Clique em Configurar automaticamente para instalar (winget), iniciar e baixar o modelo.";
       } else if (!state.models.length) {
         els.ollamaOfflineText.textContent =
           "Nenhum modelo instalado. Clique abaixo para baixar o recomendado para o seu hardware.";
@@ -278,17 +278,15 @@
       }
     }
     if (els.btnAutoSetup) {
-      els.btnAutoSetup.disabled = !!state.setupInFlight || state.ollamaInstalled === false;
+      els.btnAutoSetup.disabled = !!state.setupInFlight;
     }
     document.querySelectorAll('[data-action="pull"]').forEach((btn) => {
       const model = btn.dataset.model;
       const entry = (state.modelRecommendations?.catalog || []).find((e) => e.ollama_name === model);
       const installed = entry?.installed;
       if (!state.ollamaOk) {
-        btn.disabled = state.ollamaInstalled === false;
-        btn.title = state.ollamaInstalled === false
-          ? "Instale o Ollama primeiro"
-          : "Clique em Configurar automaticamente ou aguarde";
+        btn.disabled = false;
+        btn.title = "Baixar (Ollama será iniciado/instalado se necessário)";
       } else {
         btn.disabled = !!installed;
         btn.removeAttribute("title");
@@ -298,22 +296,57 @@
 
   async function ensureOllamaRunning(showProgress = false) {
     if (state.ollamaOk) return true;
-    if (showProgress) showSetupModal("Iniciando Ollama...");
+    if (showProgress) showSetupModal("Preparando Ollama...");
+
     try {
-      const res = await fetch("/api/ollama/ensure", {
+      const res = await fetch("/api/ollama/setup/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
-        body: "{}",
+        body: JSON.stringify({ install: true }),
       });
-      const data = await res.json().catch(() => ({}));
-      state.ollamaInstalled = data.installed !== false;
-      if (!res.ok || !data.ok) {
-        if (showProgress) updateSetupModal(data.error || "Não foi possível iniciar o Ollama.");
+
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        if (showProgress) updateSetupModal(errData.error || "Falha ao configurar Ollama.");
         state.ollamaOk = false;
+        state.ollamaInstalled = errData.installed !== false;
         updateOllamaOfflineUI();
         return false;
       }
-      if (showProgress) updateSetupModal(data.message || "Ollama pronto.", 40);
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let donePayload = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const ev = parseSseBlock(block);
+          if (!ev) continue;
+          if (ev.type === "status" && showProgress) {
+            updateSetupModal(ev.message || "Configurando...", 35);
+          }
+          if (ev.type === "done") donePayload = ev;
+        }
+      }
+
+      if (!donePayload?.ok) {
+        if (showProgress) {
+          updateSetupModal(donePayload?.error || "Não foi possível configurar o Ollama.");
+        }
+        state.ollamaOk = false;
+        state.ollamaInstalled = donePayload?.installed !== false;
+        updateOllamaOfflineUI();
+        return false;
+      }
+
+      state.ollamaInstalled = true;
+      if (showProgress) updateSetupModal(donePayload.message || "Ollama pronto.", 40);
       await checkHealth();
       return state.ollamaOk;
     } catch (e) {

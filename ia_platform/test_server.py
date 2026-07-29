@@ -27,7 +27,7 @@ def _patch_ollama_offline(monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         _mod.ollama_service,
         "ensure_running",
-        lambda host: {
+        lambda host, auto_install=False, status_cb=None: {
             "ok": False,
             "ollama": False,
             "installed": True,
@@ -472,11 +472,47 @@ def test_ollama_ensure_already_online(platform_url: str, monkeypatch: pytest.Mon
     assert data["ollama"] is True
 
 
+    monkeypatch.setattr(
+        _mod.ollama_service,
+        "ensure_running",
+        lambda host, auto_install=False, status_cb=None: {
+            "ok": True,
+            "ollama": True,
+            "installed": True,
+            "started": True,
+            "message": "ready",
+        },
+    )
+
+    class FakeClient:
+        def check_available(self, timeout: int = 5) -> bool:
+            return False
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: FakeClient())
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/ollama/setup/stream",
+        data=json.dumps({"install": True}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8")
+    assert "done" in body
+    assert "ready" in body or '"ok": true' in body.replace(" ", "")
+
+
 def test_ollama_ensure_starts_daemon(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
     monkeypatch.setattr(
         _mod.ollama_service,
         "ensure_running",
-        lambda host: {"ok": True, "ollama": True, "started": True, "installed": True, "message": "started"},
+        lambda host, auto_install=False, status_cb=None: {
+            "ok": True,
+            "ollama": True,
+            "started": True,
+            "installed": True,
+            "message": "started",
+        },
     )
 
     class FakeClient:
@@ -487,7 +523,7 @@ def test_ollama_ensure_starts_daemon(platform_url: str, monkeypatch: pytest.Monk
 
     req = urllib.request.Request(
         f"{platform_url}/api/ollama/ensure",
-        data=b"{}",
+        data=json.dumps({"install": True}).encode(),
         headers={"Content-Type": "application/json"},
         method="POST",
     )
