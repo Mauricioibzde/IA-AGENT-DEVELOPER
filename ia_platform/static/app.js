@@ -4016,6 +4016,7 @@
     if (!isMobileLayout()) closeMobilePanel();
     syncSidebarToggle();
   });
+  document.addEventListener("visibilitychange", onDocumentVisibilityChange);
 
   els.btnToggleSidebar?.addEventListener("click", () => {
     if (isMobileLayout()) {
