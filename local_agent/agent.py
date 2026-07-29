@@ -7,6 +7,7 @@ import json
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from .checkpoint import RunCheckpoint
 from .config import AgentConfig
 from .context_manager import ContextManager
 from .executor import Executor
@@ -41,7 +42,8 @@ class CodingAgent:
         self.memory = AgentMemory(config.workspace, enabled=config.use_memory)
         self.index = ProjectIndex(config.workspace)
         self.registry = build_default_registry(include_git=config.use_git)
-        self.executor = Executor(self.registry, config, self.logger)
+        self.checkpoint = RunCheckpoint(config.workspace, config.run_id or "anonymous")
+        self.executor = Executor(self.registry, config, self.logger, checkpoint=self.checkpoint)
         self.planner = Planner(self.client, config.planner_model)
         self.reflector = Reflector(self.client, config.reflection_model)
         self.context_manager = ContextManager(config)
@@ -319,20 +321,19 @@ class CodingAgent:
 
             if finished:
                 final_answer = results[-1]["result"].get("answer", "")
-                task.status = TaskStatus.COMPLETED
-                self.completed_tasks.append(task.title)
-                if step_had_failures is False and self.errors:
-                    self.fixed_errors.append(f"Recovered on task {task.id}")
-                break
+                # Do not accept `final` before validation — fall through to checks.
+                intend_finish = True
+            else:
+                intend_finish = False
 
-            # Auto-validate after filesystem writes.
+            # Auto-validate after filesystem writes (and before accepting final).
             validation_results: List[ValidationResult] = []
 
             # Install Node deps once before npm validations so React builds can succeed.
             needs_npm = False
             if task.validation_commands:
                 needs_npm = any("npm" in c or "vite" in c or "npx" in c for c in task.validation_commands)
-            elif wrote_files and self.index.package_scripts:
+            elif (wrote_files or intend_finish) and self.index.package_scripts:
                 needs_npm = True
             if needs_npm and not self._deps_ensured:
                 install_result = self.validator.ensure_node_dependencies()
@@ -349,9 +350,35 @@ class CodingAgent:
             if task.validation_commands:
                 self._event("validation_start", commands=task.validation_commands[:3])
                 validation_results.extend([self.validator.run_one(cmd) for cmd in task.validation_commands])
-            elif wrote_files:
+            elif wrote_files or intend_finish:
                 quick_checks = self.validator.discover_commands()[:2]
-                if quick_checks:
+                if not quick_checks and looks_like_plain_web_goal(goal):
+                    problems = validate_plain_web(self.config.workspace)
+                    if problems:
+                        validation_results.append(
+                            ValidationResult(
+                                command="validate_plain_web",
+                                success=False,
+                                exit_code=1,
+                                stdout="",
+                                stderr="; ".join(problems),
+                                duration_seconds=0.0,
+                                category="introduced",
+                            )
+                        )
+                    else:
+                        validation_results.append(
+                            ValidationResult(
+                                command="validate_plain_web",
+                                success=True,
+                                exit_code=0,
+                                stdout="ok",
+                                stderr="",
+                                duration_seconds=0.0,
+                                category="code",
+                            )
+                        )
+                elif quick_checks:
                     self._event("validation_start", commands=quick_checks)
                     validation_results.extend([self.validator.run_one(cmd) for cmd in quick_checks])
 
@@ -397,6 +424,34 @@ class CodingAgent:
 
             all_ok = all(r.get("result", {}).get("ok", False) for r in results)
             validations_ok = all(v.success for v in validation_results) if validation_results else True
+            introduced_fail = any(
+                (not v.success and v.category == "introduced") for v in validation_results
+            )
+
+            if intend_finish:
+                if all_ok and validations_ok and not introduced_fail and not step_had_failures:
+                    task.status = TaskStatus.COMPLETED
+                    self.completed_tasks.append(task.title)
+                    if self.errors:
+                        self.fixed_errors.append(f"Recovered on task {task.id}")
+                    break
+                # Reject premature final when validation failed.
+                task.status = TaskStatus.PENDING
+                self.errors.append(
+                    f"final rejeitado: validação pendente/falhou ({validation_summary[:180]})"
+                )
+                last_results_json = json.dumps(
+                    [
+                        {
+                            "tool": "final",
+                            "ok": False,
+                            "error": "Validação obrigatória falhou antes de concluir",
+                            "validation": validation_summary[:500],
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+                continue
 
             if step_had_failures is False and self.errors and all_ok and validations_ok:
                 fix_note = f"Task {task.id} succeeded after prior errors"
@@ -405,7 +460,7 @@ class CodingAgent:
 
             # Act on reflection.
             if decision.status == ReflectionStatus.FINISH:
-                if all_ok and validations_ok:
+                if all_ok and validations_ok and not introduced_fail:
                     task.status = TaskStatus.COMPLETED
                     self.completed_tasks.append(task.title)
                     final_answer = decision.next_action or final_answer
@@ -545,6 +600,18 @@ class CodingAgent:
         return list(dict.fromkeys(paths))
 
     def _rollback_recent_changes(self) -> None:
+        if self.checkpoint and self.checkpoint.entries:
+            result = self.checkpoint.restore()
+            self._event(
+                "rollback",
+                restored=result.get("restored") or [],
+                removed=result.get("removed") or [],
+            )
+            # Reset executor tracking to match restored workspace.
+            self.executor.created_files.clear()
+            self.executor.modified_files.clear()
+            self.executor.step_diffs.clear()
+            return
         for path in reversed(self.executor.modified_files[-5:]):
             self.executor.run_calls([{"tool": "rollback_file", "args": {"path": path}}])
         self.executor.step_diffs.clear()
@@ -615,14 +682,26 @@ class CodingAgent:
             )
 
         if looks_like_react_goal(goal):
+            from ia_platform.project_templates import react_vite_files
+
+            for rel in react_vite_files("tmp").keys():
+                self.checkpoint.snapshot_before(rel)
             created, title = write_react_app(self.config.workspace, goal)
             kind_label = "React + Vite"
             next_steps = ["npm install && npm run dev", "Abrir Preview ao vivo", "Melhorar visual"]
         elif looks_like_fastapi_goal(goal):
+            from local_agent.web_scaffold import fastapi_files
+
+            for rel in fastapi_files().keys():
+                self.checkpoint.snapshot_before(rel)
             created, title = write_fastapi_app(self.config.workspace, goal)
             kind_label = "FastAPI"
             next_steps = ["pip install -r requirements.txt", "uvicorn main:app --reload", "pytest -q"]
         else:
+            from local_agent.web_scaffold import plain_web_files
+
+            for rel in plain_web_files().keys():
+                self.checkpoint.snapshot_before(rel)
             created, title = write_plain_web_app(self.config.workspace, goal)
             kind_label = "HTML/CSS/JS"
             next_steps = ["Abrir Preview", "Melhorar visual", "Adicionar seção"]
@@ -715,10 +794,32 @@ class CodingAgent:
         blocked_tasks = [t for t in plan.tasks if t.status == TaskStatus.BLOCKED]
         pending = [t for t in plan.tasks if t.status in {TaskStatus.PENDING, TaskStatus.RUNNING}]
 
-        # Final compile check for Python.
-        if any(f.language == "python" for f in self.index.files) and not self.config.dry_run:
-            final_check = self.validator.run_one("python -m compileall .")
-            self.all_validations.append(final_check)
+        # Final smoke checks before declaring success.
+        if not self.config.dry_run:
+            has_python = any(f.language == "python" for f in self.index.files)
+            has_pkg = (self.config.workspace / "package.json").is_file()
+            has_index = (self.config.workspace / "index.html").is_file()
+            if has_python:
+                final_check = self.validator.run_one("python -m compileall .")
+                self.all_validations.append(final_check)
+            if has_index and not has_pkg:
+                problems = validate_plain_web(self.config.workspace)
+                self.all_validations.append(
+                    ValidationResult(
+                        command="validate_plain_web",
+                        success=not problems,
+                        exit_code=0 if not problems else 1,
+                        stdout="ok" if not problems else "",
+                        stderr="; ".join(problems),
+                        duration_seconds=0.0,
+                        category="code" if not problems else "introduced",
+                    )
+                )
+            elif has_pkg and (self.config.workspace / "node_modules").is_dir():
+                scripts = self.index.package_scripts or {}
+                if "build" in scripts:
+                    build = self.validator.run_one("npm run build")
+                    self.all_validations.append(build)
 
         introduced_failures = [v for v in self.all_validations if not v.success and v.category == "introduced"]
 
@@ -763,6 +864,7 @@ class CodingAgent:
             risks=plan.risks,
             next_steps=[
                 "Revisar diff/arquivos gerados",
+                "Usar Desfazer execução se precisar reverter",
                 "Rodar a suite de testes do projeto alvo",
             ],
         )

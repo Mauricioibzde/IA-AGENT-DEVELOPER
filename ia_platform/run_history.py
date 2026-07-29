@@ -65,6 +65,9 @@ def record_run(
         "created_files": list(created_files or [])[:30],
         "modified_files": list(modified_files or [])[:30],
         "events": list(events or [])[-40:],
+        "has_checkpoint": (project_dir / ".agent" / "checkpoints" / f"{(run_id or '')}.json").is_file()
+        if run_id
+        else False,
     }
     existing.append(entry)
     payload = {"runs": existing[-MAX_RUNS:], "updated": time.time()}

@@ -6,6 +6,7 @@ import time
 from typing import Any, Dict, List, Set, Tuple
 
 from .config import AgentConfig
+from .checkpoint import RunCheckpoint
 from .logging_config import AgentLogger
 from .models import RiskLevel, ToolResult
 from .security import to_rel_path
@@ -24,10 +25,17 @@ READ_TOOLS = {"read_file", "read_file_range", "list_directory", "list_dir", "sea
 
 
 class Executor:
-    def __init__(self, registry: ToolRegistry, config: AgentConfig, logger: AgentLogger) -> None:
+    def __init__(
+        self,
+        registry: ToolRegistry,
+        config: AgentConfig,
+        logger: AgentLogger,
+        checkpoint: RunCheckpoint | None = None,
+    ) -> None:
         self.registry = registry
         self.config = config
         self.logger = logger
+        self.checkpoint = checkpoint
         self.modified_files: List[str] = []
         self.created_files: List[str] = []
         self.commands: List[str] = []
@@ -140,6 +148,11 @@ class Executor:
                     )
                     results.append({"tool": name, "result": result.to_dict()})
                     continue
+                if self.checkpoint is not None:
+                    # Snapshot every path this mutation may touch (including re-edits
+                    # of already-counted files — first snapshot wins).
+                    for rel in self._mutation_all_paths(name, args if isinstance(args, dict) else {}):
+                        self.checkpoint.snapshot_before(rel)
 
             started = time.time()
             result = self.registry.execute(
@@ -179,17 +192,30 @@ class Executor:
     def _mutation_new_paths(self, name: str, args: Dict[str, Any]) -> Set[str]:
         """Paths this mutation would newly count against the file budget."""
         already = set(self.modified_files + self.created_files)
+        return {p for p in self._mutation_all_paths(name, args) if p not in already}
+
+    def _mutation_all_paths(self, name: str, args: Dict[str, Any]) -> Set[str]:
+        """All relative paths a mutation may create or modify."""
         candidates: Set[str] = set()
 
         def add(raw: str | None) -> None:
             if not raw:
                 return
             rel = self._rel(str(raw))
-            if rel and rel not in already:
+            if rel:
                 candidates.add(rel)
 
-        if name in {"write_file", "create_file", "create_directory", "append_file", "append_to_file",
-                    "replace_in_file", "edit_file", "apply_patch"}:
+        if name in {
+            "write_file",
+            "create_file",
+            "create_directory",
+            "append_file",
+            "append_to_file",
+            "replace_in_file",
+            "edit_file",
+            "apply_patch",
+            "delete_file",
+        }:
             add(str(args.get("path") or ""))
         elif name == "create_multiple_files":
             files = args.get("files")
@@ -206,8 +232,6 @@ class Executor:
             add(str(args.get("dst") or ""))
         elif name == "copy_file":
             add(str(args.get("dst") or ""))
-        elif name == "delete_file":
-            add(str(args.get("path") or ""))
         return candidates
 
     def _track(self, name: str, result: ToolResult, args: Dict[str, Any]) -> None:

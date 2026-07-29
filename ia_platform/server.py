@@ -236,6 +236,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_get_runs(project_id)
         if project_id and sub == "active-run":
             return self._handle_active_run(project_id)
+        if project_id and sub == "preview-revision":
+            return self._handle_preview_revision(project_id)
         if project_id and sub == "search":
             return self._handle_project_search(project_id, qs)
         if path.startswith("/api/runs/") and path.endswith("/events"):
@@ -294,6 +296,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_dev_clear_error(project_id)
         if project_id and sub == "file":
             return self._handle_write_file(project_id)
+        if project_id and sub.startswith("runs/") and sub.endswith("/undo"):
+            parts = sub.split("/")
+            if len(parts) == 3:
+                return self._handle_undo_run(project_id, parts[1])
         self._send_json(404, {"error": "not found"})
 
     def _ollama_host(self) -> str:
@@ -747,6 +753,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
         self.send_response(200)
         self.send_header("Content-Type", ctype)
         self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store, no-cache, must-revalidate")
+        self.send_header("Pragma", "no-cache")
+        etag = hashlib.sha256(content).hexdigest()[:16]
+        self.send_header("ETag", f'"{etag}"')
         self.end_headers()
         self.wfile.write(content)
 
@@ -860,6 +870,53 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if not info:
             return self._send_json(200, {"active": False, "run_id": None})
         return self._send_json(200, info)
+
+    def _handle_preview_revision(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        digest = hashlib.sha256()
+        count = 0
+        patterns = ("*.html", "*.css", "*.js", "*.jsx", "*.tsx", "*.svg")
+        files: List[Path] = []
+        for pattern in patterns:
+            files.extend(base.glob(pattern))
+            files.extend(base.glob(f"src/{pattern}"))
+            files.extend(base.glob(f"public/{pattern}"))
+        for path in sorted({p.resolve() for p in files if p.is_file()})[:80]:
+            try:
+                st = path.stat()
+                rel = str(path.relative_to(base.resolve())).replace("\\", "/")
+                digest.update(rel.encode("utf-8"))
+                digest.update(str(st.st_mtime_ns).encode("ascii"))
+                digest.update(str(st.st_size).encode("ascii"))
+                count += 1
+            except OSError:
+                continue
+        return self._send_json(
+            200,
+            {"project": project_id, "revision": digest.hexdigest()[:20], "files": count},
+        )
+
+    def _handle_undo_run(self, project_id: str, run_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        if run_manager.is_workspace_busy(str(base)):
+            return self._send_json(409, {"error": "Há uma execução em andamento — cancele antes de desfazer."})
+        from local_agent.checkpoint import RunCheckpoint
+
+        cp = RunCheckpoint.load(base, run_id)
+        if cp is None or not cp.entries:
+            return self._send_json(404, {"error": "Checkpoint desta execução não encontrado."})
+        result = cp.restore()
+        return self._send_json(200, {"ok": True, "project": project_id, **result})
 
     def _handle_run_status(self, run_id: str) -> None:
         info = run_manager.status(run_id)
@@ -1141,6 +1198,9 @@ class PlatformHandler(BaseHTTPRequestHandler):
             "created_files": report.created_files,
             "modified_files": report.modified_files,
             "run_id": run_id,
+            "has_checkpoint": bool(
+                run_id and (workspace / ".agent" / "checkpoints" / f"{run_id}.json").is_file()
+            ),
             "completed_tasks": list(getattr(report, "completed_tasks", []) or []),
             "events": list(events or [])[-40:],
         }

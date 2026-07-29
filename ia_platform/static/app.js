@@ -39,6 +39,8 @@
     previewLoadTimer: null,
     previewExpectingContent: false,
     previewLoadRetried: false,
+    previewRevision: null,
+    previewPollTimer: null,
     ollamaOk: false,
     previewDevice: "desktop",
     healthInFlight: false,
@@ -1511,6 +1513,7 @@
   function showEmptyView() {
     state.current = null;
     stopDevPolling();
+    stopPreviewPolling();
     clearPreviewLoadTimer();
     els.emptyView.classList.remove("hidden");
     els.workspaceView.classList.add("hidden");
@@ -1684,6 +1687,11 @@
               })
               .join("")}
           </div>
+          ${
+            run?.has_checkpoint && run?.id
+              ? `<button type="button" class="btn btn-ghost btn-sm run-undo" data-run-id="${escapeHtml(run.id)}">Desfazer alterações desta execução</button>`
+              : ""
+          }
         </div>`;
     }
     html += `<div class="report-body">${renderMarkdown(report)}</div>`;
@@ -1698,6 +1706,32 @@
           preferPreview: /\.html?$/i.test(btn.dataset.path),
         });
       });
+    });
+    els.reportViewer.querySelector(".run-undo")?.addEventListener("click", async (ev) => {
+      const btn = ev.currentTarget;
+      const runId = btn?.dataset?.runId;
+      if (!runId || !state.current) return;
+      if (!window.confirm("Desfazer as alterações desta execução? Arquivos criados serão removidos e os editados voltam ao estado anterior.")) {
+        return;
+      }
+      btn.disabled = true;
+      try {
+        const res = await api(
+          `/api/projects/${encodeURIComponent(state.current.id)}/runs/${encodeURIComponent(runId)}/undo`,
+          { method: "POST", body: "{}" }
+        );
+        addMessage(
+          `Desfeito: ${ (res.restored || []).length } restaurado(s), ${ (res.removed || []).length } removido(s).`,
+          "system"
+        );
+        await loadFiles();
+        updatePreview();
+        switchTab("preview");
+      } catch (e) {
+        addMessage("Falha ao desfazer: " + (e.message || String(e)), "system");
+      } finally {
+        btn.disabled = false;
+      }
     });
   }
 
@@ -3058,6 +3092,7 @@
 
   function updatePreview(explicitPath) {
     if (!state.current) return;
+    syncPreviewPolling();
 
     if (state.previewMode === "dev" && state.devStatus?.running && state.devStatus.url) {
       setPreviewEmptyVisible(false);
@@ -3101,6 +3136,11 @@
     state.previewExpectingContent = true;
     els.previewFrame.src = `/preview/${encodeURIComponent(state.current.id)}/${path.split("/").map(encodeURIComponent).join("/")}?t=${Date.now()}`;
     schedulePreviewLoadCheck();
+    api(`/api/projects/${encodeURIComponent(state.current.id)}/preview-revision`)
+      .then((d) => {
+        state.previewRevision = d.revision || null;
+      })
+      .catch(() => {});
   }
 
   function addNextStepActions(changed, donePayload) {
@@ -3258,6 +3298,33 @@
         }
       }, 5000);
     }
+  }
+
+  function stopPreviewPolling() {
+    if (state.previewPollTimer) {
+      clearInterval(state.previewPollTimer);
+      state.previewPollTimer = null;
+    }
+  }
+
+  function syncPreviewPolling() {
+    stopPreviewPolling();
+    const previewOpen = !$("panelPreview")?.classList.contains("hidden");
+    if (!state.current || state.previewMode !== "static" || !previewOpen) return;
+    state.previewPollTimer = setInterval(async () => {
+      if (!state.current || state.previewMode !== "static") return;
+      if ($("panelPreview")?.classList.contains("hidden")) return;
+      try {
+        const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/preview-revision`);
+        const rev = d.revision || null;
+        if (state.previewRevision && rev && rev !== state.previewRevision) {
+          updatePreview(findPreviewPath());
+        }
+        state.previewRevision = rev;
+      } catch {
+        /* ignore */
+      }
+    }, 2000);
   }
 
   async function clearDevError() {
@@ -3509,6 +3576,7 @@
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
     if (name === "preview") updatePreview();
+    else stopPreviewPolling();
   }
 
   // ── Modal ──
