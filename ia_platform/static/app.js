@@ -20,7 +20,8 @@
     pullingModel: false,
     devStatus: null,
     previewMode: "static",
-    llmPreviewChars: 0,
+    deploying: false,
+    mobilePanelOpen: false,
   };
 
   const $ = (id) => document.getElementById(id);
@@ -50,8 +51,16 @@
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
     deployModal: $("deployModal"),
+    deployModalInner: $("deployModalInner"),
+    deployBadge: $("deployBadge"),
+    deploySpinner: $("deploySpinner"),
     deployLog: $("deployLog"),
+    btnOpenDeployUrl: $("btnOpenDeployUrl"),
     btnCloseDeploy: $("btnCloseDeploy"),
+    rightPanel: $("rightPanel"),
+    mobileTabs: $("mobileTabs"),
+    mobileBackdrop: $("mobileBackdrop"),
+    devErrorLog: $("devErrorLog"),
     projectNameInput: $("projectNameInput"),
     btnCreateProject: $("btnCreateProject"),
     btnCancelProject: $("btnCancelProject"),
@@ -443,6 +452,70 @@
       .replace(/"/g, "&quot;");
   }
 
+  function renderMarkdown(text) {
+    const src = String(text || "");
+    const chunks = [];
+    let last = 0;
+    const fenceRe = /```(\w*)\n([\s\S]*?)```/g;
+    let match;
+    while ((match = fenceRe.exec(src)) !== null) {
+      if (match.index > last) chunks.push({ type: "text", value: src.slice(last, match.index) });
+      chunks.push({ type: "code", value: match[2] });
+      last = match.index + match[0].length;
+    }
+    if (last < src.length) chunks.push({ type: "text", value: src.slice(last) });
+
+    function formatText(part) {
+      let html = escapeHtml(part);
+      html = html.replace(/^### (.+)$/gm, '<h4 class="md-h">$1</h4>');
+      html = html.replace(/^## (.+)$/gm, '<h3 class="md-h">$1</h3>');
+      html = html.replace(/\*\*([^*\n]+)\*\*/g, "<strong>$1</strong>");
+      html = html.replace(/`([^`\n]+)`/g, '<code class="md-inline">$1</code>');
+      html = html.replace(/^- (.+)$/gm, '<li class="md-li">$1</li>');
+      html = html.replace(/(<li class="md-li">.*?<\/li>(?:<br>)?)+/g, (block) => `<ul class="md-ul">${block}</ul>`);
+      html = html.replace(/\n/g, "<br>");
+      return html;
+    }
+
+    return chunks
+      .map((chunk) =>
+        chunk.type === "code"
+          ? `<pre class="md-code"><code>${escapeHtml(chunk.value)}</code></pre>`
+          : formatText(chunk.value)
+      )
+      .join("");
+  }
+
+  function setMessageContent(el, text, role) {
+    if (!el) return;
+    const useMarkdown = role === "agent" || el.classList.contains("report-viewer");
+    if (useMarkdown) el.innerHTML = renderMarkdown(text);
+    else el.textContent = text;
+  }
+
+  function isMobileLayout() {
+    return window.matchMedia("(max-width: 900px)").matches;
+  }
+
+  function openMobilePanel() {
+    if (!isMobileLayout()) return;
+    els.rightPanel?.classList.add("mobile-open");
+    els.mobileBackdrop?.classList.remove("hidden");
+    state.mobilePanelOpen = true;
+  }
+
+  function closeMobilePanel() {
+    els.rightPanel?.classList.remove("mobile-open");
+    els.mobileBackdrop?.classList.add("hidden");
+    state.mobilePanelOpen = false;
+  }
+
+  function syncMobileTabs(name) {
+    document.querySelectorAll(".mobile-tab").forEach((tab) => {
+      tab.classList.toggle("active", tab.dataset.tab === name);
+    });
+  }
+
   function renderChat(messages) {
     els.chatMessages.innerHTML = "";
     if (!messages.length) {
@@ -460,7 +533,7 @@
       const lastAgent = [...(d.messages || [])].reverse().find((m) => m.role === "agent");
       if (lastAgent) {
         state.lastReport = lastAgent.text;
-        els.reportViewer.textContent = lastAgent.text;
+        setMessageContent(els.reportViewer, lastAgent.text, "agent");
       }
     } catch {
       renderChat([]);
@@ -478,7 +551,7 @@
   function addMessage(text, role, scroll = true) {
     const el = document.createElement("div");
     el.className = "msg " + role + (role === "agent" && /^Erro/i.test(text) ? " error" : "");
-    el.textContent = text;
+    setMessageContent(el, text, role);
     els.chatMessages.appendChild(el);
     if (scroll) els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
     return el;
@@ -520,6 +593,7 @@
     const mode = els.modeSelect.value;
     const progressEl = addMessage("Iniciando agente...", "progress");
     const agentEl = addMessage("", "agent live");
+    let wasAbort = false;
 
     try {
       await persistMessage("user", prompt);
@@ -573,13 +647,11 @@
 
       if (donePayload) {
         const summary = donePayload.report || "(sem relatório)";
-        agentEl.textContent = summary;
+        setMessageContent(agentEl, summary, "agent");
         state.lastReport = summary;
-        els.reportViewer.textContent = summary;
+        setMessageContent(els.reportViewer, summary, "agent");
         if (donePayload.status === "CANCELLED") {
           agentEl.classList.add("error");
-          addMessage("Execução cancelada.", "system");
-          await persistMessage("system", "Execução cancelada.").catch(() => {});
         } else if (donePayload.created_files?.length || donePayload.modified_files?.length) {
           const changed = [...(donePayload.created_files || []), ...(donePayload.modified_files || [])];
           const note = `Arquivos alterados: ${changed.join(", ")}`;
@@ -602,9 +674,9 @@
         agentEl.classList.add("error");
         addMessage("Aguarde a execução atual terminar ou cancele antes de enviar outro prompt.", "system");
       } else if (e.name === "AbortError") {
-        agentEl.textContent = "Execução cancelada.";
+        wasAbort = true;
+        agentEl.textContent = "Cancelando...";
         agentEl.classList.add("error");
-        await persistMessage("agent", "Execução cancelada.").catch(() => {});
       } else {
         const err = "Erro: " + e.message;
         agentEl.textContent = err;
@@ -624,6 +696,10 @@
       els.btnSend.disabled = false;
       els.btnCancel?.classList.add("hidden");
       els.btnCancel.disabled = false;
+      if (wasAbort) {
+        await new Promise((r) => setTimeout(r, 400));
+        await loadChat().catch(() => {});
+      }
       els.promptInput.focus();
     }
   }
@@ -769,8 +845,15 @@
       els.devStatus.textContent = "Sem package.json dev/start";
     } else if (s.running) {
       els.devStatus.textContent = `Rodando :${s.port} (${s.script})`;
+      els.devErrorLog?.classList.add("hidden");
     } else if (!s.npm_available) {
       els.devStatus.textContent = "Instale Node.js para dev server";
+    } else if (s.last_error) {
+      els.devStatus.textContent = "Último erro no dev server";
+      if (els.devErrorLog) {
+        els.devErrorLog.textContent = s.last_error;
+        els.devErrorLog.classList.remove("hidden");
+      }
     } else {
       els.devStatus.textContent = `Pronto: npm run ${s.script}`;
     }
@@ -790,6 +873,7 @@
     if (!state.current) return;
     els.btnDevStart.disabled = true;
     els.devStatus.textContent = "Iniciando (npm install pode demorar)...";
+    els.devErrorLog?.classList.add("hidden");
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/start`, {
         method: "POST",
@@ -803,6 +887,10 @@
       switchTab("preview");
     } catch (e) {
       els.devStatus.textContent = e.message;
+      if (e.data?.stderr && els.devErrorLog) {
+        els.devErrorLog.textContent = e.data.stderr;
+        els.devErrorLog.classList.remove("hidden");
+      }
     } finally {
       els.btnDevStart.disabled = false;
     }
@@ -825,40 +913,77 @@
 
   // ── Deploy ──
 
+  function resetDeployModal() {
+    els.deployModalInner?.classList.remove("deploy-modal--ok", "deploy-modal--warn", "deploy-modal--err");
+    els.deployBadge?.classList.add("hidden");
+    els.deploySpinner?.classList.add("hidden");
+    els.btnOpenDeployUrl?.classList.add("hidden");
+  }
+
   function openDeployModal(text) {
     els.deployLog.textContent = text;
     els.deployModal.classList.remove("hidden");
   }
 
   function closeDeployModal() {
+    if (state.deploying) return;
     els.deployModal.classList.add("hidden");
+    resetDeployModal();
+  }
+
+  function renderDeployResult(d) {
+    let log = d.message || "";
+    if (d.url) log += `\n\nURL: ${d.url}`;
+    if (d.steps?.length) log += "\n\nPassos manuais:\n" + d.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+    if (d.log_tail) log += "\n\n--- log ---\n" + d.log_tail;
+    els.deployLog.textContent = log;
+
+    resetDeployModal();
+    if (d.ok && d.url) {
+      els.deployModalInner?.classList.add("deploy-modal--ok");
+      els.deployBadge.textContent = "Sucesso";
+      els.deployBadge.classList.remove("hidden");
+      els.btnOpenDeployUrl.href = d.url;
+      els.btnOpenDeployUrl.classList.remove("hidden");
+      els.deployLog.innerHTML = escapeHtml(log).replace(
+        escapeHtml(d.url),
+        `<a class="deploy-link" href="${escapeHtml(d.url)}" target="_blank" rel="noopener">${escapeHtml(d.url)}</a>`
+      );
+    } else if (d.manual) {
+      els.deployModalInner?.classList.add("deploy-modal--warn");
+      els.deployBadge.textContent = "Manual";
+      els.deployBadge.classList.remove("hidden");
+    } else {
+      els.deployModalInner?.classList.add("deploy-modal--err");
+      els.deployBadge.textContent = "Falhou";
+      els.deployBadge.classList.remove("hidden");
+    }
   }
 
   async function runDeploy() {
     if (!state.current) return;
+    state.deploying = true;
     els.btnDeploy.disabled = true;
+    els.btnCloseDeploy.disabled = true;
+    resetDeployModal();
+    els.deploySpinner?.classList.remove("hidden");
     openDeployModal("Preparando deploy...\n\nRequer VERCEL_TOKEN no ambiente para deploy automático.");
     try {
-      const res = await fetch(`/api/projects/${encodeURIComponent(state.current.id)}/deploy`, {
+      const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/deploy`, {
         method: "POST",
-        headers: { "Content-Type": "application/json" },
         body: "{}",
       });
-      const d = await res.json();
-      let log = d.message || "";
-      if (d.url) log += `\n\nURL: ${d.url}`;
-      if (d.steps?.length) log += "\n\nPassos manuais:\n" + d.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
-      if (d.log_tail) log += "\n\n--- log ---\n" + d.log_tail;
-      els.deployLog.textContent = log;
-      if (d.url) {
-        els.deployLog.innerHTML = escapeHtml(log).replace(
-          escapeHtml(d.url),
-          `<a class="deploy-link" href="${escapeHtml(d.url)}" target="_blank" rel="noopener">${escapeHtml(d.url)}</a>`
-        );
-      }
+      renderDeployResult(d);
     } catch (e) {
+      resetDeployModal();
+      els.deployModalInner?.classList.add("deploy-modal--err");
+      els.deployBadge.textContent = "Erro";
+      els.deployBadge.classList.remove("hidden");
       els.deployLog.textContent = "Erro: " + e.message;
     } finally {
+      state.deploying = false;
+      els.deploySpinner?.classList.add("hidden");
+      els.btnCloseDeploy.disabled = false;
       els.btnDeploy.disabled = false;
     }
   }
@@ -872,6 +997,9 @@
     $("panelFiles").classList.toggle("hidden", name !== "files");
     $("panelPreview").classList.toggle("hidden", name !== "preview");
     $("panelReport").classList.toggle("hidden", name !== "report");
+    syncMobileTabs(name);
+    if (isMobileLayout()) openMobilePanel();
+    else closeMobilePanel();
     if (name === "preview") updatePreview();
   }
 
@@ -907,6 +1035,16 @@
   // ── Events ──
 
   els.btnSend.addEventListener("click", sendPrompt);
+  els.mobileTabs?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".mobile-tab");
+    if (!btn?.dataset.tab) return;
+    switchTab(btn.dataset.tab);
+  });
+  els.mobileBackdrop?.addEventListener("click", closeMobilePanel);
+  window.addEventListener("resize", () => {
+    if (!isMobileLayout()) closeMobilePanel();
+  });
+
   els.btnClearChat?.addEventListener("click", clearChat);
   els.btnCancel?.addEventListener("click", cancelRun);
   els.modelSelect?.addEventListener("change", () => {

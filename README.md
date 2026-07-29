@@ -62,7 +62,7 @@ Analise o projeto e corrija erros de sintaxe Python
 
 ```text
 local_agent/          # motor do agente (planner, tools, validator, reflector)
-ia_ia_platform/             # UI web local + API /api/run
+ia_platform/             # UI web local + API /api/run
 scripts/              # setup, run-platform, start-today
 sandbox/              # projetos gerados pelo agente
 ```
@@ -112,8 +112,8 @@ python -m pytest -q
 ## Roadmap pós-MVP
 
 - [ ] Embeddings/RAG para projetos grandes
-- [ ] Preview automático (npm run dev)
-- [ ] Deploy 1-clique (Vercel)
+- [x] Preview automático (npm run dev)
+- [x] Deploy 1-clique (Vercel)
 - [ ] Multi-usuário + cloud beta
 
 ---

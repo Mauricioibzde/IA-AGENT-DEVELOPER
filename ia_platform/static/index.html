@@ -81,13 +81,13 @@
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-area">
               <textarea id="promptInput" rows="2" placeholder="Descreva o que quer criar ou alterar no app..."></textarea>
-              <button type="button" class="btn btn-ghost hidden" id="btnCancel">Cancelar</button>
+              <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar</button>
               <button type="button" class="btn btn-primary" id="btnSend">Enviar</button>
             </div>
           </div>
 
-          <aside class="right-panel">
-            <div class="panel-tabs">
+          <aside class="right-panel" id="rightPanel">
+            <div class="panel-tabs" id="panelTabs">
               <div class="panel-tab active" data-tab="files">Arquivos</div>
               <div class="panel-tab" data-tab="preview">Preview</div>
               <div class="panel-tab" data-tab="report">Relatório</div>
@@ -106,14 +106,21 @@
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevStop">Parar</button>
                 <span class="dev-status" id="devStatus"></span>
               </div>
+              <pre class="dev-error-log hidden" id="devErrorLog"></pre>
               <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
               <p class="preview-hint" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
             </div>
             <div class="panel-content hidden" id="panelReport">
-              <pre class="file-viewer" id="reportViewer">Nenhuma execução ainda.</pre>
+              <div class="file-viewer report-viewer" id="reportViewer">Nenhuma execução ainda.</div>
             </div>
           </aside>
         </div>
+        <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Painéis do projeto">
+          <button type="button" class="mobile-tab" data-tab="files">Arquivos</button>
+          <button type="button" class="mobile-tab" data-tab="preview">Preview</button>
+          <button type="button" class="mobile-tab" data-tab="report">Relatório</button>
+        </nav>
+        <div class="mobile-backdrop hidden" id="mobileBackdrop"></div>
       </section>
     </div>
   </div>
@@ -146,10 +153,12 @@
   </div>
 
   <div class="modal-overlay hidden" id="deployModal">
-    <div class="modal modal-wide">
-      <h3>Deploy</h3>
+    <div class="modal modal-wide deploy-modal" id="deployModalInner">
+      <h3>Deploy <span class="deploy-badge hidden" id="deployBadge"></span></h3>
+      <p class="deploy-spinner hidden" id="deploySpinner">Deploy em andamento… pode levar alguns minutos.</p>
       <pre class="deploy-log" id="deployLog">Preparando...</pre>
       <div class="modal-actions">
+        <a class="btn btn-primary hidden" id="btnOpenDeployUrl" href="#" target="_blank" rel="noopener">Abrir site</a>
         <button type="button" class="btn btn-ghost" id="btnCloseDeploy">Fechar</button>
       </div>
     </div>

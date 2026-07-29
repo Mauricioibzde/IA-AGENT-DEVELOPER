@@ -15,7 +15,7 @@ from urllib.parse import parse_qs, urlparse
 
 from ia_platform.conversations import append_message, clear_messages, format_conversation_context, load_messages
 from ia_platform.deploy import deploy_project
-from ia_platform.dev_server import dev_manager
+from ia_platform.dev_server import DevServerError, dev_manager
 from ia_platform.hardware import detect_hardware
 from ia_platform.model_catalog import recommend_models, resolve_model_for_run, resolve_models_for_run
 from ia_platform.ollama_models import OllamaModelManager
@@ -593,6 +593,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         try:
             result = dev_manager.start(project_id, base, install=install)
             return self._send_json(200, {"project": project_id, **result})
+        except DevServerError as exc:
+            return self._send_json(500, {"error": str(exc), "stderr": exc.stderr})
         except Exception as exc:
             return self._send_json(500, {"error": str(exc)})
 

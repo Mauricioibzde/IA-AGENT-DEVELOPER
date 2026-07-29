@@ -15,9 +15,18 @@ from dataclasses import dataclass
 from pathlib import Path
 from typing import Dict, Optional
 
+
 PORT_MIN = 9200
 PORT_MAX = 9299
 STARTUP_TIMEOUT = 90
+
+
+class DevServerError(RuntimeError):
+    """Raised when dev server startup or npm install fails."""
+
+    def __init__(self, message: str, stderr: str = "") -> None:
+        super().__init__(message)
+        self.stderr = stderr[-1200:]
 
 
 @dataclass
@@ -33,6 +42,7 @@ class DevServerManager:
     def __init__(self) -> None:
         self._lock = threading.Lock()
         self._sessions: Dict[str, DevSession] = {}
+        self._last_errors: Dict[str, str] = {}
 
     def detect_dev_script(self, project_dir: Path) -> Optional[str]:
         package_json = project_dir / "package.json"
@@ -59,12 +69,28 @@ class DevServerManager:
                 sock.settimeout(0.2)
                 if sock.connect_ex(("127.0.0.1", port)) != 0:
                     return port
-        raise RuntimeError("Nenhuma porta livre entre 9200-9299")
+        raise DevServerError("Nenhuma porta livre entre 9200-9299")
 
-    def _cleanup_session(self, project_id: str) -> None:
+    @staticmethod
+    def _read_process_stderr(process: subprocess.Popen[str]) -> str:
+        if not process.stderr:
+            return ""
+        try:
+            if process.poll() is None:
+                return ""
+            return (process.stderr.read() or "")[-1200:]
+        except OSError:
+            return ""
+
+    def _cleanup_session(self, project_id: str, *, record_error: bool = False) -> None:
         session = self._sessions.pop(project_id, None)
         if not session:
             return
+        stderr = ""
+        if record_error or session.process.poll() is not None:
+            stderr = self._read_process_stderr(session.process)
+            if stderr:
+                self._last_errors[project_id] = stderr
         if session.process.poll() is None:
             session.process.terminate()
             try:
@@ -87,21 +113,29 @@ class DevServerManager:
         if (project_dir / "node_modules").exists():
             return
         if not self._npm_available():
-            raise RuntimeError("npm não encontrado — instale Node.js")
-        subprocess.run(
-            ["npm", "install"],
-            cwd=str(project_dir),
-            check=True,
-            capture_output=True,
-            text=True,
-            timeout=300,
-        )
+            raise DevServerError("npm não encontrado — instale Node.js")
+        try:
+            completed = subprocess.run(
+                ["npm", "install"],
+                cwd=str(project_dir),
+                check=True,
+                capture_output=True,
+                text=True,
+                timeout=300,
+            )
+        except subprocess.CalledProcessError as exc:
+            stderr = (exc.stderr or exc.stdout or "")[-1200:]
+            raise DevServerError(f"npm install falhou (exit {exc.returncode})", stderr) from exc
+        except subprocess.TimeoutExpired as exc:
+            raise DevServerError("npm install excedeu o tempo limite (5 min)") from exc
+        if completed.stderr and "ERR!" in completed.stderr:
+            self._last_errors[str(project_dir)] = completed.stderr[-800:]
 
     def status(self, project_id: str, project_dir: Path) -> Dict[str, object]:
         with self._lock:
             session = self._sessions.get(project_id)
             if session and session.process.poll() is not None:
-                self._cleanup_session(project_id)
+                self._cleanup_session(project_id, record_error=True)
                 session = None
             script = self.detect_dev_script(project_dir)
             return {
@@ -111,6 +145,7 @@ class DevServerManager:
                 "running": session is not None,
                 "port": session.port if session else None,
                 "url": session.url if session else None,
+                "last_error": self._last_errors.get(project_id),
             }
 
     def start(self, project_id: str, project_dir: Path, install: bool = True) -> Dict[str, object]:
@@ -118,13 +153,14 @@ class DevServerManager:
             raise FileNotFoundError("Projeto não encontrado")
         script = self.detect_dev_script(project_dir)
         if not script:
-            raise RuntimeError("Este projeto não tem script dev/start no package.json")
+            raise DevServerError("Este projeto não tem script dev/start no package.json")
         if not self._npm_available():
-            raise RuntimeError("npm não encontrado — instale Node.js para preview ao vivo")
+            raise DevServerError("npm não encontrado — instale Node.js para preview ao vivo")
 
         with self._lock:
             existing = self._sessions.get(project_id)
             if existing and existing.process.poll() is None:
+                self._last_errors.pop(project_id, None)
                 return {
                     "ok": True,
                     "running": True,
@@ -156,21 +192,24 @@ class DevServerManager:
 
         url = f"http://127.0.0.1:{port}/"
         if not self._wait_for_http(url):
-            stderr = ""
+            stderr = self._read_process_stderr(process)
             if process.poll() is None:
                 process.terminate()
-            else:
                 try:
-                    stderr = (process.stderr.read() if process.stderr else "")[-800:]
-                except OSError:
-                    stderr = ""
+                    process.wait(timeout=3)
+                except subprocess.TimeoutExpired:
+                    process.kill()
+                stderr = stderr or self._read_process_stderr(process)
             with self._lock:
                 self._sessions.pop(project_id, None)
-            raise RuntimeError(f"Servidor dev não respondeu a tempo. {stderr}".strip())
+                if stderr:
+                    self._last_errors[project_id] = stderr
+            raise DevServerError("Servidor dev não respondeu a tempo.", stderr)
 
         session = DevSession(project_id=project_id, port=port, url=url, script=script, process=process)
         with self._lock:
             self._sessions[project_id] = session
+            self._last_errors.pop(project_id, None)
 
         return {
             "ok": True,
