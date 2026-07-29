@@ -11,30 +11,64 @@
 </head>
 <body>
   <div class="app">
-    <aside class="sidebar" id="sidebar">
+    <aside class="sidebar" id="sidebar" aria-label="Navegação">
       <div class="sidebar-header">
-        <div class="logo">
+        <div class="logo" title="Forge">
           <span class="logo-icon" aria-hidden="true"></span>
           <span class="logo-word">Forge</span>
         </div>
-      </div>
-      <div class="sidebar-actions">
-        <button type="button" class="btn btn-primary btn-gradient" id="btnNewProject">Novo projeto</button>
-        <button type="button" class="btn btn-ghost btn-sidebar" id="btnModels">
-          Modelos IA
+        <button
+          type="button"
+          class="btn btn-ghost btn-icon sidebar-collapse-btn"
+          id="btnCollapseSidebar"
+          title="Recolher menu"
+          aria-label="Recolher ou expandir menu"
+        >
+          <svg class="icon-collapse" width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M9 4v16" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M14 9l-3 3 3 3" stroke="currentColor" stroke-width="1.7" stroke-linecap="round" stroke-linejoin="round"/>
+          </svg>
         </button>
       </div>
-      <div class="sidebar-section-label">Projetos</div>
-      <div class="project-search-row">
-        <input id="projectSearch" type="search" placeholder="Buscar projetos..." autocomplete="off" />
+
+      <nav class="sidebar-nav" aria-label="Ações">
+        <button type="button" class="sidebar-nav-item" id="btnNewProject" title="Novo projeto">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.8" stroke-linecap="round"/>
+          </svg>
+          <span class="nav-label">Novo projeto</span>
+        </button>
+        <button type="button" class="sidebar-nav-item" id="btnSidebarSearch" title="Buscar projetos">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <circle cx="11" cy="11" r="6.5" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M16.5 16.5L20 20" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
+          </svg>
+          <span class="nav-label">Buscar</span>
+        </button>
+        <button type="button" class="sidebar-nav-item" id="btnModels" title="Modelos IA">
+          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+            <path d="M12 3l8 4.5v9L12 21l-8-4.5v-9L12 3z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
+            <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" stroke="currentColor" stroke-width="1.5" opacity=".7"/>
+          </svg>
+          <span class="nav-label">Modelos IA</span>
+        </button>
+      </nav>
+
+      <div class="sidebar-expand-panel">
+        <div class="sidebar-section-label">Projetos</div>
+        <div class="project-search-row">
+          <input id="projectSearch" type="search" placeholder="Buscar projetos..." autocomplete="off" />
+        </div>
+        <div class="project-list" id="projectList"></div>
       </div>
-      <div class="project-list" id="projectList"></div>
+
       <div class="sidebar-bottom">
         <div class="sidebar-tip" id="sidebarTip">
           <strong>Dica do dia</strong>
           <p>Crie um projeto React + Vite; o agente aplica padrão sênior (FE/BE) e o preview sobe ao vivo.</p>
         </div>
-        <div class="sidebar-user">
+        <div class="sidebar-user" title="Forge · plataforma local">
           <div class="user-avatar">F</div>
           <div class="user-info">
             <div class="user-name">Forge</div>
@@ -86,7 +120,12 @@
       <section class="view-workspace hidden" id="workspaceView">
         <header class="topbar">
           <div class="topbar-left">
-            <button type="button" class="btn btn-ghost btn-icon sidebar-toggle hidden" id="btnToggleSidebar" title="Projetos">☰</button>
+            <button type="button" class="btn btn-ghost btn-icon sidebar-toggle" id="btnToggleSidebar" title="Menu">
+              <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                <rect x="3" y="4" width="18" height="16" rx="2" stroke="currentColor" stroke-width="1.7"/>
+                <path d="M9 4v16" stroke="currentColor" stroke-width="1.7"/>
+              </svg>
+            </button>
             <div class="project-heading">
               <h2 id="projectTitle">Projeto</h2>
               <span class="project-badge" id="projectBadge">Projeto ativo</span>
