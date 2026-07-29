@@ -120,3 +120,58 @@ def test_read_project_file(platform_url: str, tmp_path: Path, monkeypatch: pytes
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
     assert data["content"] == "ola"
+
+
+def test_chat_persistence(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "chat-demo"
+    project_dir.mkdir(parents=True)
+
+    post = urllib.request.Request(
+        f"{platform_url}/api/projects/chat-demo/chat",
+        data=json.dumps({"role": "user", "text": "crie um site"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(post, timeout=5) as resp:
+        created = json.loads(resp.read().decode())
+    assert created["ok"] is True
+    assert len(created["messages"]) == 1
+
+    with urllib.request.urlopen(f"{platform_url}/api/projects/chat-demo/chat", timeout=5) as resp:
+        loaded = json.loads(resp.read().decode())
+    assert loaded["messages"][0]["text"] == "crie um site"
+
+
+def test_dev_status(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "vite-app"
+    project_dir.mkdir(parents=True)
+    (project_dir / "package.json").write_text(
+        json.dumps({"scripts": {"dev": "vite"}}),
+        encoding="utf-8",
+    )
+    with urllib.request.urlopen(f"{platform_url}/api/projects/vite-app/dev/status", timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["has_dev_script"] is True
+    assert data["script"] == "dev"
+    assert data["running"] is False
+
+
+def test_deploy_without_token(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "static-site"
+    project_dir.mkdir(parents=True)
+    (project_dir / "index.html").write_text("<html></html>", encoding="utf-8")
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/projects/static-site/deploy",
+        data=b"{}",
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["ok"] is False
+    assert data.get("manual") is True
+    assert (project_dir / "vercel.json").is_file()

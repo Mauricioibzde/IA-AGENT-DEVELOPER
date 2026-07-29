@@ -10,10 +10,18 @@ import sys
 import traceback
 from http.server import BaseHTTPRequestHandler, ThreadingHTTPServer
 from pathlib import Path
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+from ia_platform.conversations import append_message, append_messages, clear_messages, load_messages
+from ia_platform.deploy import deploy_project
+from ia_platform.dev_server import dev_manager
+
 ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
 DEFAULT_WORKSPACE = ROOT.parent / "sandbox"
@@ -176,6 +184,23 @@ def _apply_template(project_dir: Path, template: str) -> None:
         target.write_text(content, encoding="utf-8")
 
 
+def _parse_project_route(path: str) -> Tuple[Optional[str], Optional[str]]:
+    parts = path.strip("/").split("/")
+    if len(parts) >= 4 and parts[0] == "api" and parts[1] == "projects":
+        return parts[2], "/".join(parts[3:])
+    return None, None
+
+
+def _project_id_from_workspace(workspace: Path) -> Optional[str]:
+    try:
+        rel = workspace.resolve().relative_to(PROJECTS_ROOT.resolve())
+        if rel.parts:
+            return rel.parts[0]
+    except ValueError:
+        pass
+    return None
+
+
 class PlatformHandler(BaseHTTPRequestHandler):
     server_version = "ForgePlatform/1.0"
 
@@ -231,6 +256,11 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 project_id = parts[3]
                 file_path = qs.get("path", [""])[0]
                 return self._handle_read_file(project_id, file_path)
+        project_id, sub = _parse_project_route(path)
+        if project_id and sub == "chat":
+            return self._handle_get_chat(project_id)
+        if project_id and sub == "dev/status":
+            return self._handle_dev_status(project_id)
         if path in {"/", "/index.html"}:
             return self._serve_file(STATIC / "index.html")
         if path.startswith("/static/"):
@@ -243,6 +273,15 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_run()
         if path == "/api/projects":
             return self._handle_create_project()
+        project_id, sub = _parse_project_route(path)
+        if project_id and sub == "chat":
+            return self._handle_post_chat(project_id)
+        if project_id and sub == "dev/start":
+            return self._handle_dev_start(project_id)
+        if project_id and sub == "dev/stop":
+            return self._handle_dev_stop(project_id)
+        if project_id and sub == "deploy":
+            return self._handle_deploy(project_id)
         self._send_json(404, {"error": "not found"})
 
     def _handle_health(self) -> None:
@@ -357,6 +396,71 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(415, {"error": "binary file"})
         self._send_json(200, {"path": file_path, "content": content})
 
+    def _handle_get_chat(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        return self._send_json(200, {"project": project_id, "messages": load_messages(base)})
+
+    def _handle_post_chat(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        if data.get("clear"):
+            clear_messages(base)
+            return self._send_json(200, {"ok": True, "messages": []})
+        role = str(data.get("role", "")).strip()
+        text = str(data.get("text", "")).strip()
+        if not role or not text:
+            return self._send_json(400, {"error": "role and text are required"})
+        meta = data.get("meta") if isinstance(data.get("meta"), dict) else None
+        messages = append_message(base, role, text, meta=meta)
+        return self._send_json(201, {"ok": True, "messages": messages})
+
+    def _handle_dev_status(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        status = dev_manager.status(project_id, base)
+        return self._send_json(200, {"project": project_id, **status})
+
+    def _handle_dev_start(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        data = self._read_json()
+        install = bool(data.get("install", True))
+        try:
+            result = dev_manager.start(project_id, base, install=install)
+            return self._send_json(200, {"project": project_id, **result})
+        except Exception as exc:
+            return self._send_json(500, {"error": str(exc)})
+
+    def _handle_dev_stop(self, project_id: str) -> None:
+        result = dev_manager.stop(project_id)
+        return self._send_json(200, {"project": project_id, **result})
+
+    def _handle_deploy(self, project_id: str) -> None:
+        try:
+            base = _project_path(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        if not base.exists():
+            return self._send_json(404, {"error": "project not found"})
+        result = deploy_project(base, project_id)
+        return self._send_json(200, {"project": project_id, **result})
+
     def _handle_run(self) -> None:
         data = self._read_json()
         prompt = str(data.get("prompt", "")).strip()
@@ -368,6 +472,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
         except ValueError as exc:
             return self._send_json(400, {"error": str(exc)})
         workspace.mkdir(parents=True, exist_ok=True)
+        project_id = _project_id_from_workspace(workspace)
 
         try:
             from local_agent.agent import CodingAgent
@@ -382,12 +487,24 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 verbose=True,
             )
             report = CodingAgent(config).run(prompt)
+            rendered = report.render()
+            if project_id:
+                append_message(
+                    workspace,
+                    "agent",
+                    rendered,
+                    meta={
+                        "status": report.status.value,
+                        "created_files": report.created_files,
+                        "modified_files": report.modified_files,
+                    },
+                )
             self._send_json(
                 200,
                 {
                     "ok": True,
                     "status": report.status.value,
-                    "report": report.render(),
+                    "report": rendered,
                     "workspace": str(workspace),
                     "created_files": report.created_files,
                     "modified_files": report.modified_files,
@@ -425,6 +542,8 @@ def main(argv: list[str] | None = None) -> int:
         httpd.serve_forever()
     except KeyboardInterrupt:
         print("\nStopped.")
+    finally:
+        dev_manager.stop_all()
     return 0
 
 

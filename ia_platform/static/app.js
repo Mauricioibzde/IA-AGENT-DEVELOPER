@@ -13,6 +13,8 @@
     running: false,
     selectedTemplate: "blank",
     models: [],
+    devStatus: null,
+    previewMode: "static",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -27,13 +29,21 @@
     btnSend: $("btnSend"),
     btnNewProject: $("btnNewProject"),
     btnRefreshFiles: $("btnRefreshFiles"),
+    btnDeploy: $("btnDeploy"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
     previewFrame: $("previewFrame"),
     previewHint: $("previewHint"),
+    previewMode: $("previewMode"),
+    btnDevStart: $("btnDevStart"),
+    btnDevStop: $("btnDevStop"),
+    devStatus: $("devStatus"),
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
+    deployModal: $("deployModal"),
+    deployLog: $("deployLog"),
+    btnCloseDeploy: $("btnCloseDeploy"),
     projectNameInput: $("projectNameInput"),
     btnCreateProject: $("btnCreateProject"),
     btnCancelProject: $("btnCancelProject"),
@@ -111,7 +121,7 @@
     });
     await loadProjects();
     await selectProject(d.id);
-    addMessage("Projeto criado. Descreva o que quer construir ou melhorar.", "system");
+    await persistMessage("system", "Projeto criado. Descreva o que quer construir ou melhorar.");
   }
 
   async function selectProject(id) {
@@ -119,17 +129,18 @@
     if (!project) return;
     state.current = project;
     state.selectedFile = null;
+    state.previewMode = "static";
+    els.previewMode.value = "static";
     els.fileViewer.classList.add("hidden");
     els.fileViewer.textContent = "";
     els.projectTitle.textContent = project.name;
     els.emptyView.classList.add("hidden");
     els.workspaceView.classList.remove("hidden");
     renderProjectList();
+    await loadChat();
     await loadFiles();
+    await refreshDevStatus();
     updatePreview();
-    if (!els.chatMessages.children.length) {
-      addMessage(`Projeto "${project.name}" aberto. O agente vai editar arquivos em projects/${project.name}.`, "system");
-    }
   }
 
   function showEmptyView() {
@@ -137,6 +148,113 @@
     els.emptyView.classList.remove("hidden");
     els.workspaceView.classList.add("hidden");
     renderProjectList();
+  }
+
+  // ── Chat history ──
+
+  function escapeHtml(text) {
+    return String(text)
+      .replace(/&/g, "&amp;")
+      .replace(/</g, "&lt;")
+      .replace(/>/g, "&gt;")
+      .replace(/"/g, "&quot;");
+  }
+
+  function renderChat(messages) {
+    els.chatMessages.innerHTML = "";
+    if (!messages.length) {
+      addMessage(`Projeto "${state.current.name}" aberto. O agente edita arquivos em projects/${state.current.name}.`, "system", false);
+      return;
+    }
+    messages.forEach((m) => addMessage(m.text, m.role, false));
+  }
+
+  async function loadChat() {
+    if (!state.current) return;
+    try {
+      const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/chat`);
+      renderChat(d.messages || []);
+      const lastAgent = [...(d.messages || [])].reverse().find((m) => m.role === "agent");
+      if (lastAgent) {
+        state.lastReport = lastAgent.text;
+        els.reportViewer.textContent = lastAgent.text;
+      }
+    } catch {
+      renderChat([]);
+    }
+  }
+
+  async function persistMessage(role, text, meta) {
+    if (!state.current) return;
+    await api(`/api/projects/${encodeURIComponent(state.current.id)}/chat`, {
+      method: "POST",
+      body: JSON.stringify({ role, text, meta: meta || undefined }),
+    });
+  }
+
+  function addMessage(text, role, scroll = true) {
+    const el = document.createElement("div");
+    el.className = "msg " + role + (role === "agent" && /^Erro/i.test(text) ? " error" : "");
+    el.textContent = text;
+    els.chatMessages.appendChild(el);
+    if (scroll) els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+    return el;
+  }
+
+  function removeMessage(el) {
+    if (el && el.parentNode) el.parentNode.removeChild(el);
+  }
+
+  async function sendPrompt() {
+    const prompt = els.promptInput.value.trim();
+    if (!prompt || state.running || !state.current) return;
+
+    addMessage(prompt, "user");
+    els.promptInput.value = "";
+    state.running = true;
+    els.btnSend.disabled = true;
+    const pending = addMessage("Agente trabalhando... (pode levar alguns minutos)", "system");
+
+    const mode = els.modeSelect.value;
+    try {
+      await persistMessage("user", prompt);
+      const d = await api("/api/run", {
+        method: "POST",
+        body: JSON.stringify({
+          prompt,
+          workspace: state.current.path,
+          model: els.modelInput.value.trim() || null,
+          max_steps: parseInt(els.maxStepsInput.value || "12", 10),
+          plan_only: mode === "plan",
+          dry_run: mode === "dry",
+        }),
+      });
+      removeMessage(pending);
+      const summary = d.report || "(sem relatório)";
+      state.lastReport = summary;
+      els.reportViewer.textContent = summary;
+      addMessage(summary, "agent");
+      if (d.created_files?.length || d.modified_files?.length) {
+        const changed = [...(d.created_files || []), ...(d.modified_files || [])];
+        const note = `Arquivos alterados: ${changed.join(", ")}`;
+        addMessage(note, "system");
+        await persistMessage("system", note);
+      }
+      await loadProjects();
+      await loadFiles();
+      await refreshDevStatus();
+      updatePreview();
+      switchTab("report");
+    } catch (e) {
+      removeMessage(pending);
+      const err = "Erro: " + e.message;
+      addMessage(err, "agent");
+      await persistMessage("agent", err).catch(() => {});
+    } finally {
+      state.running = false;
+      els.btnSend.disabled = false;
+      els.promptInput.focus();
+    }
   }
 
   // ── Files ──
@@ -204,83 +322,130 @@
 
   function updatePreview(explicitPath) {
     if (!state.current) return;
+
+    if (state.previewMode === "dev" && state.devStatus?.running && state.devStatus.url) {
+      els.previewHint.classList.add("hidden");
+      els.previewFrame.src = state.devStatus.url + "?t=" + Date.now();
+      return;
+    }
+
     const path = explicitPath || findPreviewPath();
     if (!path) {
       els.previewFrame.src = "about:blank";
       els.previewHint.classList.remove("hidden");
-      els.previewHint.textContent = "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
+      els.previewHint.textContent = state.devStatus?.has_dev_script
+        ? "Nenhum HTML estático. Use npm run dev ou peça ao agente para criar index.html."
+        : "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
       return;
     }
     els.previewHint.classList.add("hidden");
     els.previewFrame.src = `/preview/${encodeURIComponent(state.current.id)}/${path.split("/").map(encodeURIComponent).join("/")}?t=${Date.now()}`;
   }
 
-  // ── Chat ──
+  // ── Dev server ──
 
-  function escapeHtml(text) {
-    return String(text)
-      .replace(/&/g, "&amp;")
-      .replace(/</g, "&lt;")
-      .replace(/>/g, "&gt;")
-      .replace(/"/g, "&quot;");
+  function renderDevControls() {
+    const s = state.devStatus || {};
+    const hasScript = s.has_dev_script;
+    els.btnDevStart.classList.toggle("hidden", !hasScript || s.running);
+    els.btnDevStop.classList.toggle("hidden", !s.running);
+    els.previewMode.querySelector('option[value="dev"]').disabled = !hasScript;
+
+    if (!hasScript) {
+      els.devStatus.textContent = "Sem package.json dev/start";
+    } else if (s.running) {
+      els.devStatus.textContent = `Rodando :${s.port} (${s.script})`;
+    } else if (!s.npm_available) {
+      els.devStatus.textContent = "Instale Node.js para dev server";
+    } else {
+      els.devStatus.textContent = `Pronto: npm run ${s.script}`;
+    }
   }
 
-  function addMessage(text, role) {
-    const el = document.createElement("div");
-    el.className = "msg " + role + (role === "agent" && /^Erro/i.test(text) ? " error" : "");
-    el.textContent = text;
-    els.chatMessages.appendChild(el);
-    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
-    return el;
-  }
-
-  function removeMessage(el) {
-    if (el && el.parentNode) el.parentNode.removeChild(el);
-  }
-
-  async function sendPrompt() {
-    const prompt = els.promptInput.value.trim();
-    if (!prompt || state.running || !state.current) return;
-
-    addMessage(prompt, "user");
-    els.promptInput.value = "";
-    state.running = true;
-    els.btnSend.disabled = true;
-    const pending = addMessage("Agente trabalhando... (pode levar alguns minutos)", "system");
-
-    const mode = els.modeSelect.value;
+  async function refreshDevStatus() {
+    if (!state.current) return;
     try {
-      const d = await api("/api/run", {
+      state.devStatus = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/status`);
+    } catch {
+      state.devStatus = null;
+    }
+    renderDevControls();
+  }
+
+  async function startDevServer() {
+    if (!state.current) return;
+    els.btnDevStart.disabled = true;
+    els.devStatus.textContent = "Iniciando (npm install pode demorar)...";
+    try {
+      const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/start`, {
         method: "POST",
-        body: JSON.stringify({
-          prompt,
-          workspace: state.current.path,
-          model: els.modelInput.value.trim() || null,
-          max_steps: parseInt(els.maxStepsInput.value || "12", 10),
-          plan_only: mode === "plan",
-          dry_run: mode === "dry",
-        }),
+        body: JSON.stringify({ install: true }),
       });
-      removeMessage(pending);
-      const summary = d.report || "(sem relatório)";
-      state.lastReport = summary;
-      els.reportViewer.textContent = summary;
-      addMessage(summary, "agent");
-      if (d.created_files?.length || d.modified_files?.length) {
-        const changed = [...(d.created_files || []), ...(d.modified_files || [])];
-        addMessage(`Arquivos alterados: ${changed.join(", ")}`, "system");
-      }
-      await loadProjects();
-      await loadFiles();
+      state.devStatus = { ...state.devStatus, ...d, running: true };
+      state.previewMode = "dev";
+      els.previewMode.value = "dev";
+      renderDevControls();
       updatePreview();
-      switchTab("report");
+      switchTab("preview");
     } catch (e) {
-      removeMessage(pending);
-      addMessage("Erro: " + e.message, "agent");
+      els.devStatus.textContent = e.message;
     } finally {
-      state.running = false;
-      els.btnSend.disabled = false;
-      els.promptInput.focus();
+      els.btnDevStart.disabled = false;
+    }
+  }
+
+  async function stopDevServer() {
+    if (!state.current) return;
+    try {
+      await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/stop`, { method: "POST", body: "{}" });
+      await refreshDevStatus();
+      if (state.previewMode === "dev") {
+        state.previewMode = "static";
+        els.previewMode.value = "static";
+      }
+      updatePreview();
+    } catch (e) {
+      els.devStatus.textContent = e.message;
+    }
+  }
+
+  // ── Deploy ──
+
+  function openDeployModal(text) {
+    els.deployLog.textContent = text;
+    els.deployModal.classList.remove("hidden");
+  }
+
+  function closeDeployModal() {
+    els.deployModal.classList.add("hidden");
+  }
+
+  async function runDeploy() {
+    if (!state.current) return;
+    els.btnDeploy.disabled = true;
+    openDeployModal("Preparando deploy...\n\nRequer VERCEL_TOKEN no ambiente para deploy automático.");
+    try {
+      const res = await fetch(`/api/projects/${encodeURIComponent(state.current.id)}/deploy`, {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: "{}",
+      });
+      const d = await res.json();
+      let log = d.message || "";
+      if (d.url) log += `\n\nURL: ${d.url}`;
+      if (d.steps?.length) log += "\n\nPassos manuais:\n" + d.steps.map((s, i) => `${i + 1}. ${s}`).join("\n");
+      if (d.log_tail) log += "\n\n--- log ---\n" + d.log_tail;
+      els.deployLog.textContent = log;
+      if (d.url) {
+        els.deployLog.innerHTML = escapeHtml(log).replace(
+          escapeHtml(d.url),
+          `<a class="deploy-link" href="${escapeHtml(d.url)}" target="_blank" rel="noopener">${escapeHtml(d.url)}</a>`
+        );
+      }
+    } catch (e) {
+      els.deployLog.textContent = "Erro: " + e.message;
+    } finally {
+      els.btnDeploy.disabled = false;
     }
   }
 
@@ -344,6 +509,19 @@
 
   els.btnRefreshFiles.addEventListener("click", () => {
     loadFiles();
+    updatePreview();
+  });
+
+  els.btnDeploy.addEventListener("click", runDeploy);
+  els.btnCloseDeploy.addEventListener("click", closeDeployModal);
+  els.deployModal.addEventListener("click", (e) => {
+    if (e.target === els.deployModal) closeDeployModal();
+  });
+
+  els.btnDevStart.addEventListener("click", startDevServer);
+  els.btnDevStop.addEventListener("click", stopDevServer);
+  els.previewMode.addEventListener("change", () => {
+    state.previewMode = els.previewMode.value;
     updatePreview();
   });
 

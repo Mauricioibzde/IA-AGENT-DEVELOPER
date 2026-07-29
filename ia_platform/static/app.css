@@ -349,6 +349,52 @@ body {
   text-align: center;
 }
 
+.preview-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  margin-bottom: 10px;
+}
+
+.preview-toolbar select {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  color: var(--text);
+  padding: 6px 10px;
+  border-radius: 8px;
+  font-size: 0.78rem;
+}
+
+.btn-sm { padding: 6px 10px; font-size: 0.75rem; width: auto; }
+
+.dev-status {
+  font-size: 0.72rem;
+  color: var(--muted);
+  flex: 1;
+  min-width: 80px;
+}
+
+.deploy-log {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 12px;
+  font-family: "JetBrains Mono", monospace;
+  font-size: 0.75rem;
+  line-height: 1.45;
+  white-space: pre-wrap;
+  max-height: 320px;
+  overflow: auto;
+}
+
+.modal-wide { max-width: 560px; }
+
+.deploy-link {
+  color: var(--accent-hover);
+  word-break: break-all;
+}
+
 .view-workspace {
   flex: 1;
   display: flex;

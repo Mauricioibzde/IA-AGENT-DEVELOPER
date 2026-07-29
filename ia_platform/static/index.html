@@ -59,6 +59,7 @@
             <input id="modelInput" type="text" placeholder="Modelo (opcional)" />
             <input id="maxStepsInput" type="number" value="12" min="1" max="50" title="Max steps" style="width:4.5rem" />
             <button type="button" class="btn btn-ghost" id="btnRefreshFiles">Atualizar</button>
+            <button type="button" class="btn btn-ghost" id="btnDeploy" title="Deploy Vercel">Deploy</button>
           </div>
         </header>
 
@@ -82,6 +83,15 @@
               <pre class="file-viewer hidden" id="fileViewer"></pre>
             </div>
             <div class="panel-content hidden" id="panelPreview">
+              <div class="preview-toolbar">
+                <select id="previewMode" title="Modo de preview">
+                  <option value="static">Estático</option>
+                  <option value="dev">npm run dev</option>
+                </select>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnDevStart">Iniciar dev</button>
+                <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevStop">Parar</button>
+                <span class="dev-status" id="devStatus"></span>
+              </div>
               <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
               <p class="preview-hint" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
             </div>
@@ -91,6 +101,16 @@
           </aside>
         </div>
       </section>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="deployModal">
+    <div class="modal modal-wide">
+      <h3>Deploy</h3>
+      <pre class="deploy-log" id="deployLog">Preparando...</pre>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btnCloseDeploy">Fechar</button>
+      </div>
     </div>
   </div>
 
