@@ -4596,12 +4596,14 @@
   els.btnSurfaceWork?.addEventListener("click", () => setSurfaceMode("work"));
   els.btnChooseProjectEmpty?.addEventListener("click", () => {
     setSurfaceMode("work");
-    els.projectSearch?.focus();
+    if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
     openSidebar();
+    els.projectSearch?.focus();
   });
   els.btnNewProjectEmpty?.addEventListener("click", () => openNewProjectModal("blank"));
   els.btnPickProject?.addEventListener("click", () => {
     setSurfaceMode("work");
+    if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
     openSidebar();
     els.projectSearch?.focus();
   });
