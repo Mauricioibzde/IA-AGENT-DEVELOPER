@@ -12,4 +12,5 @@ else
 fi
 
 echo "Starting platform at http://127.0.0.1:8787"
+export PYTHONPATH="$ROOT${PYTHONPATH:+:$PYTHONPATH}"
 exec python3 "$ROOT/ia_platform/server.py" --host 127.0.0.1 --port 8787

@@ -19,4 +19,5 @@ try {
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "sandbox") | Out-Null
 Write-Host "Starting platform at http://127.0.0.1:8787" -ForegroundColor Green
+$env:PYTHONPATH = $Root
 python "$Root\ia_platform\server.py" --host 127.0.0.1 --port 8787

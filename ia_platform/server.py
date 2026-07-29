@@ -13,6 +13,11 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
+ROOT = Path(__file__).resolve().parent
+REPO_ROOT = ROOT.parent
+if str(REPO_ROOT) not in sys.path:
+    sys.path.insert(0, str(REPO_ROOT))
+
 from ia_platform.conversations import append_message, clear_messages, format_conversation_context, load_messages
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import DevServerError, dev_manager
@@ -21,11 +26,6 @@ from ia_platform.model_catalog import recommend_models, resolve_model_for_run, r
 from ia_platform.ollama_models import OllamaModelManager
 from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
-
-ROOT = Path(__file__).resolve().parent
-REPO_ROOT = ROOT.parent
-if str(REPO_ROOT) not in sys.path:
-    sys.path.insert(0, str(REPO_ROOT))
 
 STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
