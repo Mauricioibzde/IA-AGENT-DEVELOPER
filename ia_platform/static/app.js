@@ -213,13 +213,17 @@
     els.promptInput.value = "";
     state.running = true;
     els.btnSend.disabled = true;
-    const pending = addMessage("Agente trabalhando... (pode levar alguns minutos)", "system");
 
     const mode = els.modeSelect.value;
+    const progressEl = addMessage("Iniciando agente...", "progress");
+    const agentEl = addMessage("", "agent live");
+
     try {
       await persistMessage("user", prompt);
-      const d = await api("/api/run", {
+
+      const res = await fetch("/api/run/stream", {
         method: "POST",
+        headers: { "Content-Type": "application/json" },
         body: JSON.stringify({
           prompt,
           workspace: state.current.path,
@@ -229,31 +233,98 @@
           dry_run: mode === "dry",
         }),
       });
-      removeMessage(pending);
-      const summary = d.report || "(sem relatório)";
-      state.lastReport = summary;
-      els.reportViewer.textContent = summary;
-      addMessage(summary, "agent");
-      if (d.created_files?.length || d.modified_files?.length) {
-        const changed = [...(d.created_files || []), ...(d.modified_files || [])];
-        const note = `Arquivos alterados: ${changed.join(", ")}`;
-        addMessage(note, "system");
-        await persistMessage("system", note);
+
+      if (!res.ok || !res.body) {
+        const errData = await res.json().catch(() => ({}));
+        throw new Error(errData.error || "Falha no streaming");
       }
-      await loadProjects();
-      await loadFiles();
-      await refreshDevStatus();
-      updatePreview();
-      switchTab("report");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+      let donePayload = null;
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const line = block.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === "done") {
+            donePayload = ev;
+            continue;
+          }
+          handleStreamEvent(ev, progressEl, agentEl);
+        }
+      }
+
+      removeMessage(progressEl);
+      agentEl.classList.remove("live");
+
+      if (donePayload) {
+        const summary = donePayload.report || "(sem relatório)";
+        agentEl.textContent = summary;
+        state.lastReport = summary;
+        els.reportViewer.textContent = summary;
+        if (donePayload.created_files?.length || donePayload.modified_files?.length) {
+          const changed = [...(donePayload.created_files || []), ...(donePayload.modified_files || [])];
+          const note = `Arquivos alterados: ${changed.join(", ")}`;
+          addMessage(note, "system");
+          await persistMessage("system", note);
+        }
+        await loadProjects();
+        await loadFiles();
+        await refreshDevStatus();
+        updatePreview();
+        switchTab("report");
+      } else {
+        agentEl.textContent = agentEl.textContent || "Execução finalizada sem relatório.";
+      }
     } catch (e) {
-      removeMessage(pending);
+      removeMessage(progressEl);
+      agentEl.classList.remove("live");
       const err = "Erro: " + e.message;
-      addMessage(err, "agent");
+      agentEl.textContent = err;
+      agentEl.classList.add("error");
       await persistMessage("agent", err).catch(() => {});
     } finally {
       state.running = false;
       els.btnSend.disabled = false;
       els.promptInput.focus();
+    }
+  }
+
+  function handleStreamEvent(ev, progressEl, agentEl) {
+    switch (ev.type) {
+      case "started":
+        progressEl.textContent = "Agente iniciado...";
+        break;
+      case "plan":
+        progressEl.textContent = `Plano: ${ev.summary || "criado"} (${ev.task_count || "?"} tarefas)`;
+        break;
+      case "step":
+        progressEl.textContent = `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id}`;
+        agentEl.textContent = "";
+        break;
+      case "tools":
+        progressEl.textContent = `Ferramentas: ${(ev.tools || []).join(", ")} (${ev.ok || 0}/${ev.count || 0} ok)`;
+        break;
+      case "reflection":
+        progressEl.textContent = `Reflexão: ${ev.status} — ${(ev.analysis || "").slice(0, 120)}`;
+        break;
+      case "llm_chunk":
+        agentEl.textContent += ev.text || "";
+        els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+        break;
+      case "error":
+        progressEl.textContent = "Erro: " + (ev.message || ev.error || "desconhecido");
+        break;
+      default:
+        break;
     }
   }
 

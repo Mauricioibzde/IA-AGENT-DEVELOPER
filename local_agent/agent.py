@@ -5,7 +5,7 @@ from __future__ import annotations
 import hashlib
 import json
 from pathlib import Path
-from typing import Dict, List, Optional, Set
+from typing import Any, Callable, Dict, List, Optional, Set
 
 from .config import AgentConfig
 from .context_manager import ContextManager
@@ -23,8 +23,9 @@ from .validator import Validator
 
 
 class CodingAgent:
-    def __init__(self, config: AgentConfig) -> None:
+    def __init__(self, config: AgentConfig, event_sink: Optional[Callable[[Dict[str, Any]], None]] = None) -> None:
         self.config = config
+        self.event_sink = event_sink
         self.logger = AgentLogger(config)
         self.client = OllamaClient(config, self.logger)
         self.memory = AgentMemory(config.workspace, enabled=config.use_memory)
@@ -42,9 +43,18 @@ class CodingAgent:
         self.completed_tasks: List[str] = []
         self.all_validations: List[ValidationResult] = []
 
+    def _event(self, kind: str, **fields: Any) -> None:
+        if not self.event_sink:
+            return
+        try:
+            self.event_sink({"type": kind, **fields})
+        except Exception:  # noqa: BLE001
+            pass
+
     def run(self, goal: str) -> AgentReport:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
         self.logger.info("agent_start", message=f"Goal: {goal}")
+        self._event("started", goal=goal)
 
         # Index project.
         self.index.build()
@@ -69,6 +79,12 @@ class CodingAgent:
         plan = self.planner.create_plan(goal, self.index.summary())
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))
         self.memory.add_event("plan", plan.summary or plan.goal, {"tasks": [t.id for t in plan.tasks]})
+        self._event(
+            "plan",
+            summary=plan.summary or plan.goal,
+            task_count=len(plan.tasks),
+            tasks=[{"id": t.id, "title": t.title} for t in plan.tasks[:8]],
+        )
 
         if self.config.plan_only:
             return AgentReport(
@@ -94,6 +110,13 @@ class CodingAgent:
             task.status = TaskStatus.RUNNING
             task.attempts += 1
             self.logger.info("agent_step", message=f"Step {steps}/{self.config.max_steps}: [{task.id}] {task.title}")
+            self._event(
+                "step",
+                step=steps,
+                max_steps=self.config.max_steps,
+                task_id=task.id,
+                task_title=task.title,
+            )
 
             # Build context with auto-read files.
             context = self.context_manager.build(
@@ -109,13 +132,29 @@ class CodingAgent:
             )
 
             try:
-                model_text = self.client.complete(
-                    prompt,
-                    model=self.config.coder_model,
-                    system=system_prompt(str(self.config.workspace)),
-                )
+                sys_msg = system_prompt(str(self.config.workspace))
+                if self.event_sink:
+                    chunks: List[str] = []
+
+                    def _on_chunk(text: str) -> None:
+                        chunks.append(text)
+                        self._event("llm_chunk", text=text)
+
+                    model_text = self.client.stream_chat(
+                        [{"role": "user", "content": prompt}],
+                        model=self.config.coder_model,
+                        system=sys_msg,
+                        on_chunk=_on_chunk,
+                    )
+                else:
+                    model_text = self.client.complete(
+                        prompt,
+                        model=self.config.coder_model,
+                        system=sys_msg,
+                    )
             except Exception as exc:  # noqa: BLE001
                 self.errors.append(f"LLM error: {exc}")
+                self._event("error", message=str(exc))
                 task.status = TaskStatus.FAILED
                 consecutive_failures += 1
                 if consecutive_failures >= 3:
@@ -139,6 +178,12 @@ class CodingAgent:
             results, finished = self.executor.run_calls(calls)
             self.memory.add_event("tools", f"{task.id}: {len(results)} tools", {"tools": [r["tool"] for r in results]})
             consecutive_failures = 0
+            self._event(
+                "tools",
+                count=len(results),
+                tools=[r.get("tool", "?") for r in results],
+                ok=sum(1 for r in results if r.get("result", {}).get("ok", False)),
+            )
 
             # Track analyzed files.
             for rel in task.relevant_files:
@@ -180,6 +225,11 @@ class CodingAgent:
             )
             self.logger.info("reflection", message=f"{decision.status.value}: {decision.analysis[:120]}")
             self.memory.add_event("reflection", decision.analysis[:300], {"status": decision.status.value})
+            self._event(
+                "reflection",
+                status=decision.status.value,
+                analysis=decision.analysis[:240],
+            )
 
             # Act on reflection.
             if decision.status == ReflectionStatus.FINISH:

@@ -13,7 +13,7 @@ from pathlib import Path
 from typing import Any, Dict, List, Optional, Tuple
 from urllib.parse import parse_qs, urlparse
 
-from ia_platform.conversations import append_message, append_messages, clear_messages, load_messages
+from ia_platform.conversations import append_message, clear_messages, load_messages
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import dev_manager
 
@@ -116,6 +116,87 @@ main { padding: 2rem; }
 .card strong { font-size: 1.5rem; }
 """,
         "app.js": "console.log('Dashboard pronto — peça melhorias no chat da plataforma.');\n",
+    },
+    "react": {
+        "package.json": json.dumps(
+            {
+                "name": "forge-react-app",
+                "private": True,
+                "type": "module",
+                "scripts": {"dev": "vite", "build": "vite build", "preview": "vite preview"},
+                "dependencies": {"react": "^18.3.1", "react-dom": "^18.3.1"},
+                "devDependencies": {"@vitejs/plugin-react": "^4.3.4", "vite": "^5.4.11"},
+            },
+            indent=2,
+        )
+        + "\n",
+        "vite.config.js": """import { defineConfig } from "vite";
+import react from "@vitejs/plugin-react";
+
+export default defineConfig({
+  plugins: [react()],
+  server: { host: "127.0.0.1", port: 5173 },
+});
+""",
+        "index.html": """<!DOCTYPE html>
+<html lang="pt-BR">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Forge React App</title>
+  </head>
+  <body>
+    <div id="root"></div>
+    <script type="module" src="/src/main.jsx"></script>
+  </body>
+</html>
+""",
+        "src/main.jsx": """import React from "react";
+import { createRoot } from "react-dom/client";
+import App from "./App.jsx";
+import "./index.css";
+
+createRoot(document.getElementById("root")).render(
+  <React.StrictMode>
+    <App />
+  </React.StrictMode>
+);
+""",
+        "src/App.jsx": """export default function App() {
+  return (
+    <main className="app">
+      <h1>React + Vite</h1>
+      <p>Peça ao agente no chat para personalizar este app.</p>
+      <button type="button" onClick={() => alert("Forge AI")}>Testar</button>
+    </main>
+  );
+}
+""",
+        "src/App.css": """.app {
+  min-height: 100vh;
+  display: flex;
+  flex-direction: column;
+  align-items: center;
+  justify-content: center;
+  gap: 1rem;
+  background: radial-gradient(circle at top, #312e81, #0f172a 55%);
+  color: #f8fafc;
+  font-family: system-ui, sans-serif;
+  text-align: center;
+  padding: 2rem;
+}
+
+button {
+  border: none;
+  border-radius: 999px;
+  padding: 0.75rem 1.25rem;
+  background: #6366f1;
+  color: white;
+  font-weight: 600;
+  cursor: pointer;
+}
+""",
+        "src/index.css": "* { box-sizing: border-box; margin: 0; }\n",
     },
 }
 
@@ -271,6 +352,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         path = urlparse(self.path).path
         if path == "/api/run":
             return self._handle_run()
+        if path == "/api/run/stream":
+            return self._handle_run_stream()
         if path == "/api/projects":
             return self._handle_create_project()
         project_id, sub = _parse_project_route(path)
@@ -461,6 +544,76 @@ class PlatformHandler(BaseHTTPRequestHandler):
         result = deploy_project(base, project_id)
         return self._send_json(200, {"project": project_id, **result})
 
+    def _build_agent_config(self, data: Dict[str, Any], workspace: Path):
+        from local_agent.config import AgentConfig
+
+        return AgentConfig.from_args(
+            workspace,
+            model=data.get("model"),
+            max_steps=int(data.get("max_steps") or 12),
+            dry_run=bool(data.get("dry_run")),
+            plan_only=bool(data.get("plan_only")),
+            verbose=True,
+        )
+
+    def _finalize_run(self, workspace: Path, project_id: Optional[str], report) -> Dict[str, Any]:
+        rendered = report.render()
+        if project_id:
+            append_message(
+                workspace,
+                "agent",
+                rendered,
+                meta={
+                    "status": report.status.value,
+                    "created_files": report.created_files,
+                    "modified_files": report.modified_files,
+                },
+            )
+        return {
+            "ok": True,
+            "status": report.status.value,
+            "report": rendered,
+            "workspace": str(workspace),
+            "created_files": report.created_files,
+            "modified_files": report.modified_files,
+        }
+
+    def _send_sse(self, payload: Dict[str, Any]) -> None:
+        body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+        self.wfile.write(b"data: " + body + b"\n\n")
+        self.wfile.flush()
+
+    def _handle_run_stream(self) -> None:
+        data = self._read_json()
+        prompt = str(data.get("prompt", "")).strip()
+        if not prompt:
+            return self._send_json(400, {"error": "prompt is required"})
+
+        try:
+            workspace = _resolve_workspace(data.get("workspace") or data.get("project_path"))
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        workspace.mkdir(parents=True, exist_ok=True)
+        project_id = _project_id_from_workspace(workspace)
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        try:
+            from local_agent.agent import CodingAgent
+
+            config = self._build_agent_config(data, workspace)
+            agent = CodingAgent(config, event_sink=self._send_sse)
+            report = agent.run(prompt)
+            result = self._finalize_run(workspace, project_id, report)
+            self._send_sse({"type": "done", **result})
+        except Exception as exc:
+            self._send_sse({"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]})
+
     def _handle_run(self) -> None:
         data = self._read_json()
         prompt = str(data.get("prompt", "")).strip()
@@ -476,40 +629,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         try:
             from local_agent.agent import CodingAgent
-            from local_agent.config import AgentConfig
 
-            config = AgentConfig.from_args(
-                workspace,
-                model=data.get("model"),
-                max_steps=int(data.get("max_steps") or 12),
-                dry_run=bool(data.get("dry_run")),
-                plan_only=bool(data.get("plan_only")),
-                verbose=True,
-            )
+            config = self._build_agent_config(data, workspace)
             report = CodingAgent(config).run(prompt)
-            rendered = report.render()
-            if project_id:
-                append_message(
-                    workspace,
-                    "agent",
-                    rendered,
-                    meta={
-                        "status": report.status.value,
-                        "created_files": report.created_files,
-                        "modified_files": report.modified_files,
-                    },
-                )
-            self._send_json(
-                200,
-                {
-                    "ok": True,
-                    "status": report.status.value,
-                    "report": rendered,
-                    "workspace": str(workspace),
-                    "created_files": report.created_files,
-                    "modified_files": report.modified_files,
-                },
-            )
+            self._send_json(200, self._finalize_run(workspace, project_id, report))
         except Exception as exc:
             self._send_json(500, {"error": str(exc), "trace": traceback.format_exc()[-2000:]})
 

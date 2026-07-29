@@ -7,7 +7,7 @@ import sys
 import time
 import urllib.error
 import urllib.request
-from typing import Any, Dict, Iterator, List, Optional
+from typing import Any, Callable, Dict, Iterator, List, Optional
 
 from .config import AgentConfig
 from .logging_config import AgentLogger
@@ -54,6 +54,69 @@ class OllamaClient:
                     self.logger.warn("llm_retry", message=str(exc), attempt=attempt + 1, model=model_name)
                 time.sleep(min(2 ** attempt, 4))
         raise OllamaError(f"Ollama request failed after {retries + 1} attempts: {last_error}")
+
+    def stream_chat(
+        self,
+        messages: List[Dict[str, str]],
+        model: Optional[str] = None,
+        temperature: float = 0.1,
+        timeout: int = 300,
+        *,
+        system: Optional[str] = None,
+        on_chunk: Optional[Callable[[str], None]] = None,
+    ) -> str:
+        """Stream chat response chunks; returns full stripped content."""
+        model_name = model or self.config.coder_model
+        self.call_count += 1
+        if self.call_count > self.config.max_model_calls:
+            raise OllamaError(f"Model call budget exceeded ({self.config.max_model_calls})")
+
+        if system:
+            messages = [{"role": "system", "content": system}, *messages]
+
+        payload: Dict[str, Any] = {
+            "model": model_name,
+            "messages": messages,
+            "stream": True,
+            "options": {"temperature": temperature},
+        }
+        req = urllib.request.Request(
+            f"{self.config.ollama_host}/api/chat",
+            data=json.dumps(payload).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        try:
+            response = urllib.request.urlopen(req, timeout=timeout)
+        except Exception as exc:
+            raise OllamaError(f"Streaming chat failed: {exc}") from exc
+
+        parts: List[str] = []
+        try:
+            for line in response:
+                text = line.decode("utf-8", errors="replace").strip()
+                if not text:
+                    continue
+                try:
+                    data = json.loads(text)
+                except json.JSONDecodeError:
+                    continue
+                message = data.get("message") or {}
+                chunk = message.get("content") or data.get("response") or ""
+                if chunk:
+                    parts.append(chunk)
+                    self.total_chars_received += len(chunk)
+                    if on_chunk:
+                        on_chunk(chunk)
+                if data.get("done"):
+                    break
+        finally:
+            response.close()
+
+        content = self._strip_thinking("".join(parts))
+        if not content:
+            raise OllamaError("Ollama returned an empty streaming response")
+        return content
 
     def complete(
         self,

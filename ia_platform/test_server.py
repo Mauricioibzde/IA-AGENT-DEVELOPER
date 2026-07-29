@@ -175,3 +175,51 @@ def test_deploy_without_token(platform_url: str, tmp_path: Path, monkeypatch: py
     assert data["ok"] is False
     assert data.get("manual") is True
     assert (project_dir / "vercel.json").is_file()
+
+
+def test_create_react_template(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    req = urllib.request.Request(
+        f"{platform_url}/api/projects",
+        data=json.dumps({"name": "my-react", "template": "react"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["template"] == "react"
+    project_dir = tmp_path / "projects" / "my-react"
+    assert (project_dir / "package.json").is_file()
+    assert (project_dir / "vite.config.js").is_file()
+    assert (project_dir / "src" / "App.jsx").is_file()
+    pkg = json.loads((project_dir / "package.json").read_text(encoding="utf-8"))
+    assert "dev" in pkg.get("scripts", {})
+
+
+def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", tmp_path / "projects")
+    project_dir = tmp_path / "projects" / "stream-demo"
+    project_dir.mkdir(parents=True)
+
+    from local_agent.agent import CodingAgent
+    from local_agent.models import AgentReport, FinalStatus
+
+    def fake_run(self, prompt: str) -> AgentReport:
+        if self.event_sink:
+            self.event_sink({"type": "plan", "summary": "demo plan", "task_count": 1})
+        return AgentReport(status=FinalStatus.SUCCESS, goal=prompt, summary="stream ok")
+
+    monkeypatch.setattr(CodingAgent, "run", fake_run)
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/run/stream",
+        data=json.dumps({"prompt": "teste", "workspace": "projects/stream-demo"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8")
+    assert "text/event-stream" in resp.headers.get("Content-Type", "")
+    assert '"type": "plan"' in body.replace(" ", "") or '"type":"plan"' in body.replace(" ", "")
+    assert "done" in body
+    assert "stream ok" in body

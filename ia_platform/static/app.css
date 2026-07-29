@@ -199,6 +199,22 @@ body {
 
 .msg.error { border-color: var(--err); }
 
+.msg.live {
+  border: 1px dashed var(--accent);
+  min-height: 2.5rem;
+}
+
+.msg.progress {
+  align-self: stretch;
+  max-width: 100%;
+  font-size: 0.76rem;
+  color: var(--muted);
+  background: var(--surface);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 8px 12px;
+}
+
 .chat-input-area {
   padding: 14px 20px;
   border-top: 1px solid var(--border);
