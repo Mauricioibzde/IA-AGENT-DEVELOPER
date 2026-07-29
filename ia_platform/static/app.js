@@ -3951,6 +3951,7 @@
           stage: "Criando plano",
           detail: ev.message || "Lendo o projeto e montando uma sequência segura de tarefas.",
         });
+        setWorkingState(agentEl, "Planejando as mudanças", "Analisando arquivos do projeto…");
         break;
       case "plan":
         updateActivity(activity, {
@@ -3960,6 +3961,11 @@
           planSummary: ev.summary || "Plano criado",
           taskCount: ev.task_count || null,
         });
+        setWorkingState(
+          agentEl,
+          "Plano pronto — começando a editar",
+          `${ev.task_count || "?"} tarefa(s). Veja a aba Ao vivo.`
+        );
         break;
       case "step":
         updateActivity(activity, {
