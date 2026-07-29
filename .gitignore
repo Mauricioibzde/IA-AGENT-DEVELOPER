@@ -4,3 +4,15 @@ __pycache__/
 *.pyd
 *.log
 .vscode/
+.pytest_cache/
+.mypy_cache/
+.ruff_cache/
+*.egg-info/
+dist/
+build/
+.venv/
+venv/
+sandbox/
+app_demo/
+demo_py/
+*.tmp
