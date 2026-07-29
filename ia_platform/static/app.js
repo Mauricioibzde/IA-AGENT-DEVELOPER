@@ -13,6 +13,8 @@
     running: false,
     selectedTemplate: "blank",
     models: [],
+    modelRecommendations: null,
+    pullingModel: false,
     devStatus: null,
     previewMode: "static",
   };
@@ -51,6 +53,15 @@
     modeSelect: $("modeSelect"),
     modelInput: $("modelInput"),
     maxStepsInput: $("maxStepsInput"),
+    btnModels: $("btnModels"),
+    modelsModal: $("modelsModal"),
+    btnCloseModels: $("btnCloseModels"),
+    hardwareGrid: $("hardwareGrid"),
+    primaryModelCard: $("primaryModelCard"),
+    modelsCatalog: $("modelsCatalog"),
+    pullProgress: $("pullProgress"),
+    pullBarFill: $("pullBarFill"),
+    pullStatus: $("pullStatus"),
   };
 
   // ── API helpers ──
@@ -76,12 +87,155 @@
       state.models = d.models || [];
       const ok = d.ollama && d.agent;
       els.healthStatus.innerHTML = `<span class="status-dot ${ok ? "ok" : "err"}"></span>${ok ? "Ollama pronto" : "Ollama offline?"}`;
-      if (!els.modelInput.value && state.models.length) {
-        const coder = state.models.find((m) => /coder|qwen|deepseek/i.test(m));
-        if (coder) els.modelInput.placeholder = coder;
+      if (!els.modelInput.value) {
+        if (d.recommended_model) {
+          els.modelInput.placeholder = d.recommended_model;
+        } else if (state.models.length) {
+          const coder = state.models.find((m) => /coder|qwen|deepseek/i.test(m));
+          if (coder) els.modelInput.placeholder = coder;
+        }
       }
     } catch {
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
+    }
+  }
+
+  // ── Models & hardware ──
+
+  function renderHardware(hw) {
+    if (!hw) {
+      els.hardwareGrid.textContent = "Não foi possível detectar hardware.";
+      return;
+    }
+    const gpu = hw.gpus?.length ? hw.gpus.map((g) => g.name).join(", ") : "Nenhuma detectada";
+    const stats = [
+      ["Tier", hw.tier || "?"],
+      ["RAM", `${hw.ram_available_gb}/${hw.ram_total_gb} GB`],
+      ["VRAM", hw.vram_total_gb ? `${hw.vram_free_gb}/${hw.vram_total_gb} GB` : "—"],
+      ["CPU", `${hw.cpu_cores} núcleos`],
+      ["Memória útil", `${hw.effective_memory_gb} GB`],
+      ["GPU", gpu],
+      ["SO", `${hw.os || ""} ${hw.machine || ""}`.trim()],
+    ];
+    els.hardwareGrid.innerHTML = stats
+      .map(
+        ([label, value]) =>
+          `<div class="hw-stat"><div class="label">${escapeHtml(label)}</div><div class="value">${escapeHtml(String(value))}</div></div>`
+      )
+      .join("");
+  }
+
+  function modelCardHtml(entry, featured) {
+    const tags = (entry.tags || [])
+      .map((t) => `<span class="model-tag">${escapeHtml(t)}</span>`)
+      .join("");
+    const statusTags = [
+      entry.installed ? '<span class="model-tag ok">instalado</span>' : '<span class="model-tag warn">não instalado</span>',
+      entry.fits ? '<span class="model-tag ok">compatível</span>' : '<span class="model-tag warn">pode não caber</span>',
+      entry.recommended ? '<span class="model-tag accent">recomendado</span>' : "",
+    ].join("");
+    return `
+      <h5>${escapeHtml(entry.name)}</h5>
+      <p>${escapeHtml(entry.description || "")}</p>
+      <div class="model-meta">${tags}${statusTags}</div>
+      <p class="model-meta">Ollama: <code>${escapeHtml(entry.ollama_name)}</code> · ~${entry.size_gb} GB · RAM ${entry.ram_gb} GB · VRAM ${entry.vram_gb} GB</p>
+      <div class="model-actions">
+        <button type="button" class="btn btn-primary btn-sm" data-action="use" data-model="${escapeHtml(entry.ollama_name)}">Usar</button>
+        <button type="button" class="btn btn-ghost btn-sm" data-action="pull" data-model="${escapeHtml(entry.ollama_name)}" ${entry.installed ? "disabled" : ""}>Baixar</button>
+      </div>
+    `;
+  }
+
+  function bindModelCardActions(container) {
+    container.querySelectorAll("[data-action]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        const model = btn.dataset.model;
+        if (!model) return;
+        if (btn.dataset.action === "use") {
+          els.modelInput.value = model;
+          closeModelsModal();
+          return;
+        }
+        if (btn.dataset.action === "pull") pullModel(model);
+      });
+    });
+  }
+
+  async function loadModelRecommendations() {
+    const data = await api("/api/models/recommendations");
+    state.modelRecommendations = data;
+    renderHardware(data.hardware);
+    if (data.primary) {
+      els.primaryModelCard.innerHTML = modelCardHtml(data.primary, true);
+      bindModelCardActions(els.primaryModelCard);
+    }
+    els.modelsCatalog.innerHTML = (data.catalog || [])
+      .map((entry) => `<div class="model-card">${modelCardHtml(entry, false)}</div>`)
+      .join("");
+    bindModelCardActions(els.modelsCatalog);
+  }
+
+  function openModelsModal() {
+    els.modelsModal.classList.remove("hidden");
+    els.pullProgress.classList.add("hidden");
+    loadModelRecommendations().catch((e) => {
+      els.hardwareGrid.textContent = "Erro: " + e.message;
+    });
+  }
+
+  function closeModelsModal() {
+    if (state.pullingModel) return;
+    els.modelsModal.classList.add("hidden");
+  }
+
+  async function pullModel(model) {
+    if (state.pullingModel) return;
+    state.pullingModel = true;
+    els.pullProgress.classList.remove("hidden");
+    els.pullBarFill.style.width = "0%";
+    els.pullStatus.textContent = `Iniciando download de ${model}...`;
+
+    try {
+      const res = await fetch("/api/models/pull/stream", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ model }),
+      });
+      if (!res.ok || !res.body) throw new Error("Falha ao iniciar download");
+
+      const reader = res.body.getReader();
+      const decoder = new TextDecoder();
+      let buffer = "";
+
+      while (true) {
+        const { done, value } = await reader.read();
+        if (done) break;
+        buffer += decoder.decode(value, { stream: true });
+        const blocks = buffer.split("\n\n");
+        buffer = blocks.pop() || "";
+        for (const block of blocks) {
+          const line = block.split("\n").find((l) => l.startsWith("data: "));
+          if (!line) continue;
+          const ev = JSON.parse(line.slice(6));
+          if (ev.type === "progress") {
+            if (ev.percent != null) els.pullBarFill.style.width = `${ev.percent}%`;
+            els.pullStatus.textContent = ev.status || `Baixando ${model}...`;
+          }
+          if (ev.type === "done") {
+            els.pullBarFill.style.width = "100%";
+            els.pullStatus.textContent = ev.ok ? `Modelo ${model} pronto!` : `Falha: ${ev.error || "desconhecido"}`;
+          }
+          if (ev.type === "error") {
+            els.pullStatus.textContent = "Erro: " + (ev.error || "download falhou");
+          }
+        }
+      }
+      await checkHealth();
+      await loadModelRecommendations();
+    } catch (e) {
+      els.pullStatus.textContent = "Erro: " + e.message;
+    } finally {
+      state.pullingModel = false;
     }
   }
 
@@ -584,6 +738,11 @@
   });
 
   els.btnDeploy.addEventListener("click", runDeploy);
+  els.btnModels.addEventListener("click", openModelsModal);
+  els.btnCloseModels.addEventListener("click", closeModelsModal);
+  els.modelsModal.addEventListener("click", (e) => {
+    if (e.target === els.modelsModal && !state.pullingModel) closeModelsModal();
+  });
   els.btnCloseDeploy.addEventListener("click", closeDeployModal);
   els.deployModal.addEventListener("click", (e) => {
     if (e.target === els.deployModal) closeDeployModal();

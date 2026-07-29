@@ -16,6 +16,9 @@ from urllib.parse import parse_qs, urlparse
 from ia_platform.conversations import append_message, clear_messages, load_messages
 from ia_platform.deploy import deploy_project
 from ia_platform.dev_server import dev_manager
+from ia_platform.hardware import detect_hardware
+from ia_platform.model_catalog import recommend_models
+from ia_platform.ollama_models import OllamaModelManager
 
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
@@ -320,6 +323,12 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         if path == "/api/health":
             return self._handle_health()
+        if path == "/api/system/hardware":
+            return self._handle_hardware()
+        if path == "/api/models/recommendations":
+            return self._handle_model_recommendations()
+        if path == "/api/models/installed":
+            return self._handle_models_installed()
         if path == "/api/projects":
             return self._handle_list_projects()
         if path.startswith("/preview/"):
@@ -356,6 +365,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_run_stream()
         if path == "/api/projects":
             return self._handle_create_project()
+        if path == "/api/models/pull/stream":
+            return self._handle_model_pull_stream()
         project_id, sub = _parse_project_route(path)
         if project_id and sub == "chat":
             return self._handle_post_chat(project_id)
@@ -367,6 +378,14 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_deploy(project_id)
         self._send_json(404, {"error": "not found"})
 
+    def _ollama_host(self) -> str:
+        from local_agent.config import AgentConfig
+
+        return AgentConfig.from_args(PROJECTS_ROOT, no_memory=True).ollama_host
+
+    def _ollama_manager(self) -> OllamaModelManager:
+        return OllamaModelManager(self._ollama_host())
+
     def _handle_health(self) -> None:
         from local_agent.config import AgentConfig
         from local_agent.ollama_client import OllamaClient
@@ -375,6 +394,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
         client = OllamaClient(cfg)
         ollama_ok = client.check_available()
         models = client.list_models() if ollama_ok else []
+        recommendation = None
+        if ollama_ok:
+            hw = detect_hardware()
+            recommendation = recommend_models(hw, models).get("primary")
         self._send_json(
             200,
             {
@@ -382,9 +405,49 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 "agent": True,
                 "ollama": ollama_ok,
                 "models": models[:20],
+                "recommended_model": recommendation.get("ollama_name") if recommendation else None,
                 "projects_root": str(PROJECTS_ROOT),
             },
         )
+
+    def _handle_hardware(self) -> None:
+        return self._send_json(200, {"hardware": detect_hardware()})
+
+    def _handle_models_installed(self) -> None:
+        mgr = self._ollama_manager()
+        return self._send_json(200, {"models": mgr.list_installed()})
+
+    def _handle_model_recommendations(self) -> None:
+        hw = detect_hardware()
+        installed = self._ollama_manager().list_names()
+        return self._send_json(200, recommend_models(hw, installed))
+
+    def _handle_model_pull_stream(self) -> None:
+        data = self._read_json()
+        model = str(data.get("model") or data.get("name") or "").strip()
+        if not model:
+            return self._send_json(400, {"error": "model is required"})
+
+        self.send_response(200)
+        self.send_header("Content-Type", "text/event-stream; charset=utf-8")
+        self.send_header("Cache-Control", "no-cache")
+        self.send_header("Connection", "close")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+
+        mgr = self._ollama_manager()
+
+        def emit(payload: Dict[str, Any]) -> None:
+            body = json.dumps(payload, ensure_ascii=False).encode("utf-8")
+            self.wfile.write(b"data: " + body + b"\n\n")
+            self.wfile.flush()
+
+        try:
+            emit({"type": "started", "model": model})
+            result = mgr.pull(model, on_event=emit)
+            emit({"type": "done", **result})
+        except Exception as exc:
+            emit({"type": "error", "error": str(exc)})
 
     def _handle_list_projects(self) -> None:
         PROJECTS_ROOT.mkdir(parents=True, exist_ok=True)

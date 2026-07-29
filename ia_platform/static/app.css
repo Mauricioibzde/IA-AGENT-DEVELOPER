@@ -74,6 +74,8 @@ body {
 .btn-primary:hover { background: var(--accent-hover); }
 .btn-primary:disabled { opacity: 0.5; cursor: not-allowed; }
 
+.btn-sidebar { width: 100%; margin-top: 8px; }
+
 .btn-ghost {
   background: transparent;
   color: var(--muted);
@@ -405,6 +407,87 @@ body {
 }
 
 .modal-wide { max-width: 560px; }
+.models-modal { max-width: 760px; }
+
+.models-layout { display: flex; flex-direction: column; gap: 16px; max-height: 70vh; overflow: auto; }
+
+.models-hardware h4,
+.models-primary h4,
+.models-catalog h4 {
+  font-size: 0.82rem;
+  color: var(--muted);
+  margin-bottom: 8px;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.hardware-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(120px, 1fr));
+  gap: 8px;
+}
+
+.hw-stat {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 10px;
+}
+
+.hw-stat .label { font-size: 0.72rem; color: var(--muted); }
+.hw-stat .value { font-size: 0.95rem; font-weight: 600; margin-top: 2px; }
+
+.model-card {
+  background: var(--surface-2);
+  border: 1px solid var(--border);
+  border-radius: 10px;
+  padding: 14px;
+}
+
+.model-card.featured { border-color: var(--accent); box-shadow: 0 0 0 1px rgba(99, 102, 241, 0.35); }
+
+.model-card h5 { font-size: 0.95rem; margin-bottom: 4px; }
+.model-card p { font-size: 0.78rem; color: var(--muted); line-height: 1.4; }
+
+.model-meta {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0 10px;
+}
+
+.model-tag {
+  font-size: 0.68rem;
+  padding: 2px 8px;
+  border-radius: 999px;
+  background: var(--surface);
+  border: 1px solid var(--border);
+  color: var(--muted);
+}
+
+.model-tag.ok { color: var(--ok); border-color: rgba(34, 197, 94, 0.35); }
+.model-tag.warn { color: var(--warn); border-color: rgba(234, 179, 8, 0.35); }
+.model-tag.accent { color: var(--accent-hover); border-color: rgba(99, 102, 241, 0.45); }
+
+.model-actions { display: flex; gap: 8px; flex-wrap: wrap; }
+
+.models-list { display: flex; flex-direction: column; gap: 8px; }
+
+.pull-progress { margin-top: 12px; }
+.pull-bar {
+  height: 8px;
+  background: var(--surface-2);
+  border-radius: 999px;
+  overflow: hidden;
+  border: 1px solid var(--border);
+}
+.pull-bar-fill {
+  height: 100%;
+  width: 0%;
+  background: linear-gradient(90deg, var(--accent), var(--accent-hover));
+  transition: width 0.2s ease;
+}
+#pullStatus { font-size: 0.75rem; color: var(--muted); margin-top: 6px; }
 
 .deploy-link {
   color: var(--accent-hover);

@@ -223,3 +223,43 @@ def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: py
     assert '"type": "plan"' in body.replace(" ", "") or '"type":"plan"' in body.replace(" ", "")
     assert "done" in body
     assert "stream ok" in body
+
+
+def test_hardware_endpoint(platform_url: str) -> None:
+    with urllib.request.urlopen(f"{platform_url}/api/system/hardware", timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["hardware"]["ram_total_gb"] > 0
+    assert data["hardware"]["tier"]
+
+
+def test_model_recommendations_endpoint(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeMgr:
+        def list_names(self):
+            return ["qwen2.5-coder:7b"]
+
+    monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+    with urllib.request.urlopen(f"{platform_url}/api/models/recommendations", timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["primary"]["ollama_name"]
+    assert len(data["catalog"]) >= 5
+    assert any(m.get("installed") for m in data["catalog"])
+
+
+def test_model_pull_stream(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
+    class FakeMgr:
+        def pull(self, model, on_event=None, timeout=3600):
+            if on_event:
+                on_event({"type": "progress", "model": model, "status": "pulling", "percent": 50})
+            return {"ok": True, "model": model}
+
+    monkeypatch.setattr(_mod, "OllamaModelManager", lambda host: FakeMgr())
+    req = urllib.request.Request(
+        f"{platform_url}/api/models/pull/stream",
+        data=json.dumps({"model": "qwen2.5-coder:7b"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=10) as resp:
+        body = resp.read().decode("utf-8")
+    assert "done" in body
+    assert "qwen2.5-coder:7b" in body

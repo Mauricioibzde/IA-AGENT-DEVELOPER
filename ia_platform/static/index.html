@@ -14,6 +14,7 @@
       </div>
       <div class="sidebar-actions">
         <button type="button" class="btn btn-primary" id="btnNewProject">+ Novo projeto</button>
+        <button type="button" class="btn btn-ghost btn-sidebar" id="btnModels">Modelos IA</button>
       </div>
       <div class="project-list" id="projectList"></div>
       <div class="sidebar-footer">
@@ -105,6 +106,33 @@
           </aside>
         </div>
       </section>
+    </div>
+  </div>
+
+  <div class="modal-overlay hidden" id="modelsModal">
+    <div class="modal modal-wide models-modal">
+      <h3>Modelos IA — Ollama</h3>
+      <div class="models-layout">
+        <section class="models-hardware" id="hardwarePanel">
+          <h4>Seu hardware</h4>
+          <div class="hardware-grid" id="hardwareGrid">Carregando...</div>
+        </section>
+        <section class="models-primary" id="primaryRecommendation">
+          <h4>Recomendado para você</h4>
+          <div id="primaryModelCard" class="model-card featured">Analisando...</div>
+        </section>
+        <section class="models-catalog">
+          <h4>Catálogo</h4>
+          <div id="modelsCatalog" class="models-list"></div>
+        </section>
+      </div>
+      <div class="pull-progress hidden" id="pullProgress">
+        <div class="pull-bar"><div class="pull-bar-fill" id="pullBarFill"></div></div>
+        <p id="pullStatus">Baixando...</p>
+      </div>
+      <div class="modal-actions">
+        <button type="button" class="btn btn-ghost" id="btnCloseModels">Fechar</button>
+      </div>
     </div>
   </div>
 
