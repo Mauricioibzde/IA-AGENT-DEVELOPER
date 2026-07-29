@@ -19,6 +19,7 @@ from ia_platform.dev_server import dev_manager
 from ia_platform.hardware import detect_hardware
 from ia_platform.model_catalog import recommend_models, resolve_model_for_run
 from ia_platform.ollama_models import OllamaModelManager
+from ia_platform.run_manager import run_manager
 
 ROOT = Path(__file__).resolve().parent
 REPO_ROOT = ROOT.parent
@@ -363,6 +364,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_run()
         if path == "/api/run/stream":
             return self._handle_run_stream()
+        if path == "/api/run/cancel":
+            return self._handle_run_cancel()
         if path == "/api/projects":
             return self._handle_create_project()
         if path == "/api/models/pull/stream":
@@ -670,6 +673,14 @@ class PlatformHandler(BaseHTTPRequestHandler):
         self.wfile.write(b"data: " + body + b"\n\n")
         self.wfile.flush()
 
+    def _handle_run_cancel(self) -> None:
+        data = self._read_json()
+        run_id = str(data.get("run_id") or "").strip()
+        if not run_id:
+            return self._send_json(400, {"error": "run_id is required"})
+        cancelled = run_manager.cancel(run_id)
+        return self._send_json(200, {"ok": True, "cancelled": cancelled, "run_id": run_id})
+
     def _handle_run_stream(self) -> None:
         data = self._read_json()
         prompt = str(data.get("prompt", "")).strip()
@@ -694,16 +705,21 @@ class PlatformHandler(BaseHTTPRequestHandler):
         self.send_header("Access-Control-Allow-Origin", "*")
         self.end_headers()
 
+        run_id = run_manager.create()
         try:
             from local_agent.agent import CodingAgent
 
             config = self._build_agent_config(data, workspace, model)
+            config.run_id = run_id
+            config.cancel_check = lambda: run_manager.is_cancelled(run_id)
             agent = CodingAgent(config, event_sink=self._send_sse)
             report = agent.run(prompt, conversation_context=conversation)
             result = self._finalize_run(workspace, project_id, report)
             self._send_sse({"type": "done", **result})
         except Exception as exc:
             self._send_sse({"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]})
+        finally:
+            run_manager.clear(run_id)
 
     def _handle_run(self) -> None:
         data = self._read_json()

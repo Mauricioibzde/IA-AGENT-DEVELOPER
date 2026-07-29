@@ -234,6 +234,35 @@ def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: py
     assert "stream ok" in body
 
 
+def test_run_cancel_endpoint(platform_url: str) -> None:
+    from ia_platform.run_manager import run_manager
+
+    run_id = run_manager.create()
+    try:
+        req = urllib.request.Request(
+            f"{platform_url}/api/run/cancel",
+            data=json.dumps({"run_id": run_id}).encode(),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
+        with urllib.request.urlopen(req, timeout=5) as resp:
+            data = json.loads(resp.read().decode())
+        assert data["cancelled"] is True
+        assert run_manager.is_cancelled(run_id)
+    finally:
+        run_manager.clear(run_id)
+
+    req = urllib.request.Request(
+        f"{platform_url}/api/run/cancel",
+        data=json.dumps({"run_id": "missing-run"}).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=5) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["cancelled"] is False
+
+
 def test_hardware_endpoint(platform_url: str) -> None:
     with urllib.request.urlopen(f"{platform_url}/api/system/hardware", timeout=5) as resp:
         data = json.loads(resp.read().decode())

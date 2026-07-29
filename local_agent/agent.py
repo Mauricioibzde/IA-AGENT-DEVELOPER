@@ -51,10 +51,32 @@ class CodingAgent:
         except Exception:  # noqa: BLE001
             pass
 
+    def _is_cancelled(self) -> bool:
+        return bool(self.config.cancel_check and self.config.cancel_check())
+
+    def _cancelled_report(self, goal: str, plan: Optional[Plan] = None) -> AgentReport:
+        self.logger.info("agent_cancelled", message="Run cancelled by user")
+        self._event("cancelled")
+        summary = "Execução cancelada pelo usuário."
+        if plan:
+            summary += f"\n\nTarefas concluídas: {len(self.completed_tasks)}"
+        return AgentReport(
+            status=FinalStatus.CANCELLED,
+            goal=goal,
+            summary=summary,
+            completed_tasks=self.completed_tasks,
+            analyzed_files=self.analyzed_files[:30],
+            created_files=self.executor.created_files,
+            modified_files=self.executor.modified_files,
+        )
+
     def run(self, goal: str, conversation_context: str = "") -> AgentReport:
         self.config.workspace.mkdir(parents=True, exist_ok=True)
         self.logger.info("agent_start", message=f"Goal: {goal}")
-        self._event("started", goal=goal)
+        self._event("started", goal=goal, run_id=self.config.run_id)
+
+        if self._is_cancelled():
+            return self._cancelled_report(goal)
 
         # Index project.
         self.index.build()
@@ -77,6 +99,8 @@ class CodingAgent:
 
         # Create plan.
         self._event("planning", message="Analisando projeto e criando plano...")
+        if self._is_cancelled():
+            return self._cancelled_report(goal)
         plan = self.planner.create_plan(goal, self.index.summary(), index=self.index)
         for task in plan.tasks:
             task.max_attempts = self.config.max_task_attempts
@@ -112,6 +136,9 @@ class CodingAgent:
         pending_no_progress = False
 
         while steps < self.config.max_steps:
+            if self._is_cancelled():
+                return self._cancelled_report(goal, plan)
+
             task = self._next_task(plan)
             if task is None:
                 break
@@ -171,6 +198,7 @@ class CodingAgent:
                         model=self.config.coder_model,
                         system=sys_msg,
                         on_chunk=_on_chunk,
+                        cancel_check=self.config.cancel_check,
                     )
                 else:
                     model_text = self.client.complete(
@@ -178,7 +206,11 @@ class CodingAgent:
                         model=self.config.coder_model,
                         system=sys_msg,
                     )
+                if self._is_cancelled():
+                    return self._cancelled_report(goal, plan)
             except Exception as exc:  # noqa: BLE001
+                if self._is_cancelled() or "cancelled" in str(exc).lower():
+                    return self._cancelled_report(goal, plan)
                 self.errors.append(f"LLM error: {exc}")
                 self._event("error", message=str(exc))
                 task.status = TaskStatus.FAILED

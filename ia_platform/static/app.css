@@ -151,6 +151,14 @@ body {
   font-size: 0.8rem;
 }
 
+#modelSelect { min-width: 10rem; max-width: 14rem; }
+#modelCustomInput { min-width: 8rem; max-width: 12rem; }
+
+.chat-input-area .btn-cancel-run {
+  color: var(--danger, #f87171);
+  border-color: color-mix(in srgb, var(--danger, #f87171) 35%, transparent);
+}
+
 .workspace-body {
   flex: 1;
   display: grid;

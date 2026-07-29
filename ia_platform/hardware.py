@@ -7,7 +7,12 @@ import platform
 import re
 import shutil
 import subprocess
+from pathlib import Path
 from typing import Any, Dict, List, Optional
+
+VENDOR_AMD = "0x1002"
+VENDOR_INTEL = "0x8086"
+VENDOR_NVIDIA = "0x10de"
 
 
 def _bytes_to_gb(value: int) -> float:
@@ -118,6 +123,143 @@ def _detect_nvidia_gpus() -> List[Dict[str, Any]]:
     return gpus
 
 
+def _read_sysfs_text(path: Path) -> Optional[str]:
+    try:
+        return path.read_text(encoding="utf-8").strip()
+    except OSError:
+        return None
+
+
+def _read_sysfs_int(path: Path) -> Optional[int]:
+    raw = _read_sysfs_text(path)
+    if not raw:
+        return None
+    try:
+        if raw.lower().startswith("0x"):
+            return int(raw, 16)
+        return int(raw)
+    except ValueError:
+        return None
+
+
+def _gpu_name_from_sysfs(device_dir: Path) -> str:
+    for name_path in (device_dir / "product", device_dir / "name"):
+        name = _read_sysfs_text(name_path)
+        if name:
+            return name
+    uevent = _read_sysfs_text(device_dir / "uevent") or ""
+    for line in uevent.splitlines():
+        if line.startswith("PCI_ID="):
+            return line.split("=", 1)[1].strip()
+    vendor = _read_sysfs_text(device_dir / "vendor") or ""
+    device = _read_sysfs_text(device_dir / "device") or ""
+    return f"GPU {vendor}/{device}".strip()
+
+
+def _detect_linux_drm_gpus() -> List[Dict[str, Any]]:
+    if platform.system() != "Linux":
+        return []
+
+    drm_root = Path("/sys/class/drm")
+    if not drm_root.is_dir():
+        return []
+
+    gpus: List[Dict[str, Any]] = []
+    seen_devices: set[str] = set()
+
+    for card in sorted(drm_root.iterdir()):
+        if not card.name.startswith("card") or not card.name[4:].isdigit():
+            continue
+        device_dir = card / "device"
+        if not device_dir.is_dir():
+            continue
+
+        device_key = str(device_dir.resolve())
+        if device_key in seen_devices:
+            continue
+        seen_devices.add(device_key)
+
+        vendor_id = (_read_sysfs_text(device_dir / "vendor") or "").lower()
+        if vendor_id not in {VENDOR_AMD, VENDOR_INTEL}:
+            continue
+
+        vendor = "amd" if vendor_id == VENDOR_AMD else "intel"
+        vram_bytes = _read_sysfs_int(device_dir / "mem_info_vram_total")
+        if vram_bytes is None:
+            vram_bytes = _read_sysfs_int(device_dir / "mem_info_vram_used")
+        vram_total_gb = round(vram_bytes / (1024**3), 1) if vram_bytes else 0.0
+
+        gpus.append(
+            {
+                "vendor": vendor,
+                "name": _gpu_name_from_sysfs(device_dir),
+                "vram_total_gb": vram_total_gb,
+                "vram_free_gb": vram_total_gb,
+                "driver": _read_sysfs_text(device_dir / "driver") or "",
+                "shared_memory": vram_total_gb <= 0,
+            }
+        )
+    return gpus
+
+
+def _detect_rocm_gpus() -> List[Dict[str, Any]]:
+    if not shutil.which("rocm-smi"):
+        return []
+    try:
+        output = subprocess.check_output(
+            ["rocm-smi", "--showproductname", "--showmeminfo", "vram", "--csv"],
+            text=True,
+            timeout=8,
+            stderr=subprocess.DEVNULL,
+        )
+    except (subprocess.SubprocessError, OSError):
+        return []
+
+    lines = [line.strip() for line in output.splitlines() if line.strip() and not line.startswith("=")]
+    if len(lines) < 2:
+        return []
+
+    headers = [h.strip().lower() for h in lines[0].split(",")]
+    gpus: List[Dict[str, Any]] = []
+    for row in lines[1:]:
+        cols = [c.strip() for c in row.split(",")]
+        if len(cols) != len(headers):
+            continue
+        data = dict(zip(headers, cols))
+        name = data.get("card series") or data.get("card model") or data.get("card") or "AMD GPU"
+        total_raw = data.get("vram total memory (b)") or data.get("total memory (b)") or ""
+        free_raw = data.get("vram free memory (b)") or data.get("free memory (b)") or ""
+        try:
+            total_gb = round(int(total_raw) / (1024**3), 1) if total_raw else 0.0
+            free_gb = round(int(free_raw) / (1024**3), 1) if free_raw else total_gb
+        except ValueError:
+            total_gb = 0.0
+            free_gb = 0.0
+        gpus.append(
+            {
+                "vendor": "amd",
+                "name": name,
+                "vram_total_gb": total_gb,
+                "vram_free_gb": free_gb,
+                "driver": "rocm",
+            }
+        )
+    return gpus
+
+
+def _merge_gpu_lists(*sources: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+    merged: List[Dict[str, Any]] = []
+    seen: set[tuple[str, str]] = set()
+    for source in sources:
+        for gpu in source:
+            key = (gpu.get("vendor", ""), gpu.get("name", ""))
+            if key in seen:
+                continue
+            seen.add(key)
+            merged.append(gpu)
+    return merged
+
+
 def _detect_apple_gpu() -> Optional[Dict[str, Any]]:
     if platform.system() != "Darwin":
         return None
@@ -150,7 +292,7 @@ def detect_hardware() -> Dict[str, Any]:
     """Return a JSON-serializable hardware profile."""
     ram_total_gb, ram_available_gb = _detect_memory()
     cpu_cores = os.cpu_count() or 4
-    gpus = _detect_nvidia_gpus()
+    gpus = _merge_gpu_lists(_detect_nvidia_gpus(), _detect_linux_drm_gpus(), _detect_rocm_gpus())
     apple_gpu = _detect_apple_gpu()
     if apple_gpu:
         gpus.append(apple_gpu)
@@ -168,6 +310,17 @@ def detect_hardware() -> Dict[str, Any]:
                 gpu["vram_total_gb"] = vram_total
                 gpu["vram_free_gb"] = vram_free
                 gpu["unified_memory"] = True
+
+    # Integrated AMD/Intel GPUs often report zero dedicated VRAM — use shared RAM estimate.
+    if gpus and vram_total <= 0 and not apple_silicon:
+        shared_estimate = round(ram_available_gb * 0.5, 1)
+        vram_total = shared_estimate
+        vram_free = shared_estimate
+        for gpu in gpus:
+            if gpu.get("shared_memory") or gpu.get("vendor") in {"amd", "intel"}:
+                gpu["vram_total_gb"] = shared_estimate
+                gpu["vram_free_gb"] = shared_estimate
+                gpu["shared_memory"] = True
 
     has_gpu = bool(gpus) and (vram_total > 0 or apple_silicon)
     tier = _compute_tier(ram_available_gb, vram_total, cpu_cores)

@@ -38,3 +38,112 @@ def test_apple_silicon_unified_memory(monkeypatch) -> None:
     assert profile["has_gpu"] is True
     assert profile["vram_total_gb"] > 0
 
+
+def test_detect_linux_amd_gpu(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.platform, "system", lambda: "Linux")
+
+    class FakeFile:
+        def __init__(self, content):
+            self._content = content
+
+        def read_text(self, encoding="utf-8"):
+            if self._content is None:
+                raise OSError("missing")
+            return self._content
+
+    class FakeDevice:
+        def is_dir(self):
+            return True
+
+        def resolve(self):
+            return self
+
+        def __truediv__(self, key):
+            files = {
+                "vendor": "0x1002\n",
+                "product": "AMD Radeon RX 6800\n",
+                "mem_info_vram_total": "17179869184\n",
+            }
+            return FakeFile(files.get(key))
+
+    class FakeCard:
+        name = "card0"
+
+        def __truediv__(self, key):
+            if key == "device":
+                return FakeDevice()
+            raise KeyError(key)
+
+        @property
+        def device(self):
+            return FakeDevice()
+
+    class FakeDrmRoot:
+        def is_dir(self):
+            return True
+
+        def iterdir(self):
+            return [FakeCard()]
+
+    monkeypatch.setattr(hwmod, "Path", lambda p: FakeDrmRoot() if p == "/sys/class/drm" else hwmod.Path(p))
+    gpus = hwmod._detect_linux_drm_gpus()
+    assert len(gpus) == 1
+    assert gpus[0]["vendor"] == "amd"
+    assert gpus[0]["vram_total_gb"] == 16.0
+
+
+def test_detect_linux_intel_gpu(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.platform, "system", lambda: "Linux")
+
+    class FakeFile:
+        def __init__(self, content):
+            self._content = content
+
+        def read_text(self, encoding="utf-8"):
+            if self._content is None:
+                raise OSError("missing")
+            return self._content
+
+    class FakeDevice:
+        def is_dir(self):
+            return True
+
+        def resolve(self):
+            return self
+
+        def __truediv__(self, key):
+            files = {
+                "vendor": "0x8086\n",
+                "product": "Intel UHD Graphics 630\n",
+            }
+            return FakeFile(files.get(key))
+
+    class FakeCard:
+        name = "card0"
+
+        def __truediv__(self, key):
+            if key == "device":
+                return FakeDevice()
+            raise KeyError(key)
+
+        @property
+        def device(self):
+            return FakeDevice()
+
+    class FakeDrmRoot:
+        def is_dir(self):
+            return True
+
+        def iterdir(self):
+            return [FakeCard()]
+
+    monkeypatch.setattr(hwmod, "Path", lambda p: FakeDrmRoot() if p == "/sys/class/drm" else hwmod.Path(p))
+    gpus = hwmod._detect_linux_drm_gpus()
+    assert len(gpus) == 1
+    assert gpus[0]["vendor"] == "intel"
+    assert gpus[0]["shared_memory"] is True
+

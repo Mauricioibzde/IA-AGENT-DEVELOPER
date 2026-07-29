@@ -6,7 +6,7 @@ import json
 import os
 from dataclasses import dataclass, field
 from pathlib import Path
-from typing import Any, Dict, Optional
+from typing import Any, Callable, Dict, Optional
 
 
 def _env(name: str, default: str) -> str:
@@ -51,6 +51,8 @@ class AgentConfig:
     use_git: bool = True
     auto_approve_low_risk: bool = True
     log_level: str = "normal"
+    run_id: Optional[str] = None
+    cancel_check: Optional[Callable[[], bool]] = None
 
     @classmethod
     def from_args(

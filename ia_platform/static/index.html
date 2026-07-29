@@ -62,8 +62,13 @@
               <option value="plan">Só plano</option>
               <option value="dry">Dry-run</option>
             </select>
-            <input id="modelInput" type="text" placeholder="Modelo (opcional)" list="modelOptions" />
-            <datalist id="modelOptions"></datalist>
+            <select id="modelSelect" title="Modelo IA">
+              <option value="__auto__">Auto (recomendado)</option>
+              <optgroup label="Instalados" id="modelGroupInstalled"></optgroup>
+              <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
+              <option value="__custom__">Outro...</option>
+            </select>
+            <input id="modelCustomInput" type="text" class="hidden" placeholder="Nome do modelo Ollama" />
             <input id="maxStepsInput" type="number" value="12" min="1" max="50" title="Max steps" style="width:4.5rem" />
             <button type="button" class="btn btn-ghost" id="btnRefreshFiles">Atualizar</button>
             <button type="button" class="btn btn-ghost" id="btnDeploy" title="Deploy Vercel">Deploy</button>
@@ -75,6 +80,7 @@
             <div class="chat-messages" id="chatMessages"></div>
             <div class="chat-input-area">
               <textarea id="promptInput" rows="2" placeholder="Descreva o que quer criar ou alterar no app..."></textarea>
+              <button type="button" class="btn btn-ghost hidden" id="btnCancel">Cancelar</button>
               <button type="button" class="btn btn-primary" id="btnSend">Enviar</button>
             </div>
           </div>

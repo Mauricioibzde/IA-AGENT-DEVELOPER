@@ -64,6 +64,7 @@ class OllamaClient:
         *,
         system: Optional[str] = None,
         on_chunk: Optional[Callable[[str], None]] = None,
+        cancel_check: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Stream chat response chunks; returns full stripped content."""
         model_name = model or self.config.coder_model
@@ -94,6 +95,8 @@ class OllamaClient:
         parts: List[str] = []
         try:
             for line in response:
+                if cancel_check and cancel_check():
+                    break
                 text = line.decode("utf-8", errors="replace").strip()
                 if not text:
                     continue
@@ -114,6 +117,8 @@ class OllamaClient:
             response.close()
 
         content = self._strip_thinking("".join(parts))
+        if cancel_check and cancel_check():
+            raise OllamaError("cancelled")
         if not content:
             raise OllamaError("Ollama returned an empty streaming response")
         return content

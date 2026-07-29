@@ -11,6 +11,8 @@
     selectedFile: null,
     lastReport: "",
     running: false,
+    runId: null,
+    abortController: null,
     selectedTemplate: "blank",
     models: [],
     modelRecommendations: null,
@@ -30,6 +32,7 @@
     chatMessages: $("chatMessages"),
     promptInput: $("promptInput"),
     btnSend: $("btnSend"),
+    btnCancel: $("btnCancel"),
     btnNewProject: $("btnNewProject"),
     btnRefreshFiles: $("btnRefreshFiles"),
     btnDeploy: $("btnDeploy"),
@@ -52,7 +55,10 @@
     btnCancelProject: $("btnCancelProject"),
     templateGrid: $("templateGrid"),
     modeSelect: $("modeSelect"),
-    modelInput: $("modelInput"),
+    modelSelect: $("modelSelect"),
+    modelCustomInput: $("modelCustomInput"),
+    modelGroupInstalled: $("modelGroupInstalled"),
+    modelGroupRecommended: $("modelGroupRecommended"),
     maxStepsInput: $("maxStepsInput"),
     btnModels: $("btnModels"),
     modelsModal: $("modelsModal"),
@@ -63,9 +69,66 @@
     pullProgress: $("pullProgress"),
     pullBarFill: $("pullBarFill"),
     pullStatus: $("pullStatus"),
-    modelOptions: $("modelOptions"),
     modelHint: $("modelHint"),
   };
+
+  function getSelectedModel() {
+    const value = els.modelSelect?.value || "__auto__";
+    if (value === "__auto__") return null;
+    if (value === "__custom__") {
+      const custom = els.modelCustomInput?.value.trim();
+      return custom || null;
+    }
+    return value;
+  }
+
+  function setModelSelection(model) {
+    if (!els.modelSelect) return;
+    const options = Array.from(els.modelSelect.options).map((o) => o.value);
+    if (!model) {
+      els.modelSelect.value = "__auto__";
+      els.modelCustomInput?.classList.add("hidden");
+      return;
+    }
+    if (options.includes(model)) {
+      els.modelSelect.value = model;
+      els.modelCustomInput?.classList.add("hidden");
+      return;
+    }
+    els.modelSelect.value = "__custom__";
+    if (els.modelCustomInput) {
+      els.modelCustomInput.value = model;
+      els.modelCustomInput.classList.remove("hidden");
+    }
+  }
+
+  function populateModelSelect(installed, catalog, recommended) {
+    if (!els.modelSelect) return;
+
+    const installedSet = new Set(installed || []);
+    const recommendedNames = new Set();
+    (catalog || []).forEach((entry) => {
+      if (entry.recommended || entry.ollama_name === recommended) {
+        recommendedNames.add(entry.ollama_name);
+      }
+    });
+
+    if (els.modelGroupInstalled) {
+      els.modelGroupInstalled.innerHTML = (installed || [])
+        .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+        .join("");
+    }
+
+    if (els.modelGroupRecommended) {
+      const recList = (catalog || [])
+        .filter((entry) => recommendedNames.has(entry.ollama_name) && !installedSet.has(entry.ollama_name))
+        .map((entry) => entry.ollama_name);
+      const unique = [...new Set(recList)];
+      els.modelGroupRecommended.innerHTML = unique
+        .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(name)}</option>`)
+        .join("");
+    }
+  }
 
   // ── API helpers ──
 
@@ -85,22 +148,23 @@
   }
 
   function updateModelOptions(models) {
-    if (!els.modelOptions) return;
-    els.modelOptions.innerHTML = (models || [])
-      .map((m) => `<option value="${escapeHtml(m)}"></option>`)
-      .join("");
+    populateModelSelect(models, state.modelRecommendations?.catalog || [], state.recommendedModel);
   }
 
   function applyRecommendedModel(recommended, installed) {
     state.recommendedModel = recommended || null;
+    populateModelSelect(installed || state.models || [], state.modelRecommendations?.catalog || [], recommended);
+
     const list = installed || state.models || [];
     const isInstalled = recommended && list.some((m) => m === recommended || m.startsWith(String(recommended).split(":")[0] + ":"));
+    const current = getSelectedModel();
+    const isAuto = !els.modelSelect || els.modelSelect.value === "__auto__";
 
-    if (!els.modelInput.value && recommended && isInstalled) {
-      els.modelInput.value = recommended;
-    } else if (!els.modelInput.value && list.length) {
+    if (isAuto && recommended && isInstalled) {
+      setModelSelection(recommended);
+    } else if (isAuto && list.length) {
       const coder = list.find((m) => /coder|qwen|deepseek/i.test(m));
-      if (coder) els.modelInput.value = coder;
+      if (coder) setModelSelection(coder);
     }
 
     if (els.modelHint) {
@@ -125,7 +189,7 @@
       updateModelOptions(state.models);
       applyRecommendedModel(d.recommended_model, state.models);
       const ok = d.ollama && d.agent;
-      const modelLabel = els.modelInput.value ? ` · ${els.modelInput.value}` : "";
+      const modelLabel = getSelectedModel() ? ` · ${getSelectedModel()}` : " · auto";
       els.healthStatus.innerHTML = `<span class="status-dot ${ok ? "ok" : "err"}"></span>${ok ? "Ollama pronto" : "Ollama offline?"}${modelLabel}`;
     } catch {
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
@@ -184,7 +248,7 @@
         const model = btn.dataset.model;
         if (!model) return;
         if (btn.dataset.action === "use") {
-          els.modelInput.value = model;
+          setModelSelection(model);
           closeModelsModal();
           return;
         }
@@ -196,6 +260,13 @@
   async function loadModelRecommendations() {
     const data = await api("/api/models/recommendations");
     state.modelRecommendations = data;
+    state.models = (data.catalog || []).filter((e) => e.installed).map((e) => e.ollama_name);
+    populateModelSelect(
+      data.catalog?.filter((e) => e.installed).map((e) => e.ollama_name) || state.models,
+      data.catalog || [],
+      data.primary?.ollama_name
+    );
+    applyRecommendedModel(data.primary?.ollama_name, state.models);
     renderHardware(data.hardware);
     if (data.primary) {
       els.primaryModelCard.innerHTML = modelCardHtml(data.primary, true);
@@ -391,6 +462,20 @@
     if (el && el.parentNode) el.parentNode.removeChild(el);
   }
 
+  async function cancelRun() {
+    if (!state.running) return;
+    if (state.runId) {
+      fetch("/api/run/cancel", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ run_id: state.runId }),
+      }).catch(() => {});
+    }
+    if (state.abortController) {
+      state.abortController.abort();
+    }
+  }
+
   async function sendPrompt() {
     const prompt = els.promptInput.value.trim();
     if (!prompt || state.running || !state.current) return;
@@ -398,7 +483,10 @@
     addMessage(prompt, "user");
     els.promptInput.value = "";
     state.running = true;
+    state.runId = null;
+    state.abortController = new AbortController();
     els.btnSend.disabled = true;
+    els.btnCancel?.classList.remove("hidden");
 
     const mode = els.modeSelect.value;
     const progressEl = addMessage("Iniciando agente...", "progress");
@@ -410,10 +498,11 @@
       const res = await fetch("/api/run/stream", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
+        signal: state.abortController.signal,
         body: JSON.stringify({
           prompt,
           workspace: state.current.path,
-          model: els.modelInput.value.trim() || null,
+          model: getSelectedModel(),
           max_steps: parseInt(els.maxStepsInput.value || "12", 10),
           plan_only: mode === "plan",
           dry_run: mode === "dry",
@@ -458,7 +547,11 @@
         agentEl.textContent = summary;
         state.lastReport = summary;
         els.reportViewer.textContent = summary;
-        if (donePayload.created_files?.length || donePayload.modified_files?.length) {
+        if (donePayload.status === "CANCELLED") {
+          agentEl.classList.add("error");
+          addMessage("Execução cancelada.", "system");
+          await persistMessage("system", "Execução cancelada.").catch(() => {});
+        } else if (donePayload.created_files?.length || donePayload.modified_files?.length) {
           const changed = [...(donePayload.created_files || []), ...(donePayload.modified_files || [])];
           const note = `Arquivos alterados: ${changed.join(", ")}`;
           addMessage(note, "system");
@@ -475,18 +568,27 @@
     } catch (e) {
       removeMessage(progressEl);
       agentEl.classList.remove("live");
-      const err = "Erro: " + e.message;
-      agentEl.textContent = err;
-      agentEl.classList.add("error");
-      if (e.data?.missing_model) {
-        addMessage(`Modelo ausente: ${e.data.model}. Abra Modelos IA para baixar.`, "system");
-        openModelsModal();
-        if (e.data.model) pullModel(e.data.model);
+      if (e.name === "AbortError") {
+        agentEl.textContent = "Execução cancelada.";
+        agentEl.classList.add("error");
+        await persistMessage("agent", "Execução cancelada.").catch(() => {});
+      } else {
+        const err = "Erro: " + e.message;
+        agentEl.textContent = err;
+        agentEl.classList.add("error");
+        if (e.data?.missing_model) {
+          addMessage(`Modelo ausente: ${e.data.model}. Abra Modelos IA para baixar.`, "system");
+          openModelsModal();
+          if (e.data.model) pullModel(e.data.model);
+        }
+        await persistMessage("agent", err).catch(() => {});
       }
-      await persistMessage("agent", err).catch(() => {});
     } finally {
       state.running = false;
+      state.runId = null;
+      state.abortController = null;
       els.btnSend.disabled = false;
+      els.btnCancel?.classList.add("hidden");
       els.promptInput.focus();
     }
   }
@@ -494,7 +596,11 @@
   function handleStreamEvent(ev, progressEl, agentEl) {
     switch (ev.type) {
       case "started":
+        if (ev.run_id) state.runId = ev.run_id;
         progressEl.textContent = "Agente iniciado...";
+        break;
+      case "cancelled":
+        progressEl.textContent = "Cancelando...";
         break;
       case "plan":
         progressEl.textContent = `Plano: ${ev.summary || "criado"} (${ev.task_count || "?"} tarefas)`;
@@ -759,6 +865,12 @@
   // ── Events ──
 
   els.btnSend.addEventListener("click", sendPrompt);
+  els.btnCancel?.addEventListener("click", cancelRun);
+  els.modelSelect?.addEventListener("change", () => {
+    const custom = els.modelSelect.value === "__custom__";
+    els.modelCustomInput?.classList.toggle("hidden", !custom);
+    if (custom) els.modelCustomInput?.focus();
+  });
   els.promptInput.addEventListener("keydown", (e) => {
     if (e.key === "Enter" && !e.shiftKey) {
       e.preventDefault();

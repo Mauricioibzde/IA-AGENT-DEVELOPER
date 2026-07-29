@@ -39,6 +39,7 @@ class FinalStatus(str, Enum):
     FAILED = "FAILED"
     BLOCKED = "BLOCKED"
     DRY_RUN_COMPLETED = "DRY_RUN_COMPLETED"
+    CANCELLED = "CANCELLED"
 
 
 class ToolCallDict(TypedDict, total=False):
