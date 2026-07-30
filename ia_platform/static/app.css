@@ -2173,34 +2173,37 @@ body.surface-chat #workRail { display: none !important; }
 .topbar-more-btn {
   list-style: none;
   cursor: pointer;
-  font-size: 0.78rem;
-  font-weight: 600;
+  font-size: 0.74rem;
+  font-weight: 620;
   color: var(--muted);
-  padding: 0.35rem 0.55rem;
-  border-radius: 8px;
+  padding: 0.38rem 0.62rem;
+  border-radius: 9px;
   border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--surface) 86%, #ffffff 14%);
+  transition: background 0.14s ease, border-color 0.14s ease, color 0.14s ease;
   user-select: none;
 }
 .topbar-more-btn::-webkit-details-marker { display: none; }
 .topbar-more-btn::marker { content: ""; }
 .topbar-more[open] .topbar-more-btn {
   color: var(--text);
-  background: rgba(255,255,255,0.05);
+  border-color: var(--border-soft);
+  background: color-mix(in srgb, var(--surface-2) 80%, #ffffff 20%);
 }
 .topbar-more-panel {
   position: absolute;
   right: 0;
   top: calc(100% + 6px);
   z-index: 40;
-  min-width: 220px;
-  padding: 0.7rem;
-  border-radius: 10px;
+  min-width: 232px;
+  padding: 0.65rem;
+  border-radius: 11px;
   border: 1px solid var(--border);
   background: var(--panel, #141820);
-  box-shadow: var(--shadow-soft);
+  box-shadow: var(--shadow-glow);
   display: flex;
   flex-direction: column;
-  gap: 0.35rem;
+  gap: 0.3rem;
 }
 .topbar-more-label {
   font-size: 0.68rem;
@@ -4620,35 +4623,74 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
   }
 
   .topbar {
-    min-height: 50px;
-    padding: 8px 12px;
+    min-height: 52px;
+    padding: 9px 12px;
+    gap: 10px;
+  }
+  .topbar-left {
+    gap: 10px;
+  }
+  .project-heading {
+    gap: 8px;
   }
   .topbar h2 {
-    font-size: 0.96rem;
-    font-weight: 590;
-    letter-spacing: -0.025em;
+    font-size: 0.94rem;
+    font-weight: 600;
+    letter-spacing: -0.02em;
   }
   .project-badge {
-    font-size: 0.62rem;
-    padding: 3px 8px;
+    font-size: 0.61rem;
+    font-weight: 620;
+    padding: 3px 7px;
+    gap: 4px;
+  }
+  .project-badge::before {
+    width: 5px;
+    height: 5px;
   }
   .topbar-controls {
-    gap: 6px;
+    gap: 5px;
+    flex-wrap: wrap;
+  }
+  #btnRefreshFiles {
+    min-width: 30px;
+    font-size: 0.86rem;
+    padding: 0 9px;
   }
   .active-model-badge,
   .topbar-more-btn,
   .btn-ghost.btn-icon-text {
     height: 30px;
-    padding: 0 10px;
+    padding: 0 9px;
     border-radius: 8px;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
+    letter-spacing: 0.01em;
+  }
+  .active-model-badge {
+    max-width: 192px;
+    border-color: var(--border-soft);
+    background: color-mix(in srgb, var(--surface-2) 82%, #ffffff 18%);
   }
   .btn-primary.btn-gradient,
   .btn-deploy {
     height: 30px;
-    padding: 0 12px;
+    padding: 0 11px;
     border-radius: 8px;
-    font-size: 0.72rem;
+    font-size: 0.7rem;
+    font-weight: 620;
+  }
+  .topbar-more-btn:hover,
+  .btn-ghost.btn-icon-text:hover,
+  #btnRefreshFiles:hover {
+    border-color: var(--border-soft);
+    color: var(--text);
+    background: color-mix(in srgb, var(--surface-2) 82%, #ffffff 18%);
+  }
+  .topbar-more-btn:focus-visible,
+  .btn-ghost.btn-icon-text:focus-visible,
+  .btn-deploy:focus-visible {
+    outline: 2px solid color-mix(in srgb, var(--accent-2) 55%, #ffffff 45%);
+    outline-offset: 1px;
   }
 
   .work-rail {
