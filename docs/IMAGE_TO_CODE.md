@@ -63,6 +63,8 @@ Estratégias:
 
 Melhorias do loop:
 - Visão: JSON estruturado (cores/layout/componentes), resize via ffmpeg, cache versionado, reanálise se estagnar
+- **Visão diff**: na correção, o modelo compara mockup × `actual.png` (+ `diff.png`) e gera correções concretas
+- **Paleta determinística**: amostragem de hex do PNG via ffmpeg (independente do LLM)
 - checklist prioritário a partir de regiões/layout (bbox, texto, styleChanges)
 - inventário de arquivos + detecção de stack (HTML/React)
 - espera de settle do preview antes de recomparar

@@ -6959,7 +6959,9 @@
       const ev = events[i];
       if (!ev || !ev.type) continue;
       if (
-        (ev.type === "vision.completed" || ev.type === "vision.cached") &&
+        (ev.type === "vision.diff_completed" ||
+          ev.type === "vision.completed" ||
+          ev.type === "vision.cached") &&
         typeof ev.preview === "string" &&
         ev.preview.trim()
       ) {
@@ -6986,7 +6988,19 @@
       if (ev.type === "vision.refresh") {
         return `Reanalisando mockup com visão (tentativa ${ev.attempt || "?"})…`;
       }
-      if (ev.type === "vision.skipped" || ev.type === "vision.failed") {
+      if (ev.type === "vision.diff_started") {
+        return `Visão comparando mockup × preview (${ev.model || "vision"})…`;
+      }
+      if (ev.type === "vision.diff_completed") {
+        return `Diagnóstico visual pronto (${ev.fixes || "?"} correções · ${ev.chars || "?"} chars)`;
+      }
+      if (ev.type === "vision.palette") {
+        return `Paleta do mockup amostrada (${ev.colors || "?"} cores)`;
+      }
+      if (ev.type === "vision.diff_skipped" || ev.type === "vision.palette_skipped") {
+        return `Visão auxiliar ignorada (${ev.reason || "fallback"})`;
+      }
+      if (ev.type === "vision.skipped" || ev.type === "vision.failed" || ev.type === "vision.diff_failed") {
         return `Visão indisponível — seguindo com Visual Engine (${ev.reason || ev.error || "fallback"})`;
       }
       if (ev.type === "correction.agent_starting") {

@@ -142,3 +142,66 @@ def test_prepare_image_bytes_passthrough(tmp_path: Path) -> None:
     data, meta = prepare_image_bytes(png)
     assert data.startswith(b"\x89PNG")
     assert meta["resized"] is False
+
+
+def test_format_diff_spec_for_goal() -> None:
+    from ia_platform.visual_engine.vision import format_diff_spec_for_goal
+
+    spec = format_diff_spec_for_goal(
+        {
+            "summary": "sidebar mais clara que o mockup",
+            "color_mismatches": [{"area": "sidebar", "expected": "#0b0f14", "actual": "#1a2030"}],
+            "fixes": ["1. escurecer --sidebar-bg", "2. alinhar tipografia do título"],
+        }
+    )
+    assert "Diagnóstico visual" in spec
+    assert "#0b0f14" in spec
+    assert "escurecer" in spec
+
+
+def test_compare_mockup_vs_actual_mocked(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    from ia_platform.visual_engine.vision import compare_mockup_vs_actual
+
+    mockups = tmp_path / "mockups"
+    mockups.mkdir()
+    mock = mockups / "ui.png"
+    actual = tmp_path / "actual.png"
+    mock.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 32)
+    actual.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x01" * 32)
+
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.vision.list_ollama_models",
+        lambda host, timeout=8: ["llava:7b"],
+    )
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.vision.encode_image_base64",
+        lambda path, max_bytes=4_500_000: "abc",
+    )
+
+    def fake_chat(**kwargs):
+        assert len(kwargs["images_b64"]) == 2
+        return json.dumps(
+            {
+                "summary": "gap de cor",
+                "fixes": ["ajustar fundo"],
+                "color_mismatches": [],
+                "layout_mismatches": [],
+                "typography_mismatches": [],
+                "missing_or_extra": [],
+            }
+        )
+
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.vision.ollama_chat_with_images",
+        fake_chat,
+    )
+    events = []
+    result = compare_mockup_vs_actual(
+        tmp_path,
+        "mockups/ui.png",
+        str(actual),
+        on_event=events.append,
+    )
+    assert result["ok"] is True
+    assert "Diagnóstico visual" in result["spec"] or "gap" in result["spec"].lower()
+    assert any(e["type"] == "vision.diff_completed" for e in events)

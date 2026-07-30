@@ -58,18 +58,54 @@ def list_workspace_files(workspace: Path, *, limit: int = 24) -> List[str]:
     return found
 
 
-def _artifact_paths(report: Dict[str, Any]) -> List[str]:
+def _workspace_rel(workspace: Optional[Path], path_str: str) -> str:
+    raw = str(path_str or "").strip()
+    if not raw:
+        return ""
+    if workspace is None:
+        return raw.replace("\\", "/")
+    try:
+        return str(Path(raw).resolve().relative_to(Path(workspace).resolve())).replace("\\", "/")
+    except (ValueError, OSError):
+        return raw.replace("\\", "/")
+
+
+def _artifact_paths(report: Dict[str, Any], *, workspace: Optional[Path] = None) -> List[str]:
     arts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
     out: List[str] = []
-    for key in ("diff", "diffImage", "actual", "current", "reference", "overlay"):
+    for key in (
+        "diff",
+        "diffImage",
+        "actual",
+        "actualNormalized",
+        "current",
+        "reference",
+        "referenceNormalized",
+        "overlay",
+    ):
         val = arts.get(key)
         if isinstance(val, str) and val.strip():
-            out.append(f"{key}: {val.strip()}")
+            out.append(f"{key}: {_workspace_rel(workspace, val.strip())}")
         elif isinstance(val, dict):
             path = val.get("path") or val.get("url") or val.get("file")
             if path:
-                out.append(f"{key}: {path}")
-    return out[:6]
+                out.append(f"{key}: {_workspace_rel(workspace, str(path))}")
+    return out[:8]
+
+
+def pick_report_image(report: Dict[str, Any], *keys: str) -> Optional[str]:
+    """Return the first existing filesystem path among artifact keys."""
+    arts = report.get("artifacts") if isinstance(report.get("artifacts"), dict) else {}
+    for key in keys:
+        val = arts.get(key)
+        path_str = ""
+        if isinstance(val, str):
+            path_str = val.strip()
+        elif isinstance(val, dict):
+            path_str = str(val.get("path") or val.get("file") or "").strip()
+        if path_str and Path(path_str).is_file():
+            return path_str
+    return None
 
 
 def _sorted_regions(report: Dict[str, Any]) -> List[Dict[str, Any]]:
@@ -83,7 +119,12 @@ def _sorted_regions(report: Dict[str, Any]) -> List[Dict[str, Any]]:
     return sorted(regions, key=key)
 
 
-def summarize_visual_diff(report: Dict[str, Any], *, max_items: int = 10) -> str:
+def summarize_visual_diff(
+    report: Dict[str, Any],
+    *,
+    max_items: int = 10,
+    workspace: Optional[Path] = None,
+) -> str:
     """Compact, agent-readable summary of a visual comparison report."""
     if not isinstance(report, dict):
         return "Sem relatório visual."
@@ -103,12 +144,13 @@ def summarize_visual_diff(report: Dict[str, Any], *, max_items: int = 10) -> str
     if cid:
         lines.append(f"comparisonId: {cid}")
 
-    for art in _artifact_paths(report):
+    arts = _artifact_paths(report, workspace=workspace)
+    for art in arts:
         lines.append(f"Artefato {art}")
-    if _artifact_paths(report):
+    if arts:
         lines.append(
-            "Abra os artefatos de diff/actual no workspace para guiar os ajustes "
-            "(não invente — use o que divergir na imagem)."
+            "Abra os artefatos diff/actual no workspace (caminhos acima) e corrija "
+            "o que divergir visualmente — não invente."
         )
 
     layout = report.get("layoutChanges") or report.get("layout_changes") or []
@@ -265,6 +307,7 @@ def build_bootstrap_goal(
     stack_hint: str = "html",
     workspace_files: Optional[Sequence[str]] = None,
     vision_spec: str = "",
+    palette_block: str = "",
 ) -> str:
     """First-pass goal: implement UI from mockup image path in the workspace."""
     mockup = str(mockup or "").strip() or "mockups/reference.png"
@@ -289,11 +332,15 @@ def build_bootstrap_goal(
             "Especificação visual (modelo de visão — trate como verdade do mockup):\n"
             f"{vision_spec.strip()[:4500]}\n\n"
         )
+    palette = ""
+    if (palette_block or "").strip():
+        palette = f"{palette_block.strip()}\n\n"
     return (
         "IMAGE-TO-CODE / MOCKUP → FRONTEND\n"
         f"Referência visual (arquivo): {mockup}\n\n"
         "Objetivo: transformar esse mockup em código frontend o mais pixel-fiel possível.\n"
         f"{stack_line}\n\n"
+        f"{palette}"
         f"{vision_block}"
         f"{files_block}"
         "Regras:\n"
@@ -314,11 +361,14 @@ def build_correction_goal(
     target_similarity: float = 0.95,
     workspace_files: Optional[Sequence[str]] = None,
     vision_spec: str = "",
+    vision_diff: str = "",
+    palette_block: str = "",
+    workspace: Optional[Path] = None,
 ) -> str:
     """Follow-up goal: fix UI using visual diff feedback until target is reached."""
     mockup = str(mockup or "").strip() or "mockups/reference.png"
     target_pct = f"{float(target_similarity) * 100:.0f}%"
-    diff = summarize_visual_diff(report)
+    diff = summarize_visual_diff(report, workspace=workspace)
     checklist = build_priority_checklist(report)
     sim = report.get("similarity")
     sim_line = (
@@ -333,16 +383,23 @@ def build_correction_goal(
     checklist_block = "\n".join(f"- {item}" for item in checklist)
     vision_block = ""
     if (vision_spec or "").strip():
-        # Keep shorter on refine to leave room for diff checklist.
         vision_block = (
             "Lembrete da especificação visual (visão):\n"
-            f"{vision_spec.strip()[:2800]}\n\n"
+            f"{vision_spec.strip()[:2200]}\n\n"
         )
+    diff_vision_block = ""
+    if (vision_diff or "").strip():
+        diff_vision_block = f"{vision_diff.strip()[:3200]}\n\n"
+    palette = ""
+    if (palette_block or "").strip():
+        palette = f"{palette_block.strip()}\n\n"
     return (
         "CORREÇÃO VISUAL ORIENTADA POR MOCKUP (tentativa "
         f"{max(1, int(attempt))})\n"
         f"Mockup de referência: {mockup}\n"
         f"{sim_line}\n\n"
+        f"{palette}"
+        f"{diff_vision_block}"
         f"{vision_block}"
         f"{files_block}"
         "Feedback do Visual Engine:\n"
@@ -350,9 +407,9 @@ def build_correction_goal(
         "Checklist prioritário:\n"
         f"{checklist_block}\n\n"
         "Tarefa:\n"
-        "1) Edite o frontend para reduzir as diferenças acima (comece pelo checklist).\n"
+        "1) Edite o frontend para reduzir as diferenças acima (comece pelo diagnóstico visual + checklist).\n"
         "2) Use a especificação visual + diffs juntos (não ignore nenhum dos dois).\n"
-        "3) Foque nos seletores/regiões de maior confiança.\n"
+        "3) Foque nos seletores/regiões de maior confiança e nas cores da paleta amostrada.\n"
         "4) Não remova o que já estiver correto; ajuste só o que diverge do mockup.\n"
         "5) Mantenha o app funcional no preview.\n"
         f"6) Continue até aproximar ou superar {target_pct} de similaridade visual.\n"
@@ -414,6 +471,10 @@ def make_agent_strategy_fns(
         "model": None,
         "error": None,
         "runs": 0,
+        "diff_spec": "",
+        "diff_for": None,
+        "palette": "",
+        "palette_tried": False,
     }
 
     def _emit(typ: str, **payload: Any) -> None:
@@ -422,6 +483,31 @@ def make_agent_strategy_fns(
                 on_event({"type": typ, **payload})
             except Exception:  # noqa: BLE001
                 pass
+
+    def _ensure_palette() -> str:
+        if vision_cache["palette_tried"]:
+            return str(vision_cache.get("palette") or "")
+        vision_cache["palette_tried"] = True
+        try:
+            from .palette import format_palette_for_goal, resolve_mockup_path, sample_palette
+
+            path = resolve_mockup_path(workspace, mockup)
+            if not path:
+                return ""
+            result = sample_palette(path)
+            if result.get("ok") and result.get("colors"):
+                block = format_palette_for_goal(list(result["colors"]))
+                vision_cache["palette"] = block
+                _emit(
+                    "vision.palette",
+                    colors=len(result["colors"]),
+                    preview=block[:400],
+                )
+            else:
+                _emit("vision.palette_skipped", reason=str(result.get("error") or "empty"))
+        except Exception as exc:  # noqa: BLE001
+            _emit("vision.palette_skipped", reason=str(exc))
+        return str(vision_cache.get("palette") or "")
 
     def _ensure_vision_spec(*, force: bool = False) -> str:
         if not use_vision:
@@ -469,11 +555,61 @@ def make_agent_strategy_fns(
             return False
         return attempt in {3, 5} and int(vision_cache.get("runs") or 0) < 3
 
+    def _ensure_vision_diff(report: Dict[str, Any], *, attempt: int) -> str:
+        """Compare mockup × actual screenshot with vision when refining."""
+        if not use_vision:
+            return ""
+        sim = report.get("similarity")
+        sim_f = float(sim) if isinstance(sim, (int, float)) else 0.0
+        # Skip when already very close or still empty bootstrap territory without actual.
+        if sim_f >= 0.93:
+            return str(vision_cache.get("diff_spec") or "")
+        cid = str(report.get("comparisonId") or report.get("comparison_id") or "") or f"attempt-{attempt}"
+        if vision_cache.get("diff_for") == cid and vision_cache.get("diff_spec"):
+            return str(vision_cache.get("diff_spec") or "")
+
+        actual = pick_report_image(report, "actualNormalized", "actual", "current")
+        if not actual:
+            return ""
+        # Prefer running on refine attempts (2+) or mid-fidelity first pass.
+        if attempt < 2 and sim_f < 0.35:
+            return ""
+
+        diff = pick_report_image(report, "diff", "diffImage")
+        try:
+            from .vision import compare_mockup_vs_actual
+
+            result = compare_mockup_vs_actual(
+                workspace,
+                mockup,
+                actual,
+                diff_path=diff,
+                host=ollama_host,
+                model=vision_model,
+                cancel_check=cancel_check,
+                on_event=on_event,
+            )
+            vision_cache["diff_for"] = cid
+            if result.get("ok") and result.get("spec"):
+                vision_cache["diff_spec"] = str(result["spec"])
+                if result.get("model"):
+                    vision_cache["model"] = result.get("model")
+            else:
+                _emit(
+                    "vision.diff_skipped",
+                    reason=str(result.get("error") or "unavailable"),
+                    comparison_id=cid,
+                )
+        except Exception as exc:  # noqa: BLE001
+            _emit("vision.diff_skipped", reason=str(exc), comparison_id=cid)
+        return str(vision_cache.get("diff_spec") or "")
+
     def plan_fn(report: Dict[str, Any]) -> List[Dict[str, Any]]:
         attempt_counter["n"] += 1
         attempt = attempt_counter["n"]
         report = report if isinstance(report, dict) else {}
         files = list_workspace_files(workspace)
+        palette_block = _ensure_palette()
         force_vision = _should_refresh_vision(report, attempt)
         if force_vision:
             _emit("vision.refresh", attempt=attempt, similarity=report.get("similarity"))
@@ -514,9 +650,12 @@ def make_agent_strategy_fns(
                 stack_hint=resolved_stack,
                 workspace_files=files,
                 vision_spec=vision_spec,
+                palette_block=palette_block,
             )
             mode = "bootstrap"
+            vision_diff = ""
         else:
+            vision_diff = _ensure_vision_diff(report, attempt=attempt) if strategy in {"agent", "hybrid"} else ""
             goal = build_correction_goal(
                 mockup,
                 report,
@@ -524,6 +663,9 @@ def make_agent_strategy_fns(
                 target_similarity=target_similarity,
                 workspace_files=files,
                 vision_spec=vision_spec,
+                vision_diff=vision_diff,
+                palette_block=palette_block,
+                workspace=workspace,
             )
             mode = "refine"
         last_mode["value"] = mode
@@ -537,6 +679,8 @@ def make_agent_strategy_fns(
                 "stack": resolved_stack,
                 "vision_model": vision_cache.get("model"),
                 "has_vision_spec": bool(vision_spec),
+                "has_vision_diff": bool(vision_diff) if mode == "refine" else False,
+                "has_palette": bool(palette_block),
             }
         ]
 

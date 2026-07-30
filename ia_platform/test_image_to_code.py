@@ -74,6 +74,41 @@ def test_build_correction_goal_includes_vision_reminder() -> None:
     assert "#0b0f14" in goal
 
 
+def test_build_correction_goal_includes_palette_and_diff_vision() -> None:
+    goal = build_correction_goal(
+        "mockups/a.png",
+        {"similarity": 0.55, "artifacts": {"diff": ".agent/visual/c1/diff.png"}},
+        palette_block="## Paleta amostrada do mockup\n- #0b0f14 (~60%)",
+        vision_diff="## Diagnóstico visual mockup × preview\n- resumo: sidebar clara demais",
+    )
+    assert "#0b0f14" in goal
+    assert "Diagnóstico visual" in goal
+    assert "sidebar clara" in goal
+
+
+def test_agent_plan_injects_palette_without_vision(tmp_path: Path, monkeypatch) -> None:
+    mockups = tmp_path / "mockups"
+    mockups.mkdir()
+    (mockups / "ui.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 24)
+
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.palette.sample_palette",
+        lambda path, **kwargs: {
+            "ok": True,
+            "colors": [{"hex": "#112233", "pct": 0.7}],
+        },
+    )
+    fns = make_agent_strategy_fns(
+        tmp_path,
+        mockup="mockups/ui.png",
+        strategy="agent",
+        use_vision=False,
+    )
+    patches = fns["plan_fn"]({"similarity": 0.1})
+    assert patches[0]["has_palette"] is True
+    assert "#112233" in patches[0]["goal"]
+
+
 def test_agent_plan_injects_vision_into_goal(tmp_path: Path, monkeypatch) -> None:
     events = []
 
@@ -103,6 +138,57 @@ def test_agent_plan_injects_vision_into_goal(tmp_path: Path, monkeypatch) -> Non
     assert patches[0]["has_vision_spec"] is True
     assert patches[0]["vision_model"] == "llava:7b"
     assert "rail lateral" in patches[0]["goal"]
+
+
+def test_agent_plan_injects_vision_diff_on_refine(tmp_path: Path, monkeypatch) -> None:
+    actual = tmp_path / "actual.png"
+    actual.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+    mockups = tmp_path / "mockups"
+    mockups.mkdir()
+    (mockups / "ui.png").write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 16)
+
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.palette.sample_palette",
+        lambda path, **kwargs: {"ok": True, "colors": [{"hex": "#010101", "pct": 0.9}]},
+    )
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.vision.describe_mockup",
+        lambda *a, **k: {"ok": True, "spec": "## Layout\n- ok", "model": "llava", "structured": {}},
+    )
+
+    def fake_diff(*a, **k):
+        if k.get("on_event"):
+            k["on_event"]({"type": "vision.diff_completed", "preview": "diff preview", "fixes": 2})
+        return {
+            "ok": True,
+            "spec": "## Diagnóstico visual mockup × preview\n- resumo: header desalinhado",
+            "model": "llava",
+            "structured": {"summary": "header desalinhado"},
+        }
+
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.vision.compare_mockup_vs_actual",
+        fake_diff,
+    )
+    events = []
+    fns = make_agent_strategy_fns(
+        tmp_path,
+        mockup="mockups/ui.png",
+        strategy="agent",
+        use_vision=True,
+        on_event=events.append,
+    )
+    # Force refine path (above bootstrap threshold).
+    patches = fns["plan_fn"](
+        {
+            "similarity": 0.7,
+            "comparisonId": "cmp-refine-1",
+            "artifacts": {"actual": str(actual)},
+        }
+    )
+    assert patches[0]["mode"] == "refine"
+    assert patches[0]["has_vision_diff"] is True
+    assert "header desalinhado" in patches[0]["goal"]
 
 
 def test_detect_stack_and_file_inventory(tmp_path: Path) -> None:

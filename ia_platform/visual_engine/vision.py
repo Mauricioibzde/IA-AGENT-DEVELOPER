@@ -214,22 +214,49 @@ def ollama_chat_with_image(
     cancel_check: Optional[Callable[[], bool]] = None,
 ) -> str:
     """Call Ollama /api/chat with a single image (multimodal)."""
+    return ollama_chat_with_images(
+        host=host,
+        model=model,
+        prompt=prompt,
+        images_b64=[image_b64],
+        temperature=temperature,
+        timeout=timeout,
+        cancel_check=cancel_check,
+    )
+
+
+def ollama_chat_with_images(
+    *,
+    host: str,
+    model: str,
+    prompt: str,
+    images_b64: Sequence[str],
+    temperature: float = 0.1,
+    timeout: int = 240,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    use_json_format: bool = True,
+) -> str:
+    """Call Ollama /api/chat with one or more images (multimodal)."""
     if cancel_check and cancel_check():
         raise RuntimeError("cancelled")
+    imgs = [str(x) for x in images_b64 if str(x).strip()]
+    if not imgs:
+        raise ValueError("at least one image is required")
     host = host.rstrip("/")
-    payload = {
+    payload: Dict[str, Any] = {
         "model": model,
         "stream": False,
-        "format": "json",
         "options": {"temperature": temperature},
         "messages": [
             {
                 "role": "user",
                 "content": prompt,
-                "images": [image_b64],
+                "images": imgs,
             }
         ],
     }
+    if use_json_format:
+        payload["format"] = "json"
     req = urllib.request.Request(
         f"{host}/api/chat",
         data=json.dumps(payload).encode("utf-8"),
@@ -246,7 +273,7 @@ def ollama_chat_with_image(
         except Exception:
             pass
         # Some older vision models reject format=json — retry without it.
-        if exc.code in {400, 422, 500} and "format" in (detail or "").lower():
+        if use_json_format and exc.code in {400, 422, 500}:
             payload.pop("format", None)
             req = urllib.request.Request(
                 f"{host}/api/chat",
@@ -254,8 +281,13 @@ def ollama_chat_with_image(
                 headers={"Content-Type": "application/json"},
                 method="POST",
             )
-            with urllib.request.urlopen(req, timeout=timeout) as response:
-                data = json.loads(response.read().decode("utf-8"))
+            try:
+                with urllib.request.urlopen(req, timeout=timeout) as response:
+                    data = json.loads(response.read().decode("utf-8"))
+            except Exception as retry_exc:
+                raise RuntimeError(
+                    f"vision chat HTTP {exc.code}: {detail or exc.reason}"
+                ) from retry_exc
         else:
             raise RuntimeError(f"vision chat HTTP {exc.code}: {detail or exc.reason}") from exc
     except Exception as exc:
@@ -267,6 +299,200 @@ def ollama_chat_with_image(
         raise RuntimeError("vision model returned empty content")
     content = re.sub(r"<think>[\s\S]*?</think>", "", content, flags=re.IGNORECASE).strip()
     return content
+
+
+DIFF_VISION_PROMPT = """You are a senior UI QA engineer comparing TWO images of the same screen.
+Image order in this request:
+1) MOCKUP / reference (target look)
+2) ACTUAL preview capture (current implementation)
+3) optional DIFF heatmap (if present) — red/highlighted = mismatch
+
+Reply with ONLY a JSON object (no markdown fences):
+
+{
+  "summary": "one sentence of the biggest fidelity gap",
+  "color_mismatches": [{"area": "…", "expected": "#RRGGBB", "actual": "#RRGGBB"}],
+  "layout_mismatches": ["… concrete geometry/spacing issues …"],
+  "typography_mismatches": ["… size/weight/color of text …"],
+  "missing_or_extra": ["… sections present in only one image …"],
+  "fixes": ["1. most important CSS/HTML change", "2. …", "3. …", "4. …", "5. …"]
+}
+
+Rules:
+- Be concrete and actionable for a coding agent.
+- Prefer Portuguese (Brazil) for string values.
+- Do not invent elements that are not visible.
+- Max 6 items per array.
+"""
+
+
+def format_diff_spec_for_goal(structured: Dict[str, Any], *, max_chars: int = 3200) -> str:
+    """Pack mockup-vs-actual vision output into a goal block."""
+    if not structured:
+        return ""
+    lines: List[str] = ["## Diagnóstico visual mockup × preview"]
+    summary = str(structured.get("summary") or "").strip()
+    if summary:
+        lines.append(f"- resumo: {summary}")
+
+    colors = structured.get("color_mismatches") if isinstance(structured.get("color_mismatches"), list) else []
+    if colors:
+        lines.append("### Cores divergentes")
+        for item in colors[:6]:
+            if isinstance(item, dict):
+                area = str(item.get("area") or "?").strip()
+                exp = str(item.get("expected") or "").strip()
+                act = str(item.get("actual") or "").strip()
+                lines.append(f"- {area}: esperado {exp} → atual {act}")
+            else:
+                text = str(item).strip()
+                if text:
+                    lines.append(f"- {text}")
+
+    for key, title in (
+        ("layout_mismatches", "Layout / espaçamento"),
+        ("typography_mismatches", "Tipografia"),
+        ("missing_or_extra", "Faltando / sobrando"),
+    ):
+        items = structured.get(key) if isinstance(structured.get(key), list) else []
+        if not items:
+            continue
+        lines.append(f"### {title}")
+        for item in items[:6]:
+            text = str(item).strip()
+            if text:
+                lines.append(f"- {text}")
+
+    fixes = structured.get("fixes") if isinstance(structured.get("fixes"), list) else []
+    if fixes:
+        lines.append("### Correções prioritárias (visão)")
+        for idx, item in enumerate(fixes[:6], start=1):
+            text = str(item).strip()
+            if text:
+                lines.append(f"{idx}. {text}")
+
+    packed = "\n".join(lines).strip()
+    return packed[:max_chars]
+
+
+def compare_mockup_vs_actual(
+    workspace: Path,
+    mockup_rel_or_abs: str,
+    actual_path: str,
+    *,
+    diff_path: Optional[str] = None,
+    host: str = "http://127.0.0.1:11434",
+    model: Optional[str] = None,
+    timeout: int = 240,
+    cancel_check: Optional[Callable[[], bool]] = None,
+    on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
+) -> Dict[str, Any]:
+    """Vision pass comparing mockup vs actual (+ optional diff) into fix instructions."""
+    workspace = Path(workspace).resolve()
+    from .palette import resolve_mockup_path
+
+    mockup_path = resolve_mockup_path(workspace, mockup_rel_or_abs)
+    if not mockup_path:
+        return {"ok": False, "error": "mockup not found", "spec": "", "structured": {}}
+
+    actual = Path(str(actual_path or "").strip())
+    if not actual.is_file():
+        return {"ok": False, "error": f"actual not found: {actual_path}", "spec": "", "structured": {}}
+
+    diff_file: Optional[Path] = None
+    if diff_path:
+        cand = Path(str(diff_path).strip())
+        if cand.is_file():
+            diff_file = cand
+
+    installed = list_ollama_models(host)
+    chosen = pick_vision_model(installed, preferred=model)
+    if not chosen:
+        return {
+            "ok": False,
+            "error": "Nenhum modelo de visão instalado no Ollama.",
+            "spec": "",
+            "structured": {},
+        }
+
+    if on_event:
+        on_event(
+            {
+                "type": "vision.diff_started",
+                "model": chosen,
+                "mockup": str(mockup_path.relative_to(workspace)).replace("\\", "/"),
+                "actual": str(actual),
+            }
+        )
+
+    t0 = time.time()
+    try:
+        images = [
+            encode_image_base64(mockup_path),
+            encode_image_base64(actual),
+        ]
+        if diff_file is not None:
+            images.append(encode_image_base64(diff_file))
+        raw_content = ollama_chat_with_images(
+            host=host,
+            model=chosen,
+            prompt=DIFF_VISION_PROMPT,
+            images_b64=images,
+            timeout=timeout,
+            cancel_check=cancel_check,
+        )
+        # Reuse JSON extractor; then format with diff-specific packer.
+        text = (raw_content or "").strip()
+        fenced = re.search(r"```(?:json)?\s*([\s\S]*?)```", text, flags=re.IGNORECASE)
+        if fenced:
+            text = fenced.group(1).strip()
+        structured: Dict[str, Any] = {}
+        try:
+            parsed = json.loads(text)
+            if isinstance(parsed, dict):
+                structured = parsed
+        except json.JSONDecodeError:
+            match = re.search(r"\{[\s\S]*\}", text)
+            if match:
+                try:
+                    parsed = json.loads(match.group(0))
+                    if isinstance(parsed, dict):
+                        structured = parsed
+                except json.JSONDecodeError:
+                    structured = {}
+        spec = format_diff_spec_for_goal(structured) if structured else text[:3200]
+        if not spec:
+            raise RuntimeError("vision diff returned empty spec")
+    except Exception as exc:  # noqa: BLE001
+        if on_event:
+            on_event({"type": "vision.diff_failed", "model": chosen, "error": str(exc)})
+        return {
+            "ok": False,
+            "error": str(exc),
+            "spec": "",
+            "structured": {},
+            "model": chosen,
+        }
+
+    duration_ms = int((time.time() - t0) * 1000)
+    if on_event:
+        on_event(
+            {
+                "type": "vision.diff_completed",
+                "model": chosen,
+                "chars": len(spec),
+                "duration_ms": duration_ms,
+                "preview": spec[:1200],
+                "fixes": len((structured or {}).get("fixes") or []) if structured else 0,
+            }
+        )
+    return {
+        "ok": True,
+        "spec": spec,
+        "structured": structured,
+        "model": chosen,
+        "duration_ms": duration_ms,
+    }
 
 
 def parse_vision_payload(raw: str) -> Dict[str, Any]:
