@@ -264,6 +264,7 @@
     btnForceCancel: $("btnForceCancel"),
     splitSidebar: $("splitSidebar"),
     splitPanel: $("splitPanel"),
+    splitWorkRail: $("splitWorkRail"),
     btnCollapsePanel: $("btnCollapsePanel"),
     appShell: $("appShell"),
     modelHint: $("modelHint"),
@@ -2562,6 +2563,7 @@
     els.projectTitle.textContent = project.name;
     els.emptyView.classList.add("hidden");
     els.workspaceView.classList.remove("hidden");
+    restoreLayoutSizes();
     syncComposerProjectLabel();
     renderChatList();
     try {
@@ -2796,21 +2798,37 @@
     panelWWork: "forge.layout.panelWWork",
     panelCollapsedChat: "forge.layout.panelCollapsedChat",
     panelCollapsedWork: "forge.layout.panelCollapsedWork",
+    workRailH: "forge.layout.workRailH",
   };
   const LAYOUT_DEFAULTS = {
     sidebarW: 268,
     panelWChat: 390,
     panelWWork: 420,
+    workRailH: 98,
   };
   const LAYOUT_LIMITS = {
     sidebarMin: 200,
     sidebarMax: 440,
     panelMin: 260,
     panelMaxRatio: 0.62,
+    workRailMin: 72,
+    workRailMax: 280,
   };
 
-  function readLayoutNumber(key, fallback) {
+  function layoutProjectKey(key) {
+    const pid = state.current?.id;
+    return pid ? `${key}::${pid}` : key;
+  }
+
+  function readLayoutNumber(key, fallback, { projectScoped = false } = {}) {
     try {
+      if (projectScoped && state.current?.id) {
+        const scoped = localStorage.getItem(layoutProjectKey(key));
+        if (scoped != null && scoped !== "") {
+          const n = Number(scoped);
+          if (Number.isFinite(n)) return n;
+        }
+      }
       const raw = localStorage.getItem(key);
       if (raw == null || raw === "") return fallback;
       const n = Number(raw);
@@ -2820,16 +2838,25 @@
     }
   }
 
-  function writeLayoutNumber(key, value) {
+  function writeLayoutNumber(key, value, { projectScoped = false } = {}) {
     try {
-      localStorage.setItem(key, String(Math.round(value)));
+      const out = String(Math.round(value));
+      if (projectScoped && state.current?.id) {
+        localStorage.setItem(layoutProjectKey(key), out);
+      } else {
+        localStorage.setItem(key, out);
+      }
     } catch {
       /* ignore */
     }
   }
 
-  function readLayoutFlag(key, fallback) {
+  function readLayoutFlag(key, fallback, { projectScoped = false } = {}) {
     try {
+      if (projectScoped && state.current?.id) {
+        const scoped = localStorage.getItem(layoutProjectKey(key));
+        if (scoped != null) return scoped === "1" || scoped === "true";
+      }
       const raw = localStorage.getItem(key);
       if (raw == null) return fallback;
       return raw === "1" || raw === "true";
@@ -2838,9 +2865,13 @@
     }
   }
 
-  function writeLayoutFlag(key, value) {
+  function writeLayoutFlag(key, value, { projectScoped = false } = {}) {
     try {
-      localStorage.setItem(key, value ? "1" : "0");
+      if (projectScoped && state.current?.id) {
+        localStorage.setItem(layoutProjectKey(key), value ? "1" : "0");
+      } else {
+        localStorage.setItem(key, value ? "1" : "0");
+      }
     } catch {
       /* ignore */
     }
@@ -2868,7 +2899,7 @@
     if (els.splitSidebar) {
       els.splitSidebar.setAttribute("aria-valuenow", String(Math.round(width)));
     }
-    if (persist) writeLayoutNumber(LAYOUT_KEYS.sidebarW, width);
+    if (persist) writeLayoutNumber(LAYOUT_KEYS.sidebarW, width, { projectScoped: true });
     return width;
   }
 
@@ -2885,8 +2916,29 @@
       els.splitPanel.setAttribute("aria-valuenow", String(Math.round(width)));
       els.splitPanel.setAttribute("aria-valuemax", String(max));
     }
-    if (persist) writeLayoutNumber(currentPanelWidthKey(), width);
+    if (persist) writeLayoutNumber(currentPanelWidthKey(), width, { projectScoped: true });
     return width;
+  }
+
+  function applyWorkRailHeight(px, { persist = false } = {}) {
+    const height = clamp(px, LAYOUT_LIMITS.workRailMin, LAYOUT_LIMITS.workRailMax);
+    document.documentElement.style.setProperty("--work-rail-h", `${height}px`);
+    if (els.splitWorkRail) {
+      els.splitWorkRail.setAttribute("aria-valuenow", String(Math.round(height)));
+      els.splitWorkRail.setAttribute("aria-valuemax", String(LAYOUT_LIMITS.workRailMax));
+    }
+    if (persist) writeLayoutNumber(LAYOUT_KEYS.workRailH, height, { projectScoped: true });
+    return height;
+  }
+
+  function canResizeWorkRail() {
+    return state.surfaceMode === "work" && !!state.current && !isMobileLayout();
+  }
+
+  function syncWorkRailSplitter() {
+    if (!els.splitWorkRail) return;
+    const show = canResizeWorkRail() && !els.workRail?.classList.contains("hidden");
+    els.splitWorkRail.classList.toggle("hidden", !show);
   }
 
   function isPanelCollapsed() {
@@ -2911,7 +2963,7 @@
         collapsed ? "Expandir painel de ferramentas" : "Redimensionar painel de ferramentas"
       );
     }
-    if (persist) writeLayoutFlag(currentPanelCollapsedKey(), !!collapsed);
+    if (persist) writeLayoutFlag(currentPanelCollapsedKey(), !!collapsed, { projectScoped: true });
   }
 
   function togglePanelCollapsed() {
@@ -2919,15 +2971,24 @@
   }
 
   function restoreLayoutSizes() {
-    const sidebarW = readLayoutNumber(LAYOUT_KEYS.sidebarW, LAYOUT_DEFAULTS.sidebarW);
+    const sidebarW = readLayoutNumber(LAYOUT_KEYS.sidebarW, LAYOUT_DEFAULTS.sidebarW, {
+      projectScoped: true,
+    });
     applySidebarWidth(sidebarW);
     const panelKey = currentPanelWidthKey();
     const panelDefault = defaultPanelWidth();
-    const panelW = readLayoutNumber(panelKey, panelDefault);
+    const panelW = readLayoutNumber(panelKey, panelDefault, { projectScoped: true });
     applyPanelWidth(panelW);
     const collapsedDefault = state.surfaceMode === "chat";
-    const collapsed = readLayoutFlag(currentPanelCollapsedKey(), collapsedDefault);
+    const collapsed = readLayoutFlag(currentPanelCollapsedKey(), collapsedDefault, {
+      projectScoped: true,
+    });
     setPanelCollapsed(collapsed, { persist: false });
+    const workRailH = readLayoutNumber(LAYOUT_KEYS.workRailH, LAYOUT_DEFAULTS.workRailH, {
+      projectScoped: true,
+    });
+    applyWorkRailHeight(workRailH);
+    syncWorkRailSplitter();
     els.workspaceView?.setAttribute("data-layout-ready", "1");
   }
 
@@ -2942,6 +3003,11 @@
     showToast("Largura do painel restaurada.", "info", 2200);
   }
 
+  function resetWorkRailHeight() {
+    applyWorkRailHeight(LAYOUT_DEFAULTS.workRailH, { persist: true });
+    showToast("Altura do fluxo restaurada.", "info", 2200);
+  }
+
   function bindVerticalSplitter(el, { onMove, onReset, onActivate, canDrag }) {
     if (!el) return;
 
@@ -2954,6 +3020,7 @@
       dragging = false;
       el.classList.remove("is-dragging", "is-active");
       els.appShell?.classList.remove("is-layout-resizing");
+      els.appShell?.classList.remove("is-row-resizing");
       document.removeEventListener("pointermove", onPointerMove);
       document.removeEventListener("pointerup", endDrag);
       document.removeEventListener("pointercancel", endDrag);
@@ -2979,6 +3046,7 @@
         Number(el.getAttribute("aria-valuenow") || 0);
       el.classList.add("is-dragging", "is-active");
       els.appShell?.classList.add("is-layout-resizing");
+      els.appShell?.classList.remove("is-row-resizing");
       try {
         el.setPointerCapture(e.pointerId);
       } catch {
@@ -3024,6 +3092,70 @@
     });
   }
 
+  function bindHorizontalSplitter(el, { onMove, onReset, canDrag }) {
+    if (!el) return;
+
+    let dragging = false;
+    let startY = 0;
+    let startValue = 0;
+
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove("is-dragging", "is-active");
+      els.appShell?.classList.remove("is-layout-resizing", "is-row-resizing");
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", endDrag);
+      document.removeEventListener("pointercancel", endDrag);
+    };
+
+    const onPointerMove = (e) => {
+      if (!dragging) return;
+      onMove(e.clientY - startY, startValue, e);
+    };
+
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      if (canDrag && !canDrag()) return;
+      dragging = true;
+      startY = e.clientY;
+      startValue =
+        Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--work-rail-h")) ||
+        Number(el.getAttribute("aria-valuenow") || 0);
+      el.classList.add("is-dragging", "is-active");
+      els.appShell?.classList.add("is-layout-resizing", "is-row-resizing");
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", endDrag);
+      document.addEventListener("pointercancel", endDrag);
+      e.preventDefault();
+    });
+
+    el.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      onReset?.();
+    });
+
+    el.addEventListener("keydown", (e) => {
+      if (canDrag && !canDrag()) return;
+      const step = e.shiftKey ? 20 : 10;
+      if (e.key === "ArrowUp" || e.key === "ArrowDown") {
+        e.preventDefault();
+        const dir = e.key === "ArrowUp" ? -1 : 1;
+        const current =
+          Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue("--work-rail-h")) || 0;
+        onMove(dir * step, current);
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        onReset?.();
+      }
+    });
+  }
+
   function initLayoutSplitters() {
     restoreLayoutSizes();
 
@@ -3045,6 +3177,14 @@
       onReset: resetPanelWidth,
     });
 
+    bindHorizontalSplitter(els.splitWorkRail, {
+      canDrag: () => canResizeWorkRail(),
+      onMove: (delta, startH) => {
+        applyWorkRailHeight(startH + delta, { persist: true });
+      },
+      onReset: resetWorkRailHeight,
+    });
+
     els.btnCollapsePanel?.addEventListener("click", () => {
       togglePanelCollapsed();
     });
@@ -3056,6 +3196,11 @@
         getComputedStyle(document.documentElement).getPropertyValue("--panel-w")
       );
       if (Number.isFinite(current)) applyPanelWidth(current);
+      const railCurrent = Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--work-rail-h")
+      );
+      if (Number.isFinite(railCurrent)) applyWorkRailHeight(railCurrent);
+      syncWorkRailSplitter();
     });
   }
 
@@ -3839,6 +3984,7 @@
     if (!els.workRail) return;
     const show = state.surfaceMode === "work" && !!state.current;
     els.workRail.classList.toggle("hidden", !show);
+    syncWorkRailSplitter();
   }
 
   function syncWorkRail(activity) {
