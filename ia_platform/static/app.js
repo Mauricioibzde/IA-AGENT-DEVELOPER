@@ -60,6 +60,9 @@
     setupInstallUrl: null,
     serverFeatures: null,
     platformVersion: null,
+    visualApiOk: null,
+    lastToolTab: null,
+    activeToolGroup: "app",
     surfaceMode: "chat", // chat | work
     attachments: [],
     chats: [],
@@ -5775,6 +5778,12 @@
 
   async function uploadMockupFile(file) {
     if (!state.current?.id || !file) return;
+    if (state.visualApiOk === false) {
+      const msg = visualApiMissingMessage({ status: 404, message: "not found" });
+      showToast(msg, "err");
+      if (els.compareStatus) els.compareStatus.textContent = msg;
+      return;
+    }
     if (els.compareStatus) els.compareStatus.textContent = "Enviando mockup…";
     try {
       const b64 = await fileToPngBase64(file);
@@ -5791,8 +5800,13 @@
       showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
       if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
     } catch (e) {
-      showToast(e.message || "Falha no upload do mockup", "err");
-      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha no upload";
+      const msg = visualApiMissingMessage(e);
+      showToast(msg, "err");
+      if (els.compareStatus) els.compareStatus.textContent = msg;
+      if (e?.status === 404) {
+        state.visualApiOk = false;
+        setVisualControlsEnabled(false);
+      }
     }
   }
 
