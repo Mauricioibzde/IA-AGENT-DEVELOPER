@@ -63,7 +63,7 @@
     visualApiOk: null,
     lastToolTab: null,
     activeToolGroup: "app",
-    surfaceMode: "chat", // chat | work
+    surfaceMode: "work", // chat | work
     attachments: [],
     chats: [],
     chatsExpanded: true,
@@ -89,6 +89,8 @@
     projectList: $("projectList"),
     chatList: $("chatList"),
     btnToggleChats: $("btnToggleChats"),
+    btnSidebarWork: $("btnSidebarWork"),
+    btnSidebarChat: $("btnSidebarChat"),
     btnNewChat: $("btnNewChat"),
     btnProjectsMore: $("btnProjectsMore"),
     btnSurfaceChat: $("btnSurfaceChat"),
@@ -705,22 +707,33 @@
     return resolveModelForRequest();
   }
 
+  function isRunnableModelName(name) {
+    const lower = String(name || "").trim().toLowerCase();
+    if (!lower) return false;
+    return !(
+      lower.includes("embed") ||
+      lower.includes("embedding") ||
+      lower.includes("nomic-embed") ||
+      lower.endsWith("-base")
+    );
+  }
+
   function isAutoModelSelected() {
     return !resolveModelForRequest();
   }
 
   function expectedAutoModel() {
-    if (state.autoModel && (state.models || []).includes(state.autoModel)) {
+    if (state.autoModel && (state.models || []).includes(state.autoModel) && isRunnableModelName(state.autoModel)) {
       return state.autoModel;
     }
     const recommended = state.recommendedModel;
-    if (recommended && (state.models || []).includes(recommended)) {
+    if (recommended && (state.models || []).includes(recommended) && isRunnableModelName(recommended)) {
       return recommended;
     }
     // Never advertise a model that is not installed.
     return (
       pickFittingInstalledModel(null) ||
-      (state.models || []).find((name) => !/embed/i.test(name) && !/-base$/i.test(name)) ||
+      (state.models || []).find((name) => isRunnableModelName(name)) ||
       null
     );
   }
@@ -791,6 +804,18 @@
   function resolveModelForRequest() {
     const top = topBarModelValue();
     const composerVal = els.composerModelSelect?.value || "";
+    if (top && !isRunnableModelName(top)) {
+      setModelSelection(null);
+      rememberModelPreference(null);
+      showToast(`Modelo ${escapeHtml(top)} não serve para chat/execução. Usando Auto.`, "info", 6000);
+      return null;
+    }
+    if (!top && composerVal && !isRunnableModelName(composerVal)) {
+      els.composerModelSelect.value = "";
+      rememberModelPreference(null);
+      showToast(`Modelo ${escapeHtml(composerVal)} é de embeddings. Usando Auto.`, "info", 6000);
+      return null;
+    }
     // Prefer an explicit non-empty composer only when top is Auto.
     if (!top && composerVal) return composerVal;
     if (top) return top;
@@ -814,7 +839,7 @@
 
   function pickFittingInstalledModel(avoidName) {
     const catalog = state.modelRecommendations?.catalog || [];
-    const installed = state.models || [];
+    const installed = (state.models || []).filter(isRunnableModelName);
     const avoid = String(avoidName || "").toLowerCase();
     const recommended = state.recommendedModel;
     if (
@@ -896,7 +921,8 @@
   function populateModelSelect(installed, catalog, recommended) {
     if (!els.modelSelect) return;
 
-    const installedSet = new Set(installed || []);
+    const runnableInstalled = (installed || []).filter(isRunnableModelName);
+    const installedSet = new Set(runnableInstalled);
     const recommendedNames = new Set();
     (catalog || []).forEach((entry) => {
       if (entry.recommended || entry.ollama_name === recommended) {
@@ -907,7 +933,7 @@
     const previousCanonical = resolveModelForRequest();
 
     if (els.modelGroupInstalled) {
-      els.modelGroupInstalled.innerHTML = (installed || [])
+      els.modelGroupInstalled.innerHTML = runnableInstalled
         .map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(modelOptionLabel(name, catalog))}</option>`)
         .join("");
     }
@@ -924,7 +950,7 @@
 
     if (els.composerModelSelect) {
       const opts = ['<option value="">Auto</option>']
-        .concat((installed || []).map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(modelOptionLabel(name, catalog))}</option>`));
+        .concat(runnableInstalled.map((name) => `<option value="${escapeHtml(name)}">${escapeHtml(modelOptionLabel(name, catalog))}</option>`));
       els.composerModelSelect.innerHTML = opts.join("");
     }
 
@@ -932,7 +958,7 @@
     // Never resurrect a preferred model that does not fit this host (e.g. 32b on 16GB).
     const preferred = readModelPreference();
     const usablePreferred =
-      preferred && (installed || []).includes(preferred) && modelFitsHardware(preferred, catalog)
+      preferred && runnableInstalled.includes(preferred) && modelFitsHardware(preferred, catalog)
         ? preferred
         : null;
     if (preferred && !usablePreferred) {
@@ -940,7 +966,7 @@
     }
     const usablePrevious =
       previousCanonical &&
-      (installed || []).includes(previousCanonical) &&
+      runnableInstalled.includes(previousCanonical) &&
       modelFitsHardware(previousCanonical, catalog)
         ? previousCanonical
         : null;
@@ -979,14 +1005,14 @@
     state.recommendedModel = recommended || null;
     populateModelSelect(installed || state.models || [], state.modelRecommendations?.catalog || [], recommended);
 
-    const list = installed || state.models || [];
-    const isInstalled = recommended && list.includes(recommended);
+    const list = (installed || state.models || []).filter(isRunnableModelName);
+    const isInstalled = recommended && isRunnableModelName(recommended) && list.includes(recommended);
     const current = getSelectedModel();
     const preferred = readModelPreference();
     const isAuto = !els.modelSelect || els.modelSelect.value === "__auto__";
 
     // Never force-replace an explicit user choice — but drop oversized prefs (32b on 16GB).
-    if (preferred && list.includes(preferred) && !modelFitsHardware(preferred)) {
+    if (preferred && (!isRunnableModelName(preferred) || (list.includes(preferred) && !modelFitsHardware(preferred)))) {
       rememberModelPreference(null);
       if (!current || current === preferred || isAuto) {
         setModelSelection(null);
@@ -996,7 +1022,7 @@
           7000
         );
       }
-    } else if (preferred && list.includes(preferred)) {
+    } else if (preferred && isRunnableModelName(preferred) && list.includes(preferred)) {
       if (!current || isAuto) setModelSelection(preferred);
     } else if (isAuto) {
       // Stay on Auto — server picks a fitting model at request time.
@@ -2815,8 +2841,8 @@
   const LAYOUT_DEFAULTS = {
     sidebarW: 268,
     panelWChat: 390,
-    panelWWork: 420,
-    workRailH: 98,
+    panelWWork: 640,
+    workRailH: 112,
   };
   const LAYOUT_LIMITS = {
     sidebarMin: 200,
@@ -2840,7 +2866,7 @@
       label: "Foco Preview",
       sidebarW: 220,
       panelWChat: 520,
-      panelWWork: 560,
+      panelWWork: 680,
       panelCollapsedChat: false,
       panelCollapsedWork: false,
       workRailH: 88,
@@ -3366,6 +3392,29 @@
   }
 
   const SIDEBAR_COLLAPSED_KEY = "forge_sidebar_collapsed";
+  const DESIGN_LAYOUT_VERSION_KEY = "forge.design.layoutVersion";
+  const DESIGN_LAYOUT_VERSION = "2026-07-30-workspace-v3";
+
+  function migrateDesignerLayoutOnce() {
+    try {
+      if (localStorage.getItem(DESIGN_LAYOUT_VERSION_KEY) === DESIGN_LAYOUT_VERSION) return;
+      localStorage.setItem("forge_surface_mode", "work");
+      localStorage.setItem(LAYOUT_KEYS.panelCollapsedWork, "0");
+      localStorage.setItem(LAYOUT_KEYS.panelCollapsedChat, "0");
+      localStorage.setItem(LAYOUT_KEYS.panelWWork, "640");
+      localStorage.setItem(LAYOUT_KEYS.workRailH, "112");
+      localStorage.setItem(SIDEBAR_COLLAPSED_KEY, "0");
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith(`${LAYOUT_KEYS.panelCollapsedWork}::`))
+        .forEach((key) => localStorage.setItem(key, "0"));
+      Object.keys(localStorage)
+        .filter((key) => key.startsWith(`${LAYOUT_KEYS.panelWWork}::`))
+        .forEach((key) => localStorage.setItem(key, "640"));
+      localStorage.setItem(DESIGN_LAYOUT_VERSION_KEY, DESIGN_LAYOUT_VERSION);
+    } catch (_) {
+      /* ignore */
+    }
+  }
 
   function isSidebarCollapsed() {
     return !!els.sidebar?.classList.contains("collapsed");
@@ -3419,8 +3468,8 @@
 
   function syncSidebarNavState() {
     const workActive = state.surfaceMode === "work";
-    els.btnNewProject?.classList.toggle("is-active", workActive);
-    els.btnNewChat?.classList.toggle("is-active", !workActive);
+    els.btnSidebarWork?.classList.toggle("is-active", workActive);
+    els.btnSidebarChat?.classList.toggle("is-active", !workActive);
   }
 
   function runStatusClass(status) {
@@ -5577,11 +5626,12 @@
 
   function fileKind(name) {
     if (/\.html?$/i.test(name)) return { label: "HTML", cls: "html" };
-    if (/\.(css|scss)$/i.test(name)) return { label: "CSS", cls: "css" };
+    if (/\.(css|scss)$/i.test(name)) return { label: "#", cls: "css" };
     if (/\.(js|mjs|cjs)$/i.test(name)) return { label: "JS", cls: "js" };
     if (/\.(ts|tsx|jsx)$/i.test(name)) return { label: "TS", cls: "ts" };
     if (/\.py$/i.test(name)) return { label: "PY", cls: "py" };
-    if (/\.json$/i.test(name)) return { label: "JSON", cls: "json" };
+    if (/favicon\.ico$/i.test(name)) return { label: "★", cls: "ico" };
+    if (/\.json$/i.test(name)) return { label: "{}", cls: "json" };
     if (/\.md$/i.test(name)) return { label: "MD", cls: "md" };
     return { label: "FILE", cls: "file" };
   }
@@ -5665,7 +5715,8 @@
       );
       const li = document.createElement("li");
       li.className = `file-dir${expanded ? " open" : ""}${hasChangedChild ? " changed" : ""}`;
-      li.style.paddingLeft = `${10 + depth * 14}px`;
+      li.dataset.depth = String(depth);
+      li.style.setProperty("--file-depth", String(depth));
       li.innerHTML = `
         <button type="button" class="file-dir-toggle" aria-expanded="${expanded}">
           <span class="file-dir-chevron">${expanded ? "▾" : "▸"}</span>
@@ -5691,14 +5742,16 @@
         const kind = fileKind(f.name);
         const changed = isRecentlyChanged(f.path);
         const li = document.createElement("li");
+        li.className = "file-node";
         li.dataset.path = f.path;
-        li.style.paddingLeft = `${10 + depth * 14}px`;
+        li.dataset.depth = String(depth);
+        li.style.setProperty("--file-depth", String(depth));
         if (state.selectedFile === f.path) li.classList.add("selected");
         if (changed) li.classList.add("changed");
         li.innerHTML = `
           <span class="file-kind file-kind--${kind.cls}">${kind.label}</span>
           <span class="file-path">${escapeHtml(f.name)}</span>
-          ${changed ? '<span class="file-changed">novo</span>' : ""}`;
+          ${changed ? '<span class="file-changed">M</span>' : ""}`;
         li.title = f.path;
         li.addEventListener("click", () => openFile(f.path));
         container.appendChild(li);
@@ -5732,7 +5785,7 @@
           <span class="file-kind file-kind--${kind.cls}">${kind.label}</span>
           <span class="file-path">${escapeHtml(path)}</span>
           ${symbols ? `<span class="file-search-symbols">${escapeHtml(symbols)}</span>` : ""}
-          ${changed ? '<span class="file-changed">novo</span>' : ""}`;
+          ${changed ? '<span class="file-changed">M</span>' : ""}`;
         li.title = path;
         li.addEventListener("click", () => openFile(path));
         els.fileTree.appendChild(li);
@@ -5763,7 +5816,7 @@
           li.innerHTML = `
             <span class="file-kind file-kind--${kind.cls}">${kind.label}</span>
             <span class="file-path">${escapeHtml(f.path)}</span>
-            ${changed ? '<span class="file-changed">novo</span>' : ""}`;
+            ${changed ? '<span class="file-changed">M</span>' : ""}`;
           li.addEventListener("click", () => openFile(f.path));
           els.fileTree.appendChild(li);
         });
@@ -7301,6 +7354,8 @@
     }
   });
 
+  els.btnSidebarWork?.addEventListener("click", () => setSurfaceMode("work"));
+  els.btnSidebarChat?.addEventListener("click", () => setSurfaceMode("chat"));
   els.btnNewProject.addEventListener("click", () => openNewProjectModal("blank"));
   els.btnNewChat?.addEventListener("click", () => {
     setSurfaceMode("chat");
@@ -7610,13 +7665,14 @@
   // ── Init ──
 
   async function init() {
+    migrateDesignerLayoutOnce();
     restoreSidebarCollapsed();
     syncSidebarToggle();
     try {
       const savedSurface = localStorage.getItem("forge_surface_mode");
-      setSurfaceMode(savedSurface === "work" ? "work" : "chat");
+      setSurfaceMode(savedSurface === "chat" ? "chat" : "work");
     } catch (_) {
-      setSurfaceMode("chat");
+      setSurfaceMode("work");
     }
     initLayoutSplitters();
     initLayoutPresets();

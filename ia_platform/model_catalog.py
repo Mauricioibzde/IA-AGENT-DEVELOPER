@@ -140,6 +140,19 @@ MODEL_CATALOG: List[ModelEntry] = [
 TIER_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "ultra": 4}
 
 
+def is_runnable_model_name(name: Optional[str]) -> bool:
+    """Return False for embedding/base models that cannot answer chat/run prompts."""
+    lower = (name or "").strip().lower()
+    if not lower:
+        return False
+    return not (
+        "embed" in lower
+        or "embedding" in lower
+        or "nomic-embed" in lower
+        or lower.endswith("-base")
+    )
+
+
 def resolve_model_for_run(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     """Pick the best model name for an agent run."""
     return resolve_models_for_run(requested, installed, hardware)["coder"]
@@ -170,7 +183,7 @@ def pick_smaller_fallback_model(failed: str, installed: List[str]) -> Optional[s
         lower = (name or "").lower()
         if not lower or lower == failed_name.lower():
             continue
-        if "embed" in lower or lower.endswith("-base"):
+        if not is_runnable_model_name(name):
             continue
         size = estimate_model_size_gb(name)
         # Must be meaningfully smaller (avoid 14b when 32b OOM'd on tight hosts).
@@ -232,7 +245,7 @@ def resolve_model_for_chat(
     hardware = hardware or {}
     if requested and str(requested).strip():
         name = str(requested).strip()
-        if not name.lower().endswith("-base"):
+        if is_runnable_model_name(name):
             return name
 
     preferred = [
@@ -252,13 +265,13 @@ def resolve_model_for_chat(
     ]
     for candidate in preferred:
         hit = _installed_model_name(candidate, installed)
-        if hit and not hit.lower().endswith("-base") and _name_fits_hardware(hit, hardware):
+        if hit and is_runnable_model_name(hit) and _name_fits_hardware(hit, hardware):
             return hit
 
     scored: List[tuple[int, str]] = []
     for name in installed:
         lower = name.lower()
-        if "embed" in lower or lower.endswith("-base"):
+        if not is_runnable_model_name(name):
             continue
         if not _name_fits_hardware(name, hardware):
             continue
@@ -285,6 +298,9 @@ def resolve_model_for_chat(
 def _resolve_coder_model(requested: Optional[str], installed: List[str], hardware: Dict[str, Any]) -> str:
     if requested and str(requested).strip():
         name = str(requested).strip()
+        if not is_runnable_model_name(name):
+            name = ""
+    if requested and str(requested).strip() and name:
         # Explicit pick that cannot load on this host → use a smaller installed coder.
         # (Installed ≠ runnable: qwen2.5-coder:32b often 500s on 16GB boxes.)
         if installed and not _name_fits_hardware(name, hardware):
@@ -304,7 +320,7 @@ def _resolve_coder_model(requested: Optional[str], installed: List[str], hardwar
     fitting_coders: List[tuple[float, str]] = []
     for name in installed:
         lower = name.lower()
-        if "embed" in lower or lower.endswith("-base"):
+        if not is_runnable_model_name(name):
             continue
         if not any(tag in lower for tag in ("coder", "qwen", "deepseek", "codellama", "llama", "mistral")):
             continue
@@ -321,7 +337,7 @@ def _resolve_coder_model(requested: Optional[str], installed: List[str], hardwar
     oversized: List[tuple[float, str]] = []
     for name in installed:
         lower = name.lower()
-        if "embed" in lower or lower.endswith("-base"):
+        if not is_runnable_model_name(name):
             continue
         entry = _catalog_entry_for_name(name)
         size = entry.size_gb if entry else 99.0
@@ -330,8 +346,6 @@ def _resolve_coder_model(requested: Optional[str], installed: List[str], hardwar
         oversized.sort(key=lambda item: item[0])
         return oversized[0][1]
 
-    if installed:
-        return installed[0]
     return primary
 
 
