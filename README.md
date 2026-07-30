@@ -92,6 +92,9 @@ Analise o projeto e corrija erros de sintaxe Python
 ```text
 local_agent/          # motor do agente (planner, tools, validator, reflector)
 ia_platform/          # UI web Forge + API /api/run + preview/dev
+ia_platform/visual_engine/  # fachada Python do Visual Engine
+visual_engine/        # núcleo Node (Puppeteer + pixelmatch) — sem servidor próprio
+docs/                 # VISUAL_ENGINE.md + migração do puppeteer-compare
 scripts/              # setup, run-platform, start-today
 projects/             # projetos criados pela UI (sandbox seguro)
 sandbox/              # workspace CLI / legado
@@ -142,12 +145,24 @@ python -m pytest -q
 
 ---
 
+## Visual Engine (em migração)
+
+Comparação visual integrada a partir do [puppeteer-compare](https://github.com/Mauricioibzde/puppeteer-compare) — ver `docs/MIGRATION_FROM_PUPPETEER_COMPARE.md`.
+
+```bash
+cd visual_engine && npm install && npm test
+python3 -m pytest ia_platform/test_visual_engine.py -q
+```
+
+Requisito: Node.js 18+ e Chrome/Chromium (no Windows os paths comuns são detectados automaticamente).
+
 ## Roadmap pós-MVP
 
 - [ ] Embeddings/RAG para projetos grandes
 - [x] Preview automático (npm run dev)
 - [x] Deploy 1-clique (Vercel)
 - [x] Chat rápido + auto-execução de pedidos de build
+- [ ] Visual Engine completo (capture → compare → correction loop)
 - [ ] Multi-usuário + cloud beta
 
 ---
