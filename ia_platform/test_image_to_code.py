@@ -27,6 +27,15 @@ def test_build_bootstrap_goal_mentions_mockup() -> None:
     assert "pixel" in goal.lower() or "fiel" in goal.lower()
 
 
+def test_build_bootstrap_goal_injects_vision_spec() -> None:
+    goal = build_bootstrap_goal(
+        "mockups/home.png",
+        vision_spec="## Layout\n- sidebar esquerda escura\n- main com chat",
+    )
+    assert "Especificação visual" in goal
+    assert "sidebar esquerda escura" in goal
+
+
 def test_build_correction_goal_includes_diff_feedback() -> None:
     report = {
         "similarity": 0.72,
@@ -52,6 +61,47 @@ def test_build_correction_goal_includes_diff_feedback() -> None:
     assert "95%" in goal
     assert "Checklist prioritário" in goal
     assert "`h1`" in goal
+
+
+def test_build_correction_goal_includes_vision_reminder() -> None:
+    goal = build_correction_goal(
+        "mockups/a.png",
+        {"similarity": 0.6},
+        vision_spec="## Cores\n- fundo #0b0f14",
+    )
+    assert "especificação visual" in goal.lower()
+    assert "#0b0f14" in goal
+
+
+def test_agent_plan_injects_vision_into_goal(tmp_path: Path, monkeypatch) -> None:
+    events = []
+
+    def fake_describe(workspace, mockup, **kwargs):
+        if kwargs.get("on_event"):
+            kwargs["on_event"]({"type": "vision.completed", "model": "llava", "chars": 42})
+        return {
+            "ok": True,
+            "spec": "## Layout\n- rail lateral + canvas central",
+            "model": "llava:7b",
+            "cached": False,
+            "path": mockup,
+        }
+
+    monkeypatch.setattr(
+        "ia_platform.visual_engine.vision.describe_mockup",
+        fake_describe,
+    )
+    fns = make_agent_strategy_fns(
+        tmp_path,
+        mockup="mockups/ui.png",
+        strategy="agent",
+        use_vision=True,
+        on_event=events.append,
+    )
+    patches = fns["plan_fn"]({"similarity": 0.1})
+    assert patches[0]["has_vision_spec"] is True
+    assert patches[0]["vision_model"] == "llava:7b"
+    assert "rail lateral" in patches[0]["goal"]
 
 
 def test_detect_stack_and_file_inventory(tmp_path: Path) -> None:

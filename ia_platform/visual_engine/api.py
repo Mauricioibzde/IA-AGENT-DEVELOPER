@@ -474,6 +474,17 @@ def handle_correction_start(
     max_agent_steps = int(data.get("max_agent_steps") or data.get("agent_max_steps") or 12)
     stack_hint = str(data.get("stack") or data.get("stack_hint") or "").strip()
     settle_seconds = float(data.get("settle_seconds") or data.get("preview_settle_seconds") or 1.6)
+    use_vision_raw = data.get("use_vision")
+    if use_vision_raw is None:
+        use_vision_raw = data.get("vision")
+    use_vision = True if use_vision_raw is None else bool(use_vision_raw)
+    vision_model = str(data.get("vision_model") or data.get("visionModel") or "").strip() or None
+    try:
+        from local_agent.config import AgentConfig
+
+        ollama_host = AgentConfig.from_args(engine.project_dir, no_memory=True).ollama_host
+    except Exception:  # noqa: BLE001
+        ollama_host = "http://127.0.0.1:11434"
 
     def compare_fn() -> Dict[str, Any]:
         preview_url = engine.resolve_preview_url(
@@ -549,6 +560,9 @@ def handle_correction_start(
             max_agent_steps=max_agent_steps,
             stack_hint=stack_hint,
             settle_seconds=settle_seconds,
+            use_vision=use_vision,
+            vision_model=vision_model,
+            ollama_host=ollama_host,
             cancel_check=cancel_check,
             on_event=on_agent_event,
         )
@@ -572,6 +586,8 @@ def handle_correction_start(
                 "max_agent_steps": max_agent_steps,
                 "stack": stack_hint or None,
                 "settle_seconds": settle_seconds,
+                "use_vision": use_vision,
+                "vision_model": vision_model,
             },
             persist_dir=engine.artifacts_root / "corrections",
             plan_fn=plan_fn,

@@ -208,6 +208,7 @@ def build_bootstrap_goal(
     *,
     stack_hint: str = "html",
     workspace_files: Optional[Sequence[str]] = None,
+    vision_spec: str = "",
 ) -> str:
     """First-pass goal: implement UI from mockup image path in the workspace."""
     mockup = str(mockup or "").strip() or "mockups/reference.png"
@@ -226,17 +227,24 @@ def build_bootstrap_goal(
     files_block = ""
     if files:
         files_block = "Arquivos atuais do projeto:\n- " + "\n- ".join(files[:20]) + "\n\n"
+    vision_block = ""
+    if (vision_spec or "").strip():
+        vision_block = (
+            "Especificação visual (modelo de visão — trate como verdade do mockup):\n"
+            f"{vision_spec.strip()[:4500]}\n\n"
+        )
     return (
         "IMAGE-TO-CODE / MOCKUP → FRONTEND\n"
-        f"Referência visual (abra e use como verdade absoluta): {mockup}\n\n"
+        f"Referência visual (arquivo): {mockup}\n\n"
         "Objetivo: transformar esse mockup em código frontend o mais pixel-fiel possível.\n"
         f"{stack_line}\n\n"
+        f"{vision_block}"
         f"{files_block}"
         "Regras:\n"
         "1) Replique layout, tipografia, cores, espaçamentos, raios e hierarquia do mockup.\n"
         "2) Priorize fidelidade visual sobre features extras.\n"
         "3) Crie/atualize os arquivos necessários para o preview funcionar de imediato.\n"
-        "4) Não invente seções que não existam no mockup.\n"
+        "4) Não invente seções que não existam no mockup / na especificação visual.\n"
         "5) Prefira CSS limpo e estrutura semântica; evite placeholders genéricos.\n"
         "6) Ao terminar, o preview deve ficar visualmente próximo da imagem de referência.\n"
     )
@@ -249,6 +257,7 @@ def build_correction_goal(
     attempt: int = 1,
     target_similarity: float = 0.95,
     workspace_files: Optional[Sequence[str]] = None,
+    vision_spec: str = "",
 ) -> str:
     """Follow-up goal: fix UI using visual diff feedback until target is reached."""
     mockup = str(mockup or "").strip() or "mockups/reference.png"
@@ -266,11 +275,19 @@ def build_correction_goal(
     if files:
         files_block = "Arquivos relevantes:\n- " + "\n- ".join(files[:16]) + "\n\n"
     checklist_block = "\n".join(f"- {item}" for item in checklist)
+    vision_block = ""
+    if (vision_spec or "").strip():
+        # Keep shorter on refine to leave room for diff checklist.
+        vision_block = (
+            "Lembrete da especificação visual (visão):\n"
+            f"{vision_spec.strip()[:2800]}\n\n"
+        )
     return (
         "CORREÇÃO VISUAL ORIENTADA POR MOCKUP (tentativa "
         f"{max(1, int(attempt))})\n"
         f"Mockup de referência: {mockup}\n"
         f"{sim_line}\n\n"
+        f"{vision_block}"
         f"{files_block}"
         "Feedback do Visual Engine:\n"
         f"{diff}\n\n"
@@ -278,10 +295,11 @@ def build_correction_goal(
         f"{checklist_block}\n\n"
         "Tarefa:\n"
         "1) Edite o frontend para reduzir as diferenças acima (comece pelo checklist).\n"
-        "2) Foque nos seletores/regiões de maior confiança.\n"
-        "3) Não remova o que já estiver correto; ajuste só o que diverge do mockup.\n"
-        "4) Mantenha o app funcional no preview.\n"
-        f"5) Continue até aproximar ou superar {target_pct} de similaridade visual.\n"
+        "2) Use a especificação visual + diffs juntos (não ignore nenhum dos dois).\n"
+        "3) Foque nos seletores/regiões de maior confiança.\n"
+        "4) Não remova o que já estiver correto; ajuste só o que diverge do mockup.\n"
+        "5) Mantenha o app funcional no preview.\n"
+        f"6) Continue até aproximar ou superar {target_pct} de similaridade visual.\n"
     )
 
 
@@ -317,6 +335,9 @@ def make_agent_strategy_fns(
     max_agent_steps: int = 12,
     stack_hint: str = "",
     settle_seconds: float = 1.6,
+    use_vision: bool = True,
+    vision_model: Optional[str] = None,
+    ollama_host: str = "http://127.0.0.1:11434",
     cancel_check: Optional[Callable[[], bool]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Callable[..., Any]]:
@@ -330,6 +351,7 @@ def make_agent_strategy_fns(
     checkpoint_to_agent_run: Dict[str, str] = {}
     attempt_counter = {"n": 0}
     last_mode = {"value": ""}
+    vision_cache: Dict[str, Any] = {"spec": "", "tried": False, "model": None, "error": None}
 
     def _emit(typ: str, **payload: Any) -> None:
         if on_event:
@@ -338,11 +360,45 @@ def make_agent_strategy_fns(
             except Exception:  # noqa: BLE001
                 pass
 
+    def _ensure_vision_spec() -> str:
+        if not use_vision:
+            return ""
+        if vision_cache["tried"]:
+            return str(vision_cache.get("spec") or "")
+        vision_cache["tried"] = True
+        try:
+            from .vision import describe_mockup
+
+            result = describe_mockup(
+                workspace,
+                mockup,
+                host=ollama_host,
+                model=vision_model,
+                use_cache=True,
+                cancel_check=cancel_check,
+                on_event=on_event,
+            )
+            if result.get("ok") and result.get("spec"):
+                vision_cache["spec"] = str(result["spec"])
+                vision_cache["model"] = result.get("model")
+            else:
+                vision_cache["error"] = result.get("error")
+                _emit(
+                    "vision.skipped",
+                    reason=str(result.get("error") or "unavailable"),
+                    model=result.get("model"),
+                )
+        except Exception as exc:  # noqa: BLE001
+            vision_cache["error"] = str(exc)
+            _emit("vision.skipped", reason=str(exc))
+        return str(vision_cache.get("spec") or "")
+
     def plan_fn(report: Dict[str, Any]) -> List[Dict[str, Any]]:
         attempt_counter["n"] += 1
         attempt = attempt_counter["n"]
         report = report if isinstance(report, dict) else {}
         files = list_workspace_files(workspace)
+        vision_spec = _ensure_vision_spec() if strategy in {"agent", "hybrid"} else ""
 
         if strategy == "css":
             from .patches import plan_heuristic_patches
@@ -362,7 +418,12 @@ def make_agent_strategy_fns(
                     return css_patches
 
         if needs_bootstrap(report) or (strategy == "hybrid" and not use_css and attempt == 1):
-            goal = build_bootstrap_goal(mockup, stack_hint=resolved_stack, workspace_files=files)
+            goal = build_bootstrap_goal(
+                mockup,
+                stack_hint=resolved_stack,
+                workspace_files=files,
+                vision_spec=vision_spec,
+            )
             mode = "bootstrap"
         else:
             goal = build_correction_goal(
@@ -371,6 +432,7 @@ def make_agent_strategy_fns(
                 attempt=attempt,
                 target_similarity=target_similarity,
                 workspace_files=files,
+                vision_spec=vision_spec,
             )
             mode = "refine"
         last_mode["value"] = mode
@@ -382,6 +444,8 @@ def make_agent_strategy_fns(
                 "attempt": attempt,
                 "mockup": mockup,
                 "stack": resolved_stack,
+                "vision_model": vision_cache.get("model"),
+                "has_vision_spec": bool(vision_spec),
             }
         ]
 

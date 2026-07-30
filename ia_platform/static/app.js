@@ -6954,6 +6954,18 @@
     for (let i = events.length - 1; i >= 0; i -= 1) {
       const ev = events[i];
       if (!ev || !ev.type) continue;
+      if (ev.type === "vision.started") {
+        return `Modelo de visão analisando mockup (${ev.model || "vision"})…`;
+      }
+      if (ev.type === "vision.completed") {
+        return `Especificação visual pronta (${ev.model || "vision"} · ${ev.chars || "?"} chars)`;
+      }
+      if (ev.type === "vision.cached") {
+        return `Usando especificação visual em cache (${ev.model || "vision"})`;
+      }
+      if (ev.type === "vision.skipped" || ev.type === "vision.failed") {
+        return `Visão indisponível — seguindo com Visual Engine (${ev.reason || ev.error || "fallback"})`;
+      }
       if (ev.type === "correction.agent_starting") {
         return `Agente trabalhando (${ev.mode || "refine"})…`;
       }
@@ -7096,6 +7108,7 @@
           max_attempts: strategy === "css" ? 5 : 5,
           max_agent_steps: 14,
           settle_seconds: 1.8,
+          use_vision: strategy !== "css",
         }),
       });
       state.correctionJob = data.correction;

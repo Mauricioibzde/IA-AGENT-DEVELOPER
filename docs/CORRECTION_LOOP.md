@@ -32,10 +32,12 @@ COMPARE (baseline)
 ```json
 {
   "mockup": "mockups/home.png",
-  "strategy": "agent",
+  "strategy": "hybrid",
   "target_similarity": 0.95,
-  "max_attempts": 4,
-  "max_agent_steps": 12,
+  "max_attempts": 5,
+  "max_agent_steps": 14,
+  "use_vision": true,
+  "vision_model": "llava",
   "min_improvement": 0.005,
   "stagnation_limit": 2,
   "viewport": { "width": 1366, "height": 768 },
@@ -45,13 +47,19 @@ COMPARE (baseline)
 
 `strategy`: `css` (padrão legado) · `agent` (mockup→código) · `hybrid`.
 
+| Campo | Notas |
+|-------|-------|
+| `use_vision` | default `true` em agent/hybrid; desliga análise multimodal |
+| `vision_model` | opcional; senão escolhe o primeiro modelo de visão instalado |
+
 Veja também `docs/IMAGE_TO_CODE.md`.
 ## Eventos (em `correction.events`)
 
 `correction.started` · `comparison.completed` · `correction.planning` ·  
 `correction.patch_created` · `correction.applied` · `correction.retesting` ·  
 `correction.improved` · `correction.rolled_back` · `correction.completed` ·  
-`correction.cancelled` · `comparison.failed`
+`correction.cancelled` · `comparison.failed` ·  
+`vision.started` · `vision.completed` · `vision.cached` · `vision.skipped` · `vision.failed`
 
 ## Patches
 
@@ -62,6 +70,7 @@ Patches que **pioram** a similaridade são revertidos automaticamente via checkp
 ## Limites conhecidos
 
 - `strategy=css` não substitui um modelo de código/visão completo.
-- `strategy=agent|hybrid` usa o CodingAgent + diffs do Visual Engine (ver `IMAGE_TO_CODE.md`).
+- `strategy=agent|hybrid` usa o CodingAgent + diffs do Visual Engine + (opcional) especificação de visão (ver `IMAGE_TO_CODE.md`).
+- Sem modelo multimodal no Ollama, a visão é ignorada e o loop continua.
 - Heurística CSS pode ser insuficiente para mudanças estruturais grandes.
 - Comparações reais no loop exigem Node + Chrome + preview acessível.
