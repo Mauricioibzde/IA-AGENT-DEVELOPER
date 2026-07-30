@@ -2574,6 +2574,8 @@
     await maybeEnableDevPreview({ preferDev: options.preferDev, autoStart: !!options.autoStart });
     updatePreview();
     syncDevPolling();
+    syncWorkRailVisibility();
+    syncWorkRail(null);
     await resumeActiveRunIfNeeded();
   }
 
@@ -2581,7 +2583,11 @@
     if (!state.current || state.running) return;
     try {
       const info = await api(`/api/projects/${encodeURIComponent(state.current.id)}/active-run`);
-      if (!info?.active || !info.run_id) return;
+      if (!info?.active || !info.run_id) {
+        hideBusyBanner();
+        return;
+      }
+      showBusyBanner(info);
       addMessage(
         `Reconectando à execução${info.goal ? `: ${info.goal}` : ""}…`,
         "system"
@@ -2595,14 +2601,16 @@
   async function pollActiveRun(runId, goal) {
     state.running = true;
     state.runId = runId;
+    showBusyBanner({ run_id: runId, goal, started_at: Date.now() / 1000 });
     els.btnSend.disabled = true;
     els.btnCancel?.classList.remove("hidden");
     els.btnCancel.disabled = false;
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(goal);
     startActivityTimer(progressEl, activity);
+    syncWorkRail(activity);
     const agentEl = addMessage("", "agent live");
-    setWorkingState(agentEl, "Reconectando à execução", "Aguardando leituras e edições…", activity);
+    setWorkingState(agentEl, "Acompanhando execução", "Status ao vivo — leituras e diffs aparecem aqui", activity);
     let after = 0;
     let donePayload = null;
     try {
@@ -2616,6 +2624,14 @@
             continue;
           }
           handleStreamEvent(ev, progressEl, agentEl, activity);
+        }
+        syncWorkRail(activity);
+        if (els.busyBannerText && goal) {
+          const n = Number(data.event_count || after || 0);
+          els.busyBannerText.textContent =
+            n > 0
+              ? `Execução em andamento (${n} eventos): ${String(goal).slice(0, 72)}`
+              : `Execução em andamento: ${String(goal).slice(0, 80)}`;
         }
         if (donePayload || data.active === false) break;
         await new Promise((r) => setTimeout(r, 900));
@@ -2652,10 +2668,33 @@
     } finally {
       state.running = false;
       state.runId = null;
+      hideBusyBanner();
       els.btnSend.disabled = false;
       els.btnCancel?.classList.add("hidden");
+      syncWorkRail(null);
       syncModeControls();
     }
+  }
+
+  async function followBusyRun(info, { systemNote } = {}) {
+    const runId = info?.run_id;
+    if (!runId) return false;
+    showBusyBanner(info);
+    if (systemNote) addMessage(systemNote, "system");
+    showToast("Projeto ocupado — acompanhando a execução atual.", "info", 5000);
+    await pollActiveRun(runId, info.goal || "Execução em andamento");
+    return true;
+  }
+
+  async function checkActiveRunStillAlive() {
+    if (!state.current?.id) return null;
+    try {
+      const info = await api(`/api/projects/${encodeURIComponent(state.current.id)}/active-run`);
+      if (info?.active && info.run_id) return info;
+    } catch {
+      /* ignore */
+    }
+    return null;
   }
 
   async function maybeEnableDevPreview({ preferDev = false, autoStart = false } = {}) {
@@ -3758,7 +3797,6 @@
   }
 
   async function cancelRun() {
-    hideBusyBanner();
     const runId = state.runId;
     const projectId = state.current?.id;
     const payload = { force: true };
@@ -3778,6 +3816,11 @@
     if (state.abortController) {
       state.abortController.abort();
     }
+    state.running = false;
+    hideBusyBanner();
+    els.btnCancel?.classList.add("hidden");
+    els.btnSend.disabled = false;
+    syncWorkRail(null);
     showToast("Execução cancelada — fila liberada.", "info");
   }
 
@@ -4221,7 +4264,17 @@
         agentEl.textContent = e.message || "Já existe uma execução neste projeto.";
         agentEl.classList.add("error");
         showBusyBanner(e.data || {});
-        showToast("Projeto ocupado — clique em Cancelar e liberar.", "err", 6000);
+        showToast("Projeto ocupado — acompanhando ou use Cancelar e liberar.", "err", 6000);
+        const busy = e.data || {};
+        if (busy.run_id && state.surfaceMode === "work") {
+          state.running = false;
+          window.clearInterval(waitTimer);
+          await followBusyRun(busy, {
+            systemNote:
+              "Há uma execução ativa — acompanhando o progresso no Work. Use «Cancelar e liberar» se estiver travada.",
+          });
+          return;
+        }
       } else if (e.name === "AbortError") {
         wasAbort = true;
         agentEl.textContent = "Chat cancelado.";
@@ -4316,9 +4369,11 @@
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(displayPrompt);
     startActivityTimer(progressEl, activity);
+    syncWorkRail(activity);
     const agentEl = addMessage("", "agent live");
     setWorkingState(agentEl, "Iniciando agente…", "Como no Cursor: leituras e diffs aparecem aqui", activity);
     let wasAbort = false;
+    let followBusy = null;
     const modelForRequest =
       opts.model !== undefined ? opts.model : resolveModelForRequest();
 
@@ -4400,33 +4455,45 @@
         err.streamError = true;
         throw err;
       } else {
-        // Stream died without done (common when a huge model OOMs mid-run).
-        // Retry once with a fitting smaller model for create/scaffold goals.
-        const createLike =
-          looksLikeOfflineScaffoldGoal(displayPrompt) ||
-          looksLikeStrongCreateIntent(displayPrompt) ||
-          looksLikeCodeRequest(displayPrompt);
-        if (createLike && !opts.noReportRetried && mode !== "plan") {
-          const broken = modelForRequest || resolveModelForRequest();
-          const fallback = banAndSwitchFromBrokenModel(broken, "Execução interrompida sem relatório");
-          state.running = false;
-          removeMessage(agentEl);
+        // Stream closed without done — often the UI dropped while the agent still runs.
+        const stillActive = await checkActiveRunStillAlive();
+        if (stillActive?.run_id) {
+          stopActivityTimer(activity);
           removeMessage(progressEl);
-          addMessage(
-            fallback
-              ? `Execução interrompida sem relatório — repetindo com <strong>${escapeHtml(fallback)}</strong> (scaffold se o modelo falhar).`
-              : "Execução interrompida sem relatório — repetindo com Auto / scaffold determinístico…",
-            "system"
+          finalizeAgentMessage(
+            agentEl,
+            "Conexão do stream caiu — acompanhando a execução pelo status do servidor…",
+            { activity }
           );
-          return sendAgentPrompt(prompt, mode, {
-            displayPrompt,
-            model: fallback,
-            noReportRetried: true,
-            oomRetried: true,
-          });
+          followBusy = stillActive;
+        } else {
+          // Retry once with a fitting smaller model for create/scaffold goals.
+          const createLike =
+            looksLikeOfflineScaffoldGoal(displayPrompt) ||
+            looksLikeStrongCreateIntent(displayPrompt) ||
+            looksLikeCodeRequest(displayPrompt);
+          if (createLike && !opts.noReportRetried && mode !== "plan") {
+            const broken = modelForRequest || resolveModelForRequest();
+            const fallback = banAndSwitchFromBrokenModel(broken, "Execução interrompida sem relatório");
+            state.running = false;
+            removeMessage(agentEl);
+            removeMessage(progressEl);
+            addMessage(
+              fallback
+                ? `Execução interrompida sem relatório — repetindo com <strong>${escapeHtml(fallback)}</strong> (scaffold se o modelo falhar).`
+                : "Execução interrompida sem relatório — repetindo com Auto / scaffold determinístico…",
+              "system"
+            );
+            return sendAgentPrompt(prompt, mode, {
+              displayPrompt,
+              model: fallback,
+              noReportRetried: true,
+              oomRetried: true,
+            });
+          }
+          finalizeAgentMessage(agentEl, "Execução finalizada sem relatório.", { error: true, activity });
+          window.setTimeout(() => removeMessage(progressEl), 2500);
         }
-        finalizeAgentMessage(agentEl, "Execução finalizada sem relatório.", { error: true, activity });
-        window.setTimeout(() => removeMessage(progressEl), 2500);
       }
     } catch (e) {
       stopActivityTimer(activity);
@@ -4434,11 +4501,16 @@
       clearThinkingState(agentEl);
       agentEl.classList.remove("live", "thinking", "cursor-mode");
       if (e.status === 409 || e.data?.busy) {
+        followBusy = e.data || {};
+        showBusyBanner(followBusy);
         finalizeAgentMessage(agentEl, e.message || "Agente já em execução neste projeto.", {
           error: true,
           activity,
         });
-        addMessage("Aguarde a execução atual terminar ou cancele antes de enviar outro prompt.", "system");
+        if (!followBusy.run_id && state.current?.id) {
+          const alive = await checkActiveRunStillAlive();
+          if (alive?.run_id) followBusy = alive;
+        }
       } else if (e.name === "AbortError") {
         wasAbort = true;
         finalizeAgentMessage(agentEl, "Cancelando...", { error: true, activity });
@@ -4528,13 +4600,24 @@
       }
     } finally {
       stopActivityTimer(activity);
-      state.running = false;
-      state.runId = null;
       state.abortController = null;
       state.llmPreviewChars = 0;
-      els.btnSend.disabled = false;
-      els.btnCancel?.classList.add("hidden");
-      els.btnCancel.disabled = false;
+      if (followBusy?.run_id) {
+        state.running = false;
+        showBusyBanner(followBusy);
+        els.btnCancel?.classList.remove("hidden");
+        if (els.btnCancel) els.btnCancel.disabled = false;
+        els.btnSend.disabled = false;
+      } else {
+        state.running = false;
+        state.runId = null;
+        els.btnSend.disabled = false;
+        if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) {
+          els.btnCancel?.classList.add("hidden");
+        }
+        els.btnCancel.disabled = false;
+        syncWorkRail(null);
+      }
       updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
@@ -4542,6 +4625,12 @@
         await loadChat().catch(() => {});
       }
       els.promptInput.focus();
+    }
+    if (followBusy?.run_id) {
+      await followBusyRun(followBusy, {
+        systemNote:
+          "Há uma execução ativa neste projeto — acompanhando o progresso. Use «Cancelar e liberar» se estiver travada.",
+      });
     }
   }
 

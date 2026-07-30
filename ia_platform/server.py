@@ -1842,6 +1842,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "run_id": active.get("run_id"),
                     "goal": active.get("goal"),
                     "started_at": active.get("started_at"),
+                    "event_count": active.get("event_count"),
                     "cancelled": active.get("cancelled"),
                 },
             )
@@ -1855,7 +1856,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         run_id = run_manager.acquire(str(workspace))
         if not run_id:
-            self._send_sse({"type": "error", "error": "Workspace ocupado por outra execução."})
+            active = run_manager.active_for_workspace(str(workspace)) or {}
+            self._send_sse(
+                {
+                    "type": "error",
+                    "error": "Workspace ocupado por outra execução.",
+                    "busy": True,
+                    "run_id": active.get("run_id"),
+                    "goal": active.get("goal"),
+                }
+            )
             return
 
         model = models["coder"]
@@ -1994,6 +2004,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "busy": True,
                     "run_id": active.get("run_id"),
                     "goal": active.get("goal"),
+                    "started_at": active.get("started_at"),
+                    "event_count": active.get("event_count"),
                 },
             )
 
@@ -2006,7 +2018,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
 
         run_id = run_manager.acquire(str(workspace))
         if not run_id:
-            self._send_sse({"type": "error", "error": "Workspace ocupado por outra execução."})
+            active = run_manager.active_for_workspace(str(workspace)) or {}
+            self._send_sse(
+                {
+                    "type": "error",
+                    "error": "Workspace ocupado por outra execução.",
+                    "busy": True,
+                    "run_id": active.get("run_id"),
+                    "goal": active.get("goal"),
+                }
+            )
             return
 
         run_manager.set_goal(run_id, prompt)
@@ -2114,14 +2135,32 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(self._preflight_status(preflight_error), preflight_error)
 
         if run_manager.is_workspace_busy(workspace):
+            active = run_manager.active_for_workspace(str(workspace)) or {}
             return self._send_json(
                 409,
-                {"error": "Agente já em execução neste projeto.", "busy": True},
+                {
+                    "error": "Agente já em execução neste projeto. Aguarde ou cancele a execução atual.",
+                    "busy": True,
+                    "run_id": active.get("run_id"),
+                    "goal": active.get("goal"),
+                    "started_at": active.get("started_at"),
+                    "event_count": active.get("event_count"),
+                },
             )
 
         run_id = run_manager.acquire(str(workspace))
         if not run_id:
-            return self._send_json(409, {"error": "Workspace ocupado.", "busy": True})
+            active = run_manager.active_for_workspace(str(workspace)) or {}
+            return self._send_json(
+                409,
+                {
+                    "error": "Workspace ocupado.",
+                    "busy": True,
+                    "run_id": active.get("run_id"),
+                    "goal": active.get("goal"),
+                    "started_at": active.get("started_at"),
+                },
+            )
 
         try:
             from local_agent.agent import CodingAgent
