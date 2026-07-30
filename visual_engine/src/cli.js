@@ -7,7 +7,15 @@
  */
 
 import fs from 'node:fs';
-import { compare, capture, detectChromePath, listViewports, compareImages } from './index.js';
+import {
+  compare,
+  compareMulti,
+  capture,
+  detectChromePath,
+  listViewports,
+  compareImages,
+  defaultPool,
+} from './index.js';
 
 async function readInput() {
   const arg = process.argv[2];
@@ -34,8 +42,20 @@ async function main() {
         ok: true,
         chrome: detectChromePath(),
         viewports: listViewports().length,
+        pool: defaultPool.stats(),
       })
     );
+    return;
+  }
+
+  if (op === 'pool_stats') {
+    console.log(JSON.stringify({ ok: true, pool: defaultPool.stats() }));
+    return;
+  }
+
+  if (op === 'pool_drain') {
+    await defaultPool.drain();
+    console.log(JSON.stringify({ ok: true, pool: defaultPool.stats() }));
     return;
   }
 
@@ -66,6 +86,12 @@ async function main() {
 
   if (op === 'capture') {
     const result = await capture(req);
+    console.log(JSON.stringify({ ok: true, ...result }));
+    return;
+  }
+
+  if (op === 'compare_multi') {
+    const result = await compareMulti(req);
     console.log(JSON.stringify({ ok: true, ...result }));
     return;
   }

@@ -168,7 +168,14 @@ def handle_list_suites(_engine: VisualEngine) -> Tuple[int, Dict[str, Any]]:
 
 def handle_pixel_perfect(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
     """Run Pixel Perfect multi-viewport suite and persist aggregate report."""
-    from .pixel_perfect import persist_suite_report, run_pixel_perfect
+    from .pixel_perfect import (
+        persist_suite_report,
+        resolve_suite_viewports,
+        run_pixel_perfect,
+        ViewportResult,
+        SuiteReport,
+        aggregate_scores,
+    )
 
     try:
         source = parse_side(data.get("source"), default_type="url")
@@ -178,28 +185,83 @@ def handle_pixel_perfect(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[in
         suite = data.get("suite")
         viewports = data.get("viewports") if isinstance(data.get("viewports"), list) else None
 
-        def compare_fn(vp: Dict[str, Any]) -> Dict[str, Any]:
-            report = engine.compare(
-                CompareRequest(
-                    source=source,
-                    target=target,
-                    viewport=vp,
-                    options=options,
-                )
+        # Prefer single CLI process + browser pool (Phase 8).
+        use_multi = data.get("use_multi", True)
+        if use_multi and (source.type == "url" or target.type == "url"):
+            suite_id, suite_name, resolved = resolve_suite_viewports(
+                suite=str(suite) if suite else None,
+                viewports=viewports,
             )
-            return report.to_dict()
+            reports = engine.compare_multi(
+                source=source,
+                target=target,
+                viewports=resolved,
+                options=options,
+            )
+            results = []
+            for vp, report in zip(resolved, reports):
+                sim = report.similarity
+                results.append(
+                    ViewportResult(
+                        viewport=vp,
+                        similarity=float(sim) if isinstance(sim, (int, float)) else None,
+                        passed=isinstance(sim, (int, float)) and float(sim) >= target_sim,
+                        target_similarity=target_sim,
+                        comparison_id=report.comparison_id,
+                        status=report.status,
+                        report=report.to_dict(),
+                    )
+                )
+            agg = aggregate_scores(results, target=target_sim)
+            primary = ""
+            for r in results:
+                if not r.passed and r.comparison_id:
+                    primary = r.comparison_id
+                    break
+            if not primary:
+                for r in results:
+                    if r.comparison_id:
+                        primary = r.comparison_id
+                        break
+            suite_report = SuiteReport(
+                suite_id=suite_id,
+                suite_name=suite_name,
+                status=str(agg["status"]),
+                target_similarity=target_sim,
+                viewports=results,
+                min_similarity=agg["min"],
+                avg_similarity=agg["avg"],
+                max_similarity=agg["max"],
+                passed_count=int(agg["passed"]),
+                failed_count=int(agg["failed"]),
+                worst_viewport_id=agg["worst_id"],
+                primary_comparison_id=primary,
+                meta={"source": source.value, "target": target.value, "pooled": True},
+            )
+        else:
 
-        suite_report = run_pixel_perfect(
-            compare_fn=compare_fn,
-            suite=str(suite) if suite else None,
-            viewports=viewports,
-            target_similarity=target_sim,
-            include_reports=True,
-            meta={"source": source.value, "target": target.value},
-        )
+            def compare_fn(vp: Dict[str, Any]) -> Dict[str, Any]:
+                report = engine.compare(
+                    CompareRequest(
+                        source=source,
+                        target=target,
+                        viewport=vp,
+                        options=options,
+                    )
+                )
+                return report.to_dict()
+
+            suite_report = run_pixel_perfect(
+                compare_fn=compare_fn,
+                suite=str(suite) if suite else None,
+                viewports=viewports,
+                target_similarity=target_sim,
+                include_reports=True,
+                meta={"source": source.value, "target": target.value},
+            )
+
         persist_suite_report(engine.artifacts_root, suite_report)
         payload = suite_report.to_dict()
-        # Expose first/worst child report for gallery UI.
         primary = None
         for vr in suite_report.viewports:
             if vr.comparison_id == suite_report.primary_comparison_id and vr.report:
@@ -222,6 +284,36 @@ def handle_pixel_perfect(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[in
         return 400, {"error": str(exc)}
     except Exception as exc:  # noqa: BLE001
         return 500, {"error": str(exc)}
+
+
+def handle_cleanup(engine: VisualEngine, data: Optional[Dict[str, Any]] = None) -> Tuple[int, Dict[str, Any]]:
+    from .cleanup import cleanup_artifacts, cleanup_stats
+    from . import telemetry
+
+    data = data or {}
+    try:
+        result = cleanup_artifacts(
+            engine.artifacts_root,
+            max_age_sec=float(data.get("max_age_sec") or data.get("maxAgeSec") or 7 * 24 * 3600),
+            max_comparisons=int(data.get("max_comparisons") or data.get("maxComparisons") or 80),
+            dry_run=bool(data.get("dry_run") or data.get("dryRun")),
+        )
+        telemetry.record("cleanup", ok=True)
+        result["stats"] = cleanup_stats(engine.artifacts_root)
+        return 200, result
+    except Exception as exc:  # noqa: BLE001
+        return 500, {"error": str(exc)}
+
+
+def handle_cleanup_stats(engine: VisualEngine) -> Tuple[int, Dict[str, Any]]:
+    from .cleanup import cleanup_stats
+    from . import telemetry
+
+    return 200, {
+        "ok": True,
+        "stats": cleanup_stats(engine.artifacts_root),
+        "telemetry": telemetry.snapshot(),
+    }
 
 
 def handle_mockup_upload(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:

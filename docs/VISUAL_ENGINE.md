@@ -145,6 +145,17 @@ Ver `docs/PIXEL_PERFECT.md`.
 | POST | `/api/projects/:id/visual/compare` | Aceita `suite` / `pixel_perfect` |
 | POST | `/api/projects/:id/visual/correction/start` | Loop; opcional `suite` |
 
+### Cleanup + pool (Fase 8)
+
+- Browser pool no processo Node (`visual_engine/src/pool.js`); `op: compare_multi` reutiliza Chromium
+- Cleanup Python: idade (7d) + contagem (80); nunca apaga `baselines/` nem `corrections/`
+- Telemetria em `status.telemetry` + `.agent/visual/telemetry.json`
+
+| Método | Rota | Função |
+|--------|------|--------|
+| GET | `/api/projects/:id/visual/cleanup` | Stats de armazenamento |
+| POST | `/api/projects/:id/visual/cleanup` | Executa retenção (`dry_run` opcional) |
+
 ## Fases
 
-Ver `docs/MIGRATION_FROM_PUPPETEER_COMPARE.md`.
+Ver `docs/MIGRATION_FROM_PUPPETEER_COMPARE.md` e `docs/ACCEPTANCE.md`.

@@ -3,6 +3,7 @@
  */
 
 export { createBrowser, closeBrowser, detectChromePath } from './browser.js';
+export { createPool, defaultPool, BrowserPool } from './pool.js';
 export { captureScreenshot } from './capture.js';
 export { compareImages } from './compareImages.js';
 export { normalizePair, buildOverlay, scaleNearest } from './normalize.js';
@@ -24,6 +25,7 @@ export { correlateRegions } from './correlate.js';
 import fs from 'node:fs';
 import path from 'node:path';
 import { createBrowser, closeBrowser } from './browser.js';
+import { defaultPool } from './pool.js';
 import { captureScreenshot } from './capture.js';
 import { compareImages } from './compareImages.js';
 import { createComparisonDir, writePng, writeJson } from './artifacts.js';
@@ -32,6 +34,19 @@ import { getDomDiffSummary } from './dom/domDiff.js';
 import { findDiffRegions } from './regions.js';
 import { diffLayouts } from './layout.js';
 import { correlateRegions } from './correlate.js';
+
+async function withBrowser(options, fn) {
+  const usePool = options?.usePool !== false;
+  if (usePool) {
+    return defaultPool.withBrowser((browser) => fn(browser));
+  }
+  const browser = await createBrowser(options?.browser || {});
+  try {
+    return await fn(browser);
+  } finally {
+    await closeBrowser(browser);
+  }
+}
 
 /**
  * Unified compare entry (URL/image/mockup) with pixel + DOM/layout analysis.
@@ -63,56 +78,56 @@ export async function compare(request) {
     actualBuf = fs.readFileSync(target.value);
   } else if (source.type === 'url' && target.type === 'url') {
     mode = 'url-vs-url';
-    const browser = await createBrowser(options.browser || {});
-    try {
+    await withBrowser(options, async (browser) => {
       const pageA = await browser.newPage();
       const pageB = await browser.newPage();
-      const [capA, capB] = await Promise.all([
-        captureScreenshot(pageA, source.value, viewport, options),
-        captureScreenshot(pageB, target.value, viewport, options),
-      ]);
-      referenceBuf = capA.png;
-      actualBuf = capB.png;
-      htmlA = capA.html;
-      htmlB = capB.html;
-      layoutA = capA.layout || [];
-      layoutB = capB.layout || [];
-      warnings.push(...(capA.consoleErrors || []).map((e) => `source console: ${e}`));
-      warnings.push(...(capB.consoleErrors || []).map((e) => `target console: ${e}`));
-      await pageA.close().catch(() => {});
-      await pageB.close().catch(() => {});
-    } finally {
-      await closeBrowser(browser);
-    }
+      try {
+        const [capA, capB] = await Promise.all([
+          captureScreenshot(pageA, source.value, viewport, options),
+          captureScreenshot(pageB, target.value, viewport, options),
+        ]);
+        referenceBuf = capA.png;
+        actualBuf = capB.png;
+        htmlA = capA.html;
+        htmlB = capB.html;
+        layoutA = capA.layout || [];
+        layoutB = capB.layout || [];
+        warnings.push(...(capA.consoleErrors || []).map((e) => `source console: ${e}`));
+        warnings.push(...(capB.consoleErrors || []).map((e) => `target console: ${e}`));
+      } finally {
+        await pageA.close().catch(() => {});
+        await pageB.close().catch(() => {});
+      }
+    });
   } else if (source.type === 'image' && target.type === 'url') {
     mode = 'mockup-vs-url';
     referenceBuf = fs.readFileSync(source.value);
-    const browser = await createBrowser(options.browser || {});
-    try {
+    await withBrowser(options, async (browser) => {
       const page = await browser.newPage();
-      const cap = await captureScreenshot(page, target.value, viewport, options);
-      actualBuf = cap.png;
-      htmlB = cap.html;
-      layoutB = cap.layout || [];
-      warnings.push(...(cap.consoleErrors || []).map((e) => `target console: ${e}`));
-      await page.close().catch(() => {});
-    } finally {
-      await closeBrowser(browser);
-    }
+      try {
+        const cap = await captureScreenshot(page, target.value, viewport, options);
+        actualBuf = cap.png;
+        htmlB = cap.html;
+        layoutB = cap.layout || [];
+        warnings.push(...(cap.consoleErrors || []).map((e) => `target console: ${e}`));
+      } finally {
+        await page.close().catch(() => {});
+      }
+    });
   } else if (source.type === 'url' && target.type === 'image') {
     mode = 'url-vs-image';
     actualBuf = fs.readFileSync(target.value);
-    const browser = await createBrowser(options.browser || {});
-    try {
+    await withBrowser(options, async (browser) => {
       const page = await browser.newPage();
-      const cap = await captureScreenshot(page, source.value, viewport, options);
-      referenceBuf = cap.png;
-      htmlA = cap.html;
-      layoutA = cap.layout || [];
-      await page.close().catch(() => {});
-    } finally {
-      await closeBrowser(browser);
-    }
+      try {
+        const cap = await captureScreenshot(page, source.value, viewport, options);
+        referenceBuf = cap.png;
+        htmlA = cap.html;
+        layoutA = cap.layout || [];
+      } finally {
+        await page.close().catch(() => {});
+      }
+    });
   } else {
     throw new Error(`Unsupported compare mode: ${source.type} vs ${target.type}`);
   }
@@ -241,25 +256,58 @@ export async function capture(request) {
   const artifactsRoot = request.artifactsRoot || path.join(process.cwd(), 'artifacts');
   const { id, dir } = createComparisonDir(artifactsRoot, request.comparisonId || `cap-${Date.now()}`);
   const viewport = resolveViewport(request.viewport);
-  const browser = await createBrowser(request.options?.browser || {});
-  try {
+  const options = request.options || {};
+  return withBrowser(options, async (browser) => {
     const page = await browser.newPage();
-    const cap = await captureScreenshot(page, request.url, viewport, request.options || {});
-    const out = path.join(dir, 'actual.png');
-    writePng(cap.png, out);
-    const result = {
-      comparisonId: id,
-      status: 'completed',
-      mode: 'capture',
-      viewport,
-      artifacts: { actual: out, directory: dir },
-      consoleErrors: cap.consoleErrors,
-      networkFailures: cap.networkFailures,
-    };
-    writeJson(result, path.join(dir, 'report.json'));
-    await page.close().catch(() => {});
-    return result;
-  } finally {
-    await closeBrowser(browser);
+    try {
+      const cap = await captureScreenshot(page, request.url, viewport, options);
+      const out = path.join(dir, 'actual.png');
+      writePng(cap.png, out);
+      const result = {
+        comparisonId: id,
+        status: 'completed',
+        mode: 'capture',
+        viewport,
+        artifacts: { actual: out, directory: dir },
+        consoleErrors: cap.consoleErrors,
+        networkFailures: cap.networkFailures,
+        pool: defaultPool.stats(),
+      };
+      writeJson(result, path.join(dir, 'report.json'));
+      return result;
+    } finally {
+      await page.close().catch(() => {});
+    }
+  });
+}
+
+/**
+ * Sequential multi-viewport compare reusing one browser (Phase 8).
+ * @param {object} request
+ */
+export async function compareMulti(request) {
+  const viewports = Array.isArray(request.viewports) ? request.viewports : [];
+  if (!viewports.length) throw new Error('viewports[] required');
+  const started = Date.now();
+  const reports = [];
+  // Force pool reuse across iterations.
+  const baseOptions = { ...(request.options || {}), usePool: true };
+  for (const vp of viewports.slice(0, 8)) {
+    const report = await compare({
+      ...request,
+      viewport: vp,
+      options: baseOptions,
+      comparisonId: undefined,
+    });
+    reports.push(report);
   }
+  await defaultPool.drain();
+  return {
+    status: 'completed',
+    mode: 'multi-viewport',
+    reports,
+    count: reports.length,
+    performance: { durationMs: Date.now() - started },
+    pool: defaultPool.stats(),
+  };
 }

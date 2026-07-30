@@ -298,6 +298,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_visual_status(project_id)
         if project_id and sub == "visual/suites":
             return self._handle_visual_suites(project_id)
+        if project_id and sub == "visual/cleanup":
+            return self._handle_visual_cleanup_stats(project_id)
         if project_id and sub == "visual/baselines":
             return self._handle_visual_baselines_list(project_id)
         if project_id and sub.startswith("visual/baselines/"):
@@ -393,6 +395,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if project_id and sub.startswith("visual/correction/") and sub.endswith("/cancel"):
             cid = sub[len("visual/correction/") : -len("/cancel")].strip("/")
             return self._handle_visual_correction_cancel(project_id, cid)
+        if project_id and sub == "visual/cleanup":
+            return self._handle_visual_cleanup(project_id)
         if project_id and sub == "visual/baselines/approve":
             return self._handle_visual_baseline_approve(project_id)
         if project_id and sub == "visual/baselines/reject":
@@ -1322,6 +1326,27 @@ class PlatformHandler(BaseHTTPRequestHandler):
         except FileNotFoundError:
             return self._send_json(404, {"error": "project not found"})
         code, payload = visual_api.handle_list_suites(engine)
+        return self._send_json(code, payload)
+
+    def _handle_visual_cleanup_stats(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_cleanup_stats(engine)
+        return self._send_json(code, payload)
+
+    def _handle_visual_cleanup(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_cleanup(engine, data)
         return self._send_json(code, payload)
 
     def _handle_visual_baselines_list(self, project_id: str) -> None:

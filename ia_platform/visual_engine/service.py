@@ -12,6 +12,7 @@ from .bridge import VisualEngineBridgeError, node_available, ping, run_cli
 from .history import append_history, delete_comparison, get_history_entry, load_history
 from .models import CompareRequest, Side, VisualReport
 from .security import validate_compare_url
+from . import telemetry
 
 
 class VisualEngine:
@@ -37,11 +38,15 @@ class VisualEngine:
         return node_available()
 
     def status(self) -> Dict[str, Any]:
+        from .cleanup import cleanup_stats
+
         info: Dict[str, Any] = {
             "ok": self.available(),
             "node": self.available(),
             "artifacts_root": str(self.artifacts_root),
             "project_id": self.project_id,
+            "telemetry": telemetry.snapshot(),
+            "storage": cleanup_stats(self.artifacts_root),
         }
         if self.available():
             try:
@@ -128,58 +133,121 @@ class VisualEngine:
         target = self._resolve_side(request.target)
         options = dict(request.options or {})
         inline = bool(options.pop("inline", False)) and source["type"] == "image" and target["type"] == "image"
-
-        payload: Dict[str, Any] = {
-            "op": "compare_images" if inline else "compare",
-            "source": source,
-            "target": target,
-            "viewport": request.viewport or {"width": 1366, "height": 768},
-            "options": options,
-            "artifactsRoot": str(self.artifacts_root),
-            "comparisonId": request.comparison_id,
-            "inline": inline,
-        }
-        data = run_cli(payload, timeout=int(options.get("timeoutMs") or 180))
-        if inline and "similarity" in data and "artifacts" not in data:
-            data = {
-                "comparisonId": request.comparison_id or "inline",
-                "status": data.get("status") or "completed",
-                "mode": data.get("mode") or "image-vs-image",
-                "similarity": data.get("similarity"),
-                "viewport": request.viewport or {},
-                "summary": {
-                    "differentPixels": data.get("diffPixels"),
-                    "totalPixels": data.get("totalPixels"),
-                    "diffPercent": data.get("diffPercent"),
-                },
-                "warnings": data.get("warnings") or [],
-                "artifacts": {},
-                **data,
+        t0 = time.time()
+        ok = True
+        try:
+            payload: Dict[str, Any] = {
+                "op": "compare_images" if inline else "compare",
+                "source": source,
+                "target": target,
+                "viewport": request.viewport or {"width": 1366, "height": 768},
+                "options": options,
+                "artifactsRoot": str(self.artifacts_root),
+                "comparisonId": request.comparison_id,
+                "inline": inline,
             }
-        report = VisualReport.from_bridge(data)
-        if not inline:
-            self._record(report, source=source, target=target)
-        return report
+            data = run_cli(payload, timeout=int(options.get("timeoutMs") or 180))
+            if inline and "similarity" in data and "artifacts" not in data:
+                data = {
+                    "comparisonId": request.comparison_id or "inline",
+                    "status": data.get("status") or "completed",
+                    "mode": data.get("mode") or "image-vs-image",
+                    "similarity": data.get("similarity"),
+                    "viewport": request.viewport or {},
+                    "summary": {
+                        "differentPixels": data.get("diffPixels"),
+                        "totalPixels": data.get("totalPixels"),
+                        "diffPercent": data.get("diffPercent"),
+                    },
+                    "warnings": data.get("warnings") or [],
+                    "artifacts": {},
+                    **data,
+                }
+            report = VisualReport.from_bridge(data)
+            if not inline:
+                self._record(report, source=source, target=target)
+            return report
+        except Exception:
+            ok = False
+            raise
+        finally:
+            telemetry.record("compare", duration_ms=(time.time() - t0) * 1000, ok=ok)
+            try:
+                telemetry.persist(self.artifacts_root)
+            except OSError:
+                pass
+
+    def compare_multi(
+        self,
+        *,
+        source: Side,
+        target: Side,
+        viewports: List[Dict[str, Any]],
+        options: Optional[Dict[str, Any]] = None,
+    ) -> List[VisualReport]:
+        """One CLI process, one browser pool, many viewports."""
+        if not self.available():
+            raise VisualEngineBridgeError("Visual Engine requires Node.js 18+")
+        src = self._resolve_side(source)
+        tgt = self._resolve_side(target)
+        opts = dict(options or {})
+        t0 = time.time()
+        ok = True
+        try:
+            data = run_cli(
+                {
+                    "op": "compare_multi",
+                    "source": src,
+                    "target": tgt,
+                    "viewports": viewports,
+                    "options": opts,
+                    "artifactsRoot": str(self.artifacts_root),
+                },
+                timeout=int(opts.get("timeoutMs") or 600),
+            )
+            reports = []
+            for raw in data.get("reports") or []:
+                report = VisualReport.from_bridge(raw)
+                self._record(report, source=src, target=tgt)
+                reports.append(report)
+            return reports
+        except Exception:
+            ok = False
+            raise
+        finally:
+            telemetry.record("compare_multi", duration_ms=(time.time() - t0) * 1000, ok=ok)
+            try:
+                telemetry.persist(self.artifacts_root)
+            except OSError:
+                pass
 
     def capture_url(self, url: str, *, viewport: Optional[Dict[str, Any]] = None, **options: Any) -> VisualReport:
         validate_compare_url(url, allowed_loopback_ports=self.allowed_loopback_ports)
-        data = run_cli(
-            {
-                "op": "capture",
-                "url": url,
-                "viewport": viewport or {"width": 1366, "height": 768},
-                "options": options,
-                "artifactsRoot": str(self.artifacts_root),
-            },
-            timeout=int(options.get("timeoutMs") or 120),
-        )
-        report = VisualReport.from_bridge(data)
-        self._record(
-            report,
-            source={"type": "url", "value": url},
-            target={"type": "capture", "value": url},
-        )
-        return report
+        t0 = time.time()
+        ok = True
+        try:
+            data = run_cli(
+                {
+                    "op": "capture",
+                    "url": url,
+                    "viewport": viewport or {"width": 1366, "height": 768},
+                    "options": options,
+                    "artifactsRoot": str(self.artifacts_root),
+                },
+                timeout=int(options.get("timeoutMs") or 120),
+            )
+            report = VisualReport.from_bridge(data)
+            self._record(
+                report,
+                source={"type": "url", "value": url},
+                target={"type": "capture", "value": url},
+            )
+            return report
+        except Exception:
+            ok = False
+            raise
+        finally:
+            telemetry.record("capture", duration_ms=(time.time() - t0) * 1000, ok=ok)
 
     def capture_preview(
         self,
