@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=31" />
+  <link rel="stylesheet" href="/static/app.css?v=32" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -243,6 +243,17 @@
             </ul>
           </div>
         </div>
+        <div
+          class="layout-splitter layout-splitter--h hidden"
+          id="splitWorkRail"
+          role="separator"
+          aria-orientation="horizontal"
+          aria-label="Redimensionar altura do fluxo de execução"
+          aria-valuemin="72"
+          aria-valuemax="280"
+          tabindex="0"
+          title="Arraste para ajustar altura · duplo clique restaura"
+        ></div>
 
         <div class="workspace-body">
           <div class="chat-area">
@@ -778,6 +789,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=31"></script>
+  <script src="/static/app.js?v=32"></script>
 </body>
 </html>
