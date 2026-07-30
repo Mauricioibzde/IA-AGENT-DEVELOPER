@@ -13,6 +13,7 @@ import re
 import shutil
 import subprocess
 import tempfile
+import threading
 import time
 import urllib.error
 import urllib.request
@@ -210,7 +211,7 @@ def ollama_chat_with_image(
     prompt: str,
     image_b64: str,
     temperature: float = 0.1,
-    timeout: int = 240,
+    timeout: int = 90,
     cancel_check: Optional[Callable[[], bool]] = None,
 ) -> str:
     """Call Ollama /api/chat with a single image (multimodal)."""
@@ -232,7 +233,7 @@ def ollama_chat_with_images(
     prompt: str,
     images_b64: Sequence[str],
     temperature: float = 0.1,
-    timeout: int = 240,
+    timeout: int = 90,
     cancel_check: Optional[Callable[[], bool]] = None,
     use_json_format: bool = True,
 ) -> str:
@@ -243,10 +244,14 @@ def ollama_chat_with_images(
     if not imgs:
         raise ValueError("at least one image is required")
     host = host.rstrip("/")
+    # Moondream / tiny VLMs often struggle with forced JSON and waste the budget.
+    model_l = (model or "").lower()
+    if use_json_format and any(tag in model_l for tag in ("moondream", "bakllava")):
+        use_json_format = False
     payload: Dict[str, Any] = {
         "model": model,
         "stream": False,
-        "options": {"temperature": temperature},
+        "options": {"temperature": temperature, "num_predict": 900},
         "messages": [
             {
                 "role": "user",
@@ -257,47 +262,59 @@ def ollama_chat_with_images(
     }
     if use_json_format:
         payload["format"] = "json"
-    req = urllib.request.Request(
-        f"{host}/api/chat",
-        data=json.dumps(payload).encode("utf-8"),
-        headers={"Content-Type": "application/json"},
-        method="POST",
-    )
-    try:
+
+    result: Dict[str, Any] = {}
+    error: Dict[str, BaseException] = {}
+
+    def _call(body: Dict[str, Any]) -> str:
+        req = urllib.request.Request(
+            f"{host}/api/chat",
+            data=json.dumps(body).encode("utf-8"),
+            headers={"Content-Type": "application/json"},
+            method="POST",
+        )
         with urllib.request.urlopen(req, timeout=timeout) as response:
             data = json.loads(response.read().decode("utf-8"))
-    except urllib.error.HTTPError as exc:
-        detail = ""
-        try:
-            detail = exc.read().decode("utf-8", errors="replace")[:300]
-        except Exception:
-            pass
-        # Some older vision models reject format=json — retry without it.
-        if use_json_format and exc.code in {400, 422, 500}:
-            payload.pop("format", None)
-            req = urllib.request.Request(
-                f"{host}/api/chat",
-                data=json.dumps(payload).encode("utf-8"),
-                headers={"Content-Type": "application/json"},
-                method="POST",
-            )
-            try:
-                with urllib.request.urlopen(req, timeout=timeout) as response:
-                    data = json.loads(response.read().decode("utf-8"))
-            except Exception as retry_exc:
-                raise RuntimeError(
-                    f"vision chat HTTP {exc.code}: {detail or exc.reason}"
-                ) from retry_exc
-        else:
-            raise RuntimeError(f"vision chat HTTP {exc.code}: {detail or exc.reason}") from exc
-    except Exception as exc:
-        raise RuntimeError(f"vision chat failed: {exc}") from exc
+        message = data.get("message") or {}
+        content = (message.get("content") or data.get("response") or "").strip()
+        if not content:
+            raise RuntimeError("vision model returned empty content")
+        return re.sub(r"<think>[\s\S]*?</think>", "", content, flags=re.IGNORECASE).strip()
 
-    message = data.get("message") or {}
-    content = (message.get("content") or data.get("response") or "").strip()
+    def _worker() -> None:
+        try:
+            try:
+                result["content"] = _call(payload)
+            except urllib.error.HTTPError as exc:
+                detail = ""
+                try:
+                    detail = exc.read().decode("utf-8", errors="replace")[:300]
+                except Exception:
+                    pass
+                if use_json_format and exc.code in {400, 422, 500}:
+                    body = dict(payload)
+                    body.pop("format", None)
+                    result["content"] = _call(body)
+                else:
+                    raise RuntimeError(f"vision chat HTTP {exc.code}: {detail or exc.reason}") from exc
+        except BaseException as exc:  # noqa: BLE001
+            error["exc"] = exc
+
+    thread = threading.Thread(target=_worker, name="ollama-vision", daemon=True)
+    thread.start()
+    deadline = time.time() + max(5, int(timeout) + 5)
+    while thread.is_alive():
+        if cancel_check and cancel_check():
+            raise RuntimeError("cancelled")
+        if time.time() >= deadline:
+            raise RuntimeError(f"vision chat timed out after {timeout}s")
+        thread.join(0.4)
+
+    if "exc" in error:
+        raise error["exc"]
+    content = str(result.get("content") or "").strip()
     if not content:
         raise RuntimeError("vision model returned empty content")
-    content = re.sub(r"<think>[\s\S]*?</think>", "", content, flags=re.IGNORECASE).strip()
     return content
 
 
@@ -383,7 +400,7 @@ def compare_mockup_vs_actual(
     diff_path: Optional[str] = None,
     host: str = "http://127.0.0.1:11434",
     model: Optional[str] = None,
-    timeout: int = 240,
+    timeout: int = 90,
     cancel_check: Optional[Callable[[], bool]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:
@@ -629,7 +646,7 @@ def describe_mockup(
     host: str = "http://127.0.0.1:11434",
     model: Optional[str] = None,
     use_cache: bool = True,
-    timeout: int = 240,
+    timeout: int = 90,
     cancel_check: Optional[Callable[[], bool]] = None,
     on_event: Optional[Callable[[Dict[str, Any]], None]] = None,
 ) -> Dict[str, Any]:

@@ -7152,19 +7152,21 @@
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
           target_similarity: 0.95,
-          max_attempts: strategy === "css" ? 5 : 6,
-          max_agent_steps: 14,
-          settle_seconds: 1.8,
+          max_attempts: strategy === "css" ? 5 : 4,
+          max_agent_steps: 10,
+          settle_seconds: 1.5,
           use_vision: strategy === "css" ? false : Boolean(els.useVision?.checked ?? true),
           vision_model: els.visionModel?.value || undefined,
         }),
       });
       state.correctionJob = data.correction;
       renderCorrectionJob(data.correction);
-      const pollMs = strategy === "css" ? 1500 : 1200;
+      const pollMs = strategy === "css" ? 1500 : 1000;
       state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), pollMs);
       showToast(
-        strategy === "css" ? "Correction CSS em execução…" : "Mockup → Código em execução…",
+        strategy === "css"
+          ? "Correction CSS em execução…"
+          : "Mockup → Código em execução (visão/compare podem levar 1–2 min)…",
         "info"
       );
     } catch (e) {

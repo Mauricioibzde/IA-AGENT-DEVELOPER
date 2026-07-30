@@ -115,8 +115,18 @@ class CorrectionLoop:
         self._emit(job, "correction.started", job_id=job.id)
 
         try:
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.finished_at = time.time()
+                self._emit(job, "correction.cancelled")
+                return job
             self._emit(job, "comparison.processing", phase="baseline")
             baseline = self.compare_fn()
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.finished_at = time.time()
+                self._emit(job, "correction.cancelled")
+                return job
             base_sim = _sim(baseline)
             job.baseline_similarity = base_sim
             job.best_similarity = base_sim
@@ -210,8 +220,16 @@ class CorrectionLoop:
                 )
 
                 t0 = time.time()
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                    self._emit(job, "correction.cancelled")
+                    break
                 self._emit(job, "correction.retesting", attempt=attempt_no)
                 report = self.compare_fn()
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                    self._emit(job, "correction.cancelled")
+                    break
                 new_sim = _sim(report)
                 duration_ms = int((time.time() - t0) * 1000)
                 job.current_similarity = new_sim
@@ -349,11 +367,12 @@ class CorrectionManager:
             if not job:
                 return None
             job.cancel_requested = True
-            if job.status in {"queued", "running"}:
-                # Soft cancel — loop observes flag; mark if not started.
-                if job.status == "queued":
-                    job.status = "cancelled"
-                    job.finished_at = time.time()
+            if job.status == "queued":
+                job.status = "cancelled"
+                job.finished_at = time.time()
+            # Unlock project immediately so another correction can start.
+            if self._project_active.get(job.project_id) == job.id:
+                self._project_active.pop(job.project_id, None)
             return job
 
     def start_background(
@@ -374,8 +393,9 @@ class CorrectionManager:
             existing_id = self._project_active.get(project_id)
             if existing_id:
                 existing = self._jobs.get(existing_id)
-                if existing and existing.status in {"queued", "running"}:
+                if existing and existing.status in {"queued", "running"} and not existing.cancel_requested:
                     raise RuntimeError("correction already running for this project")
+                self._project_active.pop(project_id, None)
             job = CorrectionJob(
                 id=uuid.uuid4().hex[:12],
                 project_id=project_id,
@@ -408,12 +428,8 @@ class CorrectionManager:
                 if persist_dir:
                     _persist_job(persist_dir, job)
                 with self._lock:
-                    if self._project_active.get(project_id) == job.id and job.status not in {
-                        "queued",
-                        "running",
-                    }:
-                        # keep mapping for status lookup; clear only when cancelled/done after grace
-                        pass
+                    if self._project_active.get(project_id) == job.id:
+                        self._project_active.pop(project_id, None)
 
         threading.Thread(target=_worker, name=f"correction-{job.id}", daemon=True).start()
         return job

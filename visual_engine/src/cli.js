@@ -1,12 +1,19 @@
 #!/usr/bin/env node
 /**
  * JSON CLI bridge for the Forge Python facade.
- * Usage:
- *   node src/cli.js '{"op":"compare_images","source":{"type":"image","value":"a.png"},...}'
+ *
+ * One-shot:
+ *   node src/cli.js '{"op":"ping"}'
  *   echo '{...}' | node src/cli.js
+ *
+ * Persistent worker (reuses Chromium pool across compares):
+ *   node src/cli.js --serve
+ *   stdin: one JSON object per line
+ *   stdout: one JSON object per line
  */
 
 import fs from 'node:fs';
+import readline from 'node:readline';
 import {
   compare,
   compareMulti,
@@ -17,9 +24,9 @@ import {
   defaultPool,
 } from './index.js';
 
-async function readInput() {
+async function readOneShotInput() {
   const arg = process.argv[2];
-  if (arg && arg !== '-') {
+  if (arg && arg !== '-' && arg !== '--serve') {
     if (arg.endsWith('.json') && fs.existsSync(arg)) {
       return JSON.parse(fs.readFileSync(arg, 'utf8'));
     }
@@ -32,77 +39,109 @@ async function readInput() {
   return JSON.parse(text);
 }
 
-async function main() {
-  const req = await readInput();
+async function handleRequest(req) {
   const op = req.op || 'compare';
 
   if (op === 'ping') {
-    console.log(
-      JSON.stringify({
-        ok: true,
-        chrome: detectChromePath(),
-        viewports: listViewports().length,
-        pool: defaultPool.stats(),
-      })
-    );
-    return;
+    return {
+      ok: true,
+      chrome: detectChromePath(),
+      viewports: listViewports().length,
+      pool: defaultPool.stats(),
+    };
   }
 
   if (op === 'pool_stats') {
-    console.log(JSON.stringify({ ok: true, pool: defaultPool.stats() }));
-    return;
+    return { ok: true, pool: defaultPool.stats() };
   }
 
   if (op === 'pool_drain') {
     await defaultPool.drain();
-    console.log(JSON.stringify({ ok: true, pool: defaultPool.stats() }));
-    return;
+    return { ok: true, pool: defaultPool.stats() };
+  }
+
+  if (op === 'shutdown') {
+    await defaultPool.drain();
+    return { ok: true, shutdown: true };
   }
 
   if (op === 'list_viewports') {
-    console.log(JSON.stringify({ ok: true, viewports: listViewports(req.category || null) }));
-    return;
+    return { ok: true, viewports: listViewports(req.category || null) };
   }
 
   if (op === 'compare_images' || (op === 'compare' && req.source?.type === 'image' && req.target?.type === 'image')) {
-    // Fast path without browser for tests / Python unit bridge.
     if (req.inline === true) {
       const a = fs.readFileSync(req.source.value);
       const b = fs.readFileSync(req.target.value);
       const metrics = compareImages(a, b, req.options || {});
       const { diffPngBuffer, ...rest } = metrics;
-      console.log(
-        JSON.stringify({
-          ok: true,
-          status: rest.comparable === false ? 'incompatible' : 'completed',
-          mode: 'image-vs-image',
-          ...rest,
-          hasDiffBuffer: Boolean(diffPngBuffer),
-        })
-      );
-      return;
+      return {
+        ok: true,
+        status: rest.comparable === false ? 'incompatible' : 'completed',
+        mode: 'image-vs-image',
+        ...rest,
+        hasDiffBuffer: Boolean(diffPngBuffer),
+      };
     }
   }
 
   if (op === 'capture') {
     const result = await capture(req);
-    console.log(JSON.stringify({ ok: true, ...result }));
-    return;
+    return { ok: true, ...result };
   }
 
   if (op === 'compare_multi') {
     const result = await compareMulti(req);
-    console.log(JSON.stringify({ ok: true, ...result }));
-    return;
+    return { ok: true, ...result };
   }
 
   if (op === 'compare' || op === 'compare_images') {
     const result = await compare(req);
-    console.log(JSON.stringify({ ok: true, ...result }));
-    return;
+    return { ok: true, ...result };
   }
 
   throw new Error(`Unknown op: ${op}`);
+}
+
+async function serve() {
+  const rl = readline.createInterface({ input: process.stdin, crlfDelay: Infinity });
+  process.stderr.write('[visual-cli] serve mode ready\n');
+  for await (const line of rl) {
+    const text = String(line || '').trim();
+    if (!text) continue;
+    let req;
+    try {
+      req = JSON.parse(text);
+    } catch (err) {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: `Invalid JSON: ${err.message}` })}\n`);
+      continue;
+    }
+    try {
+      const result = await handleRequest(req);
+      process.stdout.write(`${JSON.stringify(result)}\n`);
+      if (result?.shutdown) {
+        rl.close();
+        break;
+      }
+    } catch (err) {
+      process.stdout.write(`${JSON.stringify({ ok: false, error: String(err.message || err) })}\n`);
+    }
+  }
+  try {
+    await defaultPool.drain();
+  } catch {
+    // ignore
+  }
+}
+
+async function main() {
+  if (process.argv.includes('--serve')) {
+    await serve();
+    return;
+  }
+  const req = await readOneShotInput();
+  const result = await handleRequest(req);
+  console.log(JSON.stringify(result));
 }
 
 main().catch((err) => {
