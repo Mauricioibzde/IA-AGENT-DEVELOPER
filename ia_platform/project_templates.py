@@ -9,6 +9,7 @@ from typing import Dict
 
 def _pkg_name(name: str) -> str:
     cleaned = re.sub(r"[^a-zA-Z0-9_-]", "-", (name or "app").strip().lower())[:64]
+    cleaned = re.sub(r"-{2,}", "-", cleaned).strip("-_")
     return cleaned or "app"
 
 
@@ -131,6 +132,14 @@ button:hover {
         "src/index.css": """* { box-sizing: border-box; margin: 0; }
 body { min-height: 100vh; }
 """,
+        ".gitignore": """node_modules
+dist
+.DS_Store
+.env
+.env.local
+*.log
+.vite
+""",
         "README.md": f"""# {project_name}
 
 App React + Vite gerado pelo Forge.
@@ -139,6 +148,8 @@ App React + Vite gerado pelo Forge.
 npm install
 npm run dev
 ```
+
+Peça melhorias no chat da plataforma — o preview atualiza ao vivo.
 """,
     }
 
@@ -239,31 +250,8 @@ body {
 .features p { color: #94a3b8; font-size: 0.92rem; line-height: 1.5; }
 """,
     },
-    "api": {
-        "main.py": '''"""API REST simples — peça ao agente para expandir endpoints."""
+    "api": {},  # filled dynamically via fastapi_files in get_template_files
 
-from http.server import BaseHTTPRequestHandler, HTTPServer
-import json
-
-
-class Handler(BaseHTTPRequestHandler):
-    def do_GET(self):
-        if self.path == "/health":
-            body = json.dumps({"ok": True}).encode()
-            self.send_response(200)
-            self.send_header("Content-Type", "application/json")
-            self.end_headers()
-            self.wfile.write(body)
-            return
-        self.send_response(404)
-        self.end_headers()
-
-
-if __name__ == "__main__":
-    HTTPServer(("127.0.0.1", 8000), Handler).serve_forever()
-''',
-        "README.md": "# API\n\nRode: `python main.py`\n\nPeça ao agente novos endpoints via chat.\n",
-    },
     "dashboard": {
         "index.html": """<!DOCTYPE html>
 <html lang="pt-BR">
@@ -315,7 +303,28 @@ main { padding: 2rem; }
 """,
         "app.js": "console.log('Dashboard pronto — peça melhorias no chat da plataforma.');\n",
     },
-    "react": {},  # filled below with react_vite_files()
 }
 
-PROJECT_TEMPLATES["react"] = react_vite_files("forge-react-app")
+
+def get_template_files(template: str, project_name: str) -> Dict[str, str]:
+    """Return starter files for a template, parameterized by project name."""
+    if template == "react":
+        return react_vite_files(project_name)
+    if template == "api":
+        from local_agent.web_scaffold import fastapi_files
+        return fastapi_files(project_name)
+    files = dict(PROJECT_TEMPLATES.get(template) or {})
+    if template == "landing" and "index.html" in files:
+        files["index.html"] = files["index.html"].replace(
+            "<title>Landing</title>", f"<title>{project_name}</title>", 1
+        )
+        files["index.html"] = files["index.html"].replace(
+            "<h1>Seu produto, no ar hoje</h1>",
+            f"<h1>{project_name}</h1>",
+            1,
+        )
+    if template == "dashboard" and "index.html" in files:
+        files["index.html"] = files["index.html"].replace(
+            "<title>Dashboard</title>", f"<title>{project_name}</title>", 1
+        )
+    return files

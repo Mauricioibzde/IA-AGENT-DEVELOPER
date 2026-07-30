@@ -34,4 +34,12 @@ def test_registry_blocked_command_execution(tmp_path: Path) -> None:
     cfg = AgentConfig.from_args(tmp_path, no_memory=True)
     result = run_command({"command": "git reset --hard"}, workspace=str(tmp_path), config=cfg)
     assert not result.ok
-    assert "Blocked" in (result.error or "") or "Refusing" in (result.error or "")
+    assert "Blocked" in (result.error or "") or "Refusing" in (result.error or "") or "bloqueado" in (result.error or "").lower()
+
+
+def test_high_risk_command_blocked_even_with_auto_approve(tmp_path: Path) -> None:
+    cfg = AgentConfig.from_args(tmp_path, no_memory=True, auto_approve_low_risk=True)
+    result = run_command({"command": "rm tmp.txt"}, workspace=str(tmp_path), config=cfg)
+    assert not result.ok
+    assert result.data.get("confirmation_required") is True
+    assert "sensível" in (result.error or "").lower() or "risco" in (result.error or "").lower()

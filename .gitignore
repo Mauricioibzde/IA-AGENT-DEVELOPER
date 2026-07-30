@@ -17,5 +17,10 @@ app_demo/
 demo_py/
 *.tmp
 .env
+.forge/
 .agent/
 *.bak
+visual_engine/node_modules/
+visual_engine/artifacts/
+projects/*/
+!projects/.gitkeep

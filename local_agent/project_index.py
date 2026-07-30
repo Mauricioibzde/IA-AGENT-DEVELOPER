@@ -4,6 +4,7 @@ from __future__ import annotations
 
 import json
 import re
+import shutil
 from pathlib import Path
 from typing import Dict, Iterable, List, Optional
 
@@ -78,7 +79,11 @@ class ProjectIndex:
             "format": [],
         }
 
-    def build(self, max_files: int = 400) -> "ProjectIndex":
+    def build(self, max_files: int = 400, *, use_cache: bool = True) -> "ProjectIndex":
+        cache_path = self.workspace / ".agent" / "index.json"
+        if use_cache and self._load_cache(cache_path, max_files):
+            return self
+
         self.files = []
         count = 0
         for path in self._iter_files():
@@ -116,7 +121,86 @@ class ProjectIndex:
             if count >= max_files:
                 break
         self._detect_commands()
+        if use_cache:
+            self._save_cache(cache_path, max_files)
         return self
+
+    def _fingerprint(self) -> str:
+        """Cheap fingerprint: count + newest mtime of tracked tree roots."""
+        newest = 0.0
+        count = 0
+        for path in self._iter_files():
+            try:
+                newest = max(newest, path.stat().st_mtime)
+            except OSError:
+                continue
+            count += 1
+            if count >= 500:
+                break
+        return f"{count}:{int(newest)}"
+
+    def _load_cache(self, cache_path: Path, max_files: int) -> bool:
+        if not cache_path.is_file():
+            return False
+        try:
+            data = json.loads(cache_path.read_text(encoding="utf-8"))
+        except (json.JSONDecodeError, OSError):
+            return False
+        if not isinstance(data, dict) or data.get("fingerprint") != self._fingerprint():
+            return False
+        if int(data.get("max_files") or 0) != max_files:
+            return False
+        files_raw = data.get("files")
+        if not isinstance(files_raw, list):
+            return False
+        self.files = [
+            ProjectFile(
+                path=str(item.get("path", "")),
+                language=item.get("language"),
+                size=int(item.get("size") or 0),
+                imports=list(item.get("imports") or [])[:40],
+                symbols=list(item.get("symbols") or [])[:80],
+                is_config=bool(item.get("is_config")),
+                is_test=bool(item.get("is_test")),
+            )
+            for item in files_raw
+            if isinstance(item, dict) and item.get("path")
+        ]
+        self.package_scripts = dict(data.get("package_scripts") or {})
+        detected = data.get("detected_commands") or {}
+        if isinstance(detected, dict):
+            self.detected_commands = {
+                "test": list(detected.get("test") or []),
+                "build": list(detected.get("build") or []),
+                "lint": list(detected.get("lint") or []),
+                "format": list(detected.get("format") or []),
+            }
+        return True
+
+    def _save_cache(self, cache_path: Path, max_files: int) -> None:
+        try:
+            cache_path.parent.mkdir(parents=True, exist_ok=True)
+            payload = {
+                "fingerprint": self._fingerprint(),
+                "max_files": max_files,
+                "package_scripts": self.package_scripts,
+                "detected_commands": self.detected_commands,
+                "files": [
+                    {
+                        "path": f.path,
+                        "language": f.language,
+                        "size": f.size,
+                        "imports": f.imports[:20],
+                        "symbols": f.symbols[:40],
+                        "is_config": f.is_config,
+                        "is_test": f.is_test,
+                    }
+                    for f in self.files
+                ],
+            }
+            cache_path.write_text(json.dumps(payload, ensure_ascii=False), encoding="utf-8")
+        except OSError:
+            pass
 
     def summary(self, limit: int = 40) -> str:
         lines = [f"Workspace: {self.workspace}", f"Indexed files: {len(self.files)}"]
@@ -212,9 +296,10 @@ class ProjectIndex:
                 pass
 
         if (self.workspace / "pyproject.toml").exists() or any(f.language == "python" for f in self.files):
-            self.detected_commands["test"].append("python -m pytest -q")
-            self.detected_commands["lint"].extend(["python -m compileall .", "ruff check ."])
-            self.detected_commands["build"].append("python -m compileall .")
+            py = "python3" if shutil.which("python3") else "python"
+            self.detected_commands["test"].append(f"{py} -m pytest -q")
+            self.detected_commands["lint"].extend([f"{py} -m compileall .", "ruff check ."])
+            self.detected_commands["build"].append(f"{py} -m compileall .")
 
         if (self.workspace / "go.mod").exists() or any(f.language == "go" for f in self.files):
             self.detected_commands["test"].append("go test ./...")

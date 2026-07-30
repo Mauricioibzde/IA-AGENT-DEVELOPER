@@ -4,9 +4,11 @@ from __future__ import annotations
 
 import hashlib
 import json
+import re
 from pathlib import Path
 from typing import Any, Callable, Dict, List, Optional, Set
 
+from .checkpoint import RunCheckpoint
 from .config import AgentConfig
 from .context_manager import ContextManager
 from .executor import Executor
@@ -20,6 +22,20 @@ from .prompts import executor_prompt, final_report_prompt, system_prompt
 from .reflector import Reflector
 from .tools import build_default_registry
 from .validator import Validator
+from .web_scaffold import (
+    looks_like_calculator_goal,
+    looks_like_fastapi_goal,
+    looks_like_mini_app_goal,
+    looks_like_offline_scaffold_goal,
+    looks_like_plain_web_goal,
+    looks_like_react_goal,
+    primary_goal,
+    validate_plain_web,
+    workspace_satisfies_calculator,
+    write_fastapi_app,
+    write_plain_web_app,
+    write_react_app,
+)
 
 
 class CodingAgent:
@@ -31,17 +47,26 @@ class CodingAgent:
         self.memory = AgentMemory(config.workspace, enabled=config.use_memory)
         self.index = ProjectIndex(config.workspace)
         self.registry = build_default_registry(include_git=config.use_git)
-        self.executor = Executor(self.registry, config, self.logger)
+        self.checkpoint = RunCheckpoint(config.workspace, config.run_id or "anonymous")
+        self.executor = Executor(
+            self.registry,
+            config,
+            self.logger,
+            checkpoint=self.checkpoint,
+            event_sink=event_sink,
+        )
         self.planner = Planner(self.client, config.planner_model)
         self.reflector = Reflector(self.client, config.reflection_model)
         self.context_manager = ContextManager(config)
         self.validator = Validator(config, self.index)
         self.seen_signatures: Set[str] = set()
+        self.signature_hits: Dict[str, int] = {}
         self.analyzed_files: List[str] = []
         self.errors: List[str] = []
         self.fixed_errors: List[str] = []
         self.completed_tasks: List[str] = []
         self.all_validations: List[ValidationResult] = []
+        self._deps_ensured = False
 
     def _event(self, kind: str, **fields: Any) -> None:
         if not self.event_sink:
@@ -50,6 +75,26 @@ class CodingAgent:
             self.event_sink({"type": kind, **fields})
         except Exception:  # noqa: BLE001
             pass
+
+    def _emit_model_fallback_if_any(self) -> None:
+        consume = getattr(self.client, "consume_fallback_event", None)
+        if not callable(consume):
+            return
+        info = consume()
+        if not info:
+            return
+        from_model = info.get("from") or "?"
+        to_model = info.get("to") or "?"
+        self.errors.append(
+            f"Modelo '{from_model}' sem memória suficiente — continuando com '{to_model}'."
+        )
+        self.planner.model = to_model
+        self._event(
+            "model_fallback",
+            from_model=from_model,
+            to_model=to_model,
+            message=f"Modelo {from_model} falhou (memória). Usando {to_model}.",
+        )
 
     def _is_cancelled(self) -> bool:
         return bool(self.config.cancel_check and self.config.cancel_check())
@@ -83,6 +128,68 @@ class CodingAgent:
         self.memory.update_project_summary(self.index.summary(limit=20)[:1500])
         self.memory.add_event("user_request", goal)
 
+        intent = primary_goal(goal) or goal
+
+        # Calculator already present — don't burn the model budget re-scaffolding React.
+        if (
+            not self.config.plan_only
+            and looks_like_calculator_goal(intent)
+            and workspace_satisfies_calculator(self.config.workspace)
+        ):
+            self._event("planning", message="Calculadora já presente no projeto")
+            self.completed_tasks.append("Calculadora já disponível")
+            return AgentReport(
+                status=FinalStatus.SUCCESS,
+                goal=goal,
+                summary=(
+                    "A **Calculadora** já está no projeto (`index.html`, `style.css`, `app.js`). "
+                    "Abra o Preview no grupo App para usar. "
+                    "Se quiser mudanças (tema, histórico, regra de 3), peça no Work."
+                ),
+                completed_tasks=self.completed_tasks,
+                analyzed_files=["index.html", "style.css", "app.js"],
+                created_files=[],
+                modified_files=[],
+                next_steps=["Abrir Preview", "Testar operações", "Pedir melhorias se quiser"],
+            )
+
+        # If Ollama is offline, still deliver tiny HTML/CSS/JS apps deterministically.
+        ollama_ok = False
+        try:
+            ollama_ok = bool(self.client.check_available(timeout=2))
+        except Exception:  # noqa: BLE001
+            ollama_ok = False
+        if not ollama_ok and looks_like_offline_scaffold_goal(intent) and not self.config.plan_only:
+            return self._deterministic_scaffold(goal, reason="Ollama offline — scaffold aplicado")
+
+        # Mini-app *create*: prefer deterministic HTML scaffold over LLM thrashing (budget 40).
+        # Do not short-circuit "melhorar/editar" on an existing app — that still needs the model.
+        wants_create = bool(
+            re.search(
+                r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|quero criar|vamos criar)\b",
+                intent.lower(),
+            )
+        )
+        if (
+            not self.config.plan_only
+            and not self.config.dry_run
+            and wants_create
+            and looks_like_mini_app_goal(intent)
+            and looks_like_plain_web_goal(intent)
+            and not (self.config.workspace / "package.json").is_file()
+            and (
+                not (self.config.workspace / "index.html").is_file()
+                or (
+                    looks_like_calculator_goal(intent)
+                    and not workspace_satisfies_calculator(self.config.workspace)
+                )
+            )
+        ):
+            return self._deterministic_scaffold(
+                goal,
+                reason="Mini-app detectada — scaffold HTML/CSS/JS aplicado (evita estourar orçamento do modelo)",
+            )
+
         # Establish baseline (what was already failing before we changed anything).
         baseline: List[ValidationResult] = []
         if not self.config.plan_only and not self.config.dry_run and not self._should_skip_baseline():
@@ -107,7 +214,13 @@ class CodingAgent:
         relevant = self.index.relevant_summary(goal, limit=10)
         if relevant:
             index_summary = f"{index_summary}\n\n{relevant}"
-        plan = self.planner.create_plan(goal, index_summary, index=self.index)
+        plan = self.planner.create_plan(
+            goal,
+            index_summary,
+            index=self.index,
+            conversation=conversation_context or "",
+        )
+        self._emit_model_fallback_if_any()
         for task in plan.tasks:
             task.max_attempts = self.config.max_task_attempts
         self.logger.info("plan_created", message=plan.summary or plan.goal, tasks=len(plan.tasks))
@@ -214,13 +327,21 @@ class CodingAgent:
                     )
                 if self._is_cancelled():
                     return self._cancelled_report(goal, plan)
+                self._emit_model_fallback_if_any()
             except Exception as exc:  # noqa: BLE001
                 if self._is_cancelled() or "cancelled" in str(exc).lower():
                     return self._cancelled_report(goal, plan)
+                self._emit_model_fallback_if_any()
                 self.errors.append(f"LLM error: {exc}")
                 self._event("error", message=str(exc))
                 task.status = TaskStatus.FAILED
                 consecutive_failures += 1
+                # Create intents: scaffold immediately so OOM/budget/stream death still delivers files.
+                if looks_like_offline_scaffold_goal(intent) and not self._has_meaningful_created_files():
+                    return self._deterministic_scaffold(
+                        goal,
+                        reason="Modelo falhou — scaffold aplicado para entregar o app",
+                    )
                 if consecutive_failures >= 3:
                     self.logger.error("consecutive_failures", message="3 LLM failures in a row, stopping")
                     break
@@ -237,16 +358,23 @@ class CodingAgent:
                     [{"error": "no_valid_tool_calls", "raw": model_text[:800]}],
                     ensure_ascii=False,
                 )
+                no_tool_fails = sum(1 for e in self.errors if "no valid tool calls" in e)
+                if looks_like_offline_scaffold_goal(intent) and no_tool_fails >= 2 and not self._has_meaningful_created_files():
+                    return self._deterministic_scaffold(
+                        goal,
+                        reason="Modelo sem tool calls válidas — scaffold aplicado para entregar o app",
+                    )
                 if task.attempts >= task.max_attempts:
                     task.status = TaskStatus.FAILED
                 else:
                     task.status = TaskStatus.PENDING
                 continue
 
-            # Detect no-progress loops.
+            # Detect no-progress loops (identical tool+args signatures).
             signature = self._signature(task.id, calls)
-            no_progress = signature in self.seen_signatures
-            pending_no_progress = no_progress
+            hit_count = self.signature_hits.get(signature, 0) + 1
+            self.signature_hits[signature] = hit_count
+            no_progress = hit_count >= 2
             self.seen_signatures.add(signature)
 
             # Execute tools.
@@ -293,27 +421,98 @@ class CodingAgent:
 
             if finished:
                 final_answer = results[-1]["result"].get("answer", "")
-                task.status = TaskStatus.COMPLETED
-                self.completed_tasks.append(task.title)
-                if step_had_failures is False and self.errors:
-                    self.fixed_errors.append(f"Recovered on task {task.id}")
-                break
+                # Do not accept `final` before validation — fall through to checks.
+                intend_finish = True
+            else:
+                intend_finish = False
 
-            # Auto-validate after filesystem writes.
+            # Auto-validate after filesystem writes (and before accepting final).
             validation_results: List[ValidationResult] = []
 
+            # Install Node deps once before npm validations so React builds can succeed.
+            needs_npm = False
             if task.validation_commands:
-                self._event("validation_start", commands=task.validation_commands[:3])
-                validation_results = [self.validator.run_one(cmd) for cmd in task.validation_commands]
-            elif wrote_files:
+                needs_npm = any("npm" in c or "vite" in c or "npx" in c for c in task.validation_commands)
+            elif (wrote_files or intend_finish) and self.index.package_scripts:
+                needs_npm = True
+            if needs_npm and not self._deps_ensured:
+                install_result = self.validator.ensure_node_dependencies()
+                self._deps_ensured = True
+                if install_result is not None:
+                    validation_results.append(install_result)
+                    self._event(
+                        "validation",
+                        count=1,
+                        ok=1 if install_result.success else 0,
+                        summary=f"npm install: {'ok' if install_result.success else 'fail'}",
+                    )
+
+            if task.validation_commands:
+                cmds = list(task.validation_commands)
+                if looks_like_plain_web_goal(goal) or (
+                    (self.config.workspace / "index.html").is_file()
+                    and not (self.config.workspace / "package.json").is_file()
+                    and not any(f.language == "python" for f in self.index.files)
+                ):
+                    cmds = [
+                        c
+                        for c in cmds
+                        if "pytest" not in c.lower()
+                        and "compileall" not in c.lower()
+                        and not re.search(r"\bpython3?\b", c.lower())
+                        and not c.strip().startswith("npm")
+                    ]
+                if cmds:
+                    self._event("validation_start", commands=cmds[:3])
+                    validation_results.extend([self.validator.run_one(cmd) for cmd in cmds])
+                else:
+                    problems = validate_plain_web(self.config.workspace)
+                    validation_results.append(
+                        ValidationResult(
+                            command="validate_plain_web",
+                            success=not problems,
+                            exit_code=0 if not problems else 1,
+                            stdout="ok" if not problems else "",
+                            stderr="; ".join(problems),
+                            duration_seconds=0.0,
+                            category="code" if not problems else "introduced",
+                        )
+                    )
+            elif wrote_files or intend_finish:
                 quick_checks = self.validator.discover_commands()[:2]
-                if quick_checks:
+                if not quick_checks and looks_like_plain_web_goal(goal):
+                    problems = validate_plain_web(self.config.workspace)
+                    if problems:
+                        validation_results.append(
+                            ValidationResult(
+                                command="validate_plain_web",
+                                success=False,
+                                exit_code=1,
+                                stdout="",
+                                stderr="; ".join(problems),
+                                duration_seconds=0.0,
+                                category="introduced",
+                            )
+                        )
+                    else:
+                        validation_results.append(
+                            ValidationResult(
+                                command="validate_plain_web",
+                                success=True,
+                                exit_code=0,
+                                stdout="ok",
+                                stderr="",
+                                duration_seconds=0.0,
+                                category="code",
+                            )
+                        )
+                elif quick_checks:
                     self._event("validation_start", commands=quick_checks)
-                    validation_results = [self.validator.run_one(cmd) for cmd in quick_checks]
+                    validation_results.extend([self.validator.run_one(cmd) for cmd in quick_checks])
 
             if step_had_failures and not validation_results:
                 self._event("validation_start", commands=["auto"])
-                validation_results = self.validator.run_all()[:2]
+                validation_results.extend(self.validator.run_all()[:2])
 
             self.all_validations.extend(validation_results)
             validation_summary = self.validator.summarize(validation_results)
@@ -327,7 +526,7 @@ class CodingAgent:
             last_validation = validation_summary
             for item in validation_results:
                 if not item.success and item.category == "introduced":
-                    self.errors.append(f"{item.command}: {item.stderr[:200]}")
+                    self.errors.append(f"{item.command}: {item.stderr[:200] or item.stdout[:200]}")
 
             # Reflect.
             decision = self.reflector.reflect(
@@ -335,6 +534,7 @@ class CodingAgent:
                 last_results_json[:4000],
                 validation_summary,
                 no_progress=no_progress,
+                no_progress_count=hit_count if no_progress else 0,
             )
             self.logger.info("reflection", message=f"{decision.status.value}: {decision.analysis[:120]}")
             self.memory.add_event("reflection", decision.analysis[:300], {"status": decision.status.value})
@@ -352,6 +552,34 @@ class CodingAgent:
 
             all_ok = all(r.get("result", {}).get("ok", False) for r in results)
             validations_ok = all(v.success for v in validation_results) if validation_results else True
+            introduced_fail = any(
+                (not v.success and v.category == "introduced") for v in validation_results
+            )
+
+            if intend_finish:
+                if all_ok and validations_ok and not introduced_fail and not step_had_failures:
+                    task.status = TaskStatus.COMPLETED
+                    self.completed_tasks.append(task.title)
+                    if self.errors:
+                        self.fixed_errors.append(f"Recovered on task {task.id}")
+                    break
+                # Reject premature final when validation failed.
+                task.status = TaskStatus.PENDING
+                self.errors.append(
+                    f"final rejeitado: validação pendente/falhou ({validation_summary[:180]})"
+                )
+                last_results_json = json.dumps(
+                    [
+                        {
+                            "tool": "final",
+                            "ok": False,
+                            "error": "Validação obrigatória falhou antes de concluir",
+                            "validation": validation_summary[:500],
+                        }
+                    ],
+                    ensure_ascii=False,
+                )
+                continue
 
             if step_had_failures is False and self.errors and all_ok and validations_ok:
                 fix_note = f"Task {task.id} succeeded after prior errors"
@@ -360,7 +588,7 @@ class CodingAgent:
 
             # Act on reflection.
             if decision.status == ReflectionStatus.FINISH:
-                if all_ok and validations_ok:
+                if all_ok and validations_ok and not introduced_fail:
                     task.status = TaskStatus.COMPLETED
                     self.completed_tasks.append(task.title)
                     final_answer = decision.next_action or final_answer
@@ -371,10 +599,8 @@ class CodingAgent:
                 continue
 
             if decision.status == ReflectionStatus.CONTINUE:
-                if all_ok and validations_ok:
-                    task.status = TaskStatus.COMPLETED
-                    self.completed_tasks.append(task.title)
-                elif task.attempts >= task.max_attempts:
+                # CONTINUE means more work remains on this task — never mark completed.
+                if task.attempts >= task.max_attempts:
                     task.status = TaskStatus.FAILED
                 else:
                     task.status = TaskStatus.PENDING
@@ -389,7 +615,7 @@ class CodingAgent:
                 continue
 
             if decision.status == ReflectionStatus.REPLAN or decision.should_replan:
-                plan = self.planner.update_plan(plan, decision.analysis or "replan")
+                plan = self.planner.update_plan(plan, decision.analysis or "replan", index=self.index)
                 for t in plan.tasks:
                     if t.max_attempts == 3:
                         t.max_attempts = self.config.max_task_attempts
@@ -410,13 +636,75 @@ class CodingAgent:
                 self.errors.append(decision.analysis[:300])
                 break
 
+        # Safety net: create intents must still leave files when the model never wrote any.
+        # Empty dirs (e.g. bare `src/`) do not count as a deliverable.
+        if (
+            not self.config.plan_only
+            and not self.config.dry_run
+            and looks_like_offline_scaffold_goal(intent)
+            and not self._has_meaningful_created_files()
+            and (
+                not (self.config.workspace / "index.html").is_file()
+                or (
+                    looks_like_calculator_goal(intent)
+                    and not workspace_satisfies_calculator(self.config.workspace)
+                )
+            )
+            and not (self.config.workspace / "package.json").is_file()
+            and not (self.config.workspace / "main.py").is_file()
+        ):
+            return self._deterministic_scaffold(
+                goal,
+                reason="Execução sem arquivos úteis — scaffold aplicado para entregar o app",
+            )
+
+        # Create goal already satisfied by prior files — don't mark FAILED after empty thrashing.
+        if (
+            looks_like_calculator_goal(intent)
+            and workspace_satisfies_calculator(self.config.workspace)
+            and not self._has_meaningful_created_files()
+        ):
+            self.completed_tasks.append("Calculadora já disponível")
+            return AgentReport(
+                status=FinalStatus.SUCCESS,
+                goal=goal,
+                summary=(
+                    "A execução do modelo não gerou arquivos novos, mas a **Calculadora** "
+                    "já está pronta em `index.html`. Abra o Preview para usar."
+                ),
+                completed_tasks=self.completed_tasks,
+                analyzed_files=["index.html", "style.css", "app.js"],
+                created_files=list(dict.fromkeys(self.executor.created_files)),
+                modified_files=list(dict.fromkeys(self.executor.modified_files)),
+                errors=self.errors[-8:],
+                next_steps=["Abrir Preview", "Testar operações"],
+            )
+
         return self._build_report(goal, plan, final_answer)
+
+    def _has_meaningful_created_files(self) -> bool:
+        """True if this run created real files (not only empty directories)."""
+        root = self.config.workspace
+        for rel in self.executor.created_files:
+            path = root / str(rel)
+            if path.is_file() and path.stat().st_size > 0:
+                return True
+            if path.is_dir():
+                try:
+                    if any(p.is_file() and p.stat().st_size > 0 for p in path.rglob("*")):
+                        return True
+                except OSError:
+                    continue
+        return False
 
     def _repair_tool_calls(self, model_text: str) -> str:
         try:
+            tool_names = ", ".join(sorted(t.name for t in self.registry.list_tools())[:40])
             return self.client.complete(
                 "Your previous response was not valid JSON tool call(s).\n"
-                "Return ONLY one JSON object or JSON array of tool calls. No markdown, no prose.\n\n"
+                "Return ONLY one JSON object or JSON array of tool calls. No markdown, no prose.\n"
+                'Schema: {"tool":"<name>","args":{...}} or [{"tool":"...","args":{...}}, ...]\n'
+                f"Allowed tools include: {tool_names}\n\n"
                 f"Previous output:\n{model_text[:2500]}",
                 model=self.config.coder_model,
                 temperature=0,
@@ -426,34 +714,91 @@ class CodingAgent:
 
     def _format_tool_results(self, results: List[Dict[str, object]]) -> str:
         compact = []
+        budget = 3500
+        used = 0
         for item in results:
             res = item.get("result", {})
-            entry = {"tool": item.get("tool"), "ok": res.get("ok")}
+            if not isinstance(res, dict):
+                continue
+            entry: Dict[str, object] = {"tool": item.get("tool"), "ok": res.get("ok")}
             if res.get("error"):
                 entry["error"] = str(res.get("error"))[:400]
             if res.get("path"):
                 entry["path"] = res.get("path")
             if res.get("stdout"):
-                entry["stdout"] = str(res.get("stdout"))[:400]
+                entry["stdout"] = str(res.get("stdout"))[-800:]
             if res.get("stderr"):
-                entry["stderr"] = str(res.get("stderr"))[:400]
+                entry["stderr"] = str(res.get("stderr"))[-800:]
             if res.get("diff"):
                 entry["diff"] = str(res.get("diff"))[:600]
+            # Preserve payloads the model needs for the next step.
+            if res.get("content") is not None:
+                entry["content"] = str(res.get("content"))[:2500]
+            if res.get("items") is not None:
+                items = res.get("items")
+                if isinstance(items, list):
+                    entry["items"] = items[:80]
+                else:
+                    entry["items"] = items
+            if res.get("matches") is not None:
+                matches = res.get("matches")
+                if isinstance(matches, list):
+                    entry["matches"] = matches[:30]
+                else:
+                    entry["matches"] = matches
+            if res.get("files") is not None:
+                files = res.get("files")
+                if isinstance(files, list):
+                    entry["files"] = [str(f) for f in files[:40]]
+                else:
+                    entry["files"] = files
+            if res.get("total_lines") is not None:
+                entry["total_lines"] = res.get("total_lines")
+            if res.get("answer") is not None:
+                entry["answer"] = str(res.get("answer"))[:500]
+            blob = json.dumps(entry, ensure_ascii=False)
+            if used + len(blob) > budget and compact:
+                entry = {
+                    "tool": entry.get("tool"),
+                    "ok": entry.get("ok"),
+                    "error": entry.get("error"),
+                    "path": entry.get("path"),
+                    "truncated": True,
+                }
             compact.append(entry)
+            used += len(json.dumps(entry, ensure_ascii=False))
         return json.dumps(compact, ensure_ascii=False, indent=2)
 
     def _paths_from_results(self, results: List[Dict[str, object]]) -> List[str]:
+        from .security import to_rel_path
+
         paths: List[str] = []
         for item in results:
             res = item.get("result", {})
             if isinstance(res, dict):
                 if res.get("path"):
-                    paths.append(str(res["path"]))
+                    paths.append(to_rel_path(self.config.workspace, str(res["path"])))
                 if res.get("dst"):
-                    paths.append(str(res["dst"]))
-        return paths
+                    paths.append(to_rel_path(self.config.workspace, str(res["dst"])))
+                files = res.get("files")
+                if isinstance(files, list):
+                    for f in files[:40]:
+                        paths.append(to_rel_path(self.config.workspace, str(f)))
+        return list(dict.fromkeys(paths))
 
     def _rollback_recent_changes(self) -> None:
+        if self.checkpoint and self.checkpoint.entries:
+            result = self.checkpoint.restore()
+            self._event(
+                "rollback",
+                restored=result.get("restored") or [],
+                removed=result.get("removed") or [],
+            )
+            # Reset executor tracking to match restored workspace.
+            self.executor.created_files.clear()
+            self.executor.modified_files.clear()
+            self.executor.step_diffs.clear()
+            return
         for path in reversed(self.executor.modified_files[-5:]):
             self.executor.run_calls([{"tool": "rollback_file", "args": {"path": path}}])
         self.executor.step_diffs.clear()
@@ -473,12 +818,24 @@ class CodingAgent:
         normalized = []
         for call in calls:
             args = call.get("args") if isinstance(call.get("args"), dict) else {}
+            arg_digest = ""
+            if isinstance(args, dict):
+                # Hash arg values so different content on same path is not "stuck".
+                try:
+                    raw = json.dumps(args, sort_keys=True, ensure_ascii=False, default=str)
+                except TypeError:
+                    raw = str(sorted(args.items()))
+                # Cap huge content payloads but keep enough to distinguish edits.
+                if len(raw) > 1200:
+                    raw = raw[:600] + f"...len={len(raw)}..." + raw[-200:]
+                arg_digest = hashlib.sha256(raw.encode("utf-8")).hexdigest()[:16]
             normalized.append(
                 {
                     "task": task_id,
                     "tool": call.get("tool"),
-                    "path": args.get("path"),
-                    "keys": sorted(args.keys()) if isinstance(args, dict) else [],
+                    "path": args.get("path") if isinstance(args, dict) else None,
+                    "command": args.get("command") if isinstance(args, dict) else None,
+                    "arg_digest": arg_digest,
                 }
             )
         blob = json.dumps(normalized, sort_keys=True, ensure_ascii=False)
@@ -494,6 +851,84 @@ class CodingAgent:
             for risk in plan.risks:
                 lines.append(f"- {risk}")
         return "\n".join(lines)
+
+    def _deterministic_scaffold(self, goal: str, *, reason: str) -> AgentReport:
+        """Create a starter app without calling the LLM (plain web / React / FastAPI)."""
+        self._event("planning", message=reason)
+        if self.config.dry_run:
+            kind = (
+                "react"
+                if looks_like_react_goal(goal)
+                else ("fastapi" if looks_like_fastapi_goal(goal) else "html")
+            )
+            return AgentReport(
+                status=FinalStatus.DRY_RUN_COMPLETED,
+                goal=goal,
+                summary=f"{reason}\nScaffold planejado: {kind}",
+                next_steps=["Re-run without dry-run to write files"],
+            )
+
+        if looks_like_react_goal(goal):
+            from ia_platform.project_templates import react_vite_files
+
+            for rel in react_vite_files("tmp").keys():
+                self.checkpoint.snapshot_before(rel)
+            created, title = write_react_app(self.config.workspace, goal)
+            kind_label = "React + Vite"
+            next_steps = ["npm install && npm run dev", "Abrir Preview ao vivo", "Melhorar visual"]
+        elif looks_like_fastapi_goal(goal):
+            from local_agent.web_scaffold import fastapi_files
+
+            for rel in fastapi_files().keys():
+                self.checkpoint.snapshot_before(rel)
+            created, title = write_fastapi_app(self.config.workspace, goal)
+            kind_label = "FastAPI"
+            next_steps = ["pip install -r requirements.txt", "uvicorn main:app --reload", "pytest -q"]
+        else:
+            from local_agent.web_scaffold import plain_web_files_for_goal
+
+            for rel in plain_web_files_for_goal(goal).keys():
+                self.checkpoint.snapshot_before(rel)
+            created, title = write_plain_web_app(self.config.workspace, goal)
+            kind_label = "HTML/CSS/JS"
+            next_steps = (
+                ["Abrir Preview", "Testar operações", "Pedir tema claro ou histórico"]
+                if "calcul" in (goal or "").lower()
+                else ["Abrir Preview", "Melhorar visual", "Adicionar seção"]
+            )
+            problems = validate_plain_web(self.config.workspace)
+            if problems:
+                self.errors.extend(problems)
+
+        self.executor.created_files.extend(created)
+        self.completed_tasks.append(f"Criar {title}")
+        self.index.build(use_cache=False)
+        self._event("files_changed", paths=created, created=created, modified=[])
+        self._event(
+            "plan",
+            summary=reason,
+            task_count=1,
+            tasks=[{"id": "task-1", "title": f"Criar {title}"}],
+        )
+        summary = (
+            f"{reason}\n\n"
+            f"Criei **{title}** ({kind_label}). "
+            f"Arquivos: {', '.join(f'`{c}`' for c in created[:8])}."
+        )
+        return AgentReport(
+            status=FinalStatus.SUCCESS,
+            goal=goal,
+            summary=summary,
+            completed_tasks=self.completed_tasks,
+            analyzed_files=created,
+            created_files=list(dict.fromkeys(self.executor.created_files)),
+            modified_files=list(dict.fromkeys(self.executor.modified_files)),
+            next_steps=next_steps,
+            risks=[],
+        )
+
+    def _deterministic_plain_web(self, goal: str, *, reason: str) -> AgentReport:
+        return self._deterministic_scaffold(goal, reason=reason)
 
     def _should_skip_baseline(self) -> bool:
         """Skip heavy baseline when Node deps are not installed yet."""
@@ -550,10 +985,32 @@ class CodingAgent:
         blocked_tasks = [t for t in plan.tasks if t.status == TaskStatus.BLOCKED]
         pending = [t for t in plan.tasks if t.status in {TaskStatus.PENDING, TaskStatus.RUNNING}]
 
-        # Final compile check for Python.
-        if any(f.language == "python" for f in self.index.files) and not self.config.dry_run:
-            final_check = self.validator.run_one("python -m compileall .")
-            self.all_validations.append(final_check)
+        # Final smoke checks before declaring success.
+        if not self.config.dry_run:
+            has_python = any(f.language == "python" for f in self.index.files)
+            has_pkg = (self.config.workspace / "package.json").is_file()
+            has_index = (self.config.workspace / "index.html").is_file()
+            if has_python:
+                final_check = self.validator.run_one("python3 -m compileall .")
+                self.all_validations.append(final_check)
+            if has_index and not has_pkg:
+                problems = validate_plain_web(self.config.workspace)
+                self.all_validations.append(
+                    ValidationResult(
+                        command="validate_plain_web",
+                        success=not problems,
+                        exit_code=0 if not problems else 1,
+                        stdout="ok" if not problems else "",
+                        stderr="; ".join(problems),
+                        duration_seconds=0.0,
+                        category="code" if not problems else "introduced",
+                    )
+                )
+            elif has_pkg and (self.config.workspace / "node_modules").is_dir():
+                scripts = self.index.package_scripts or {}
+                if "build" in scripts:
+                    build = self.validator.run_one("npm run build")
+                    self.all_validations.append(build)
 
         introduced_failures = [v for v in self.all_validations if not v.success and v.category == "introduced"]
 
@@ -598,6 +1055,7 @@ class CodingAgent:
             risks=plan.risks,
             next_steps=[
                 "Revisar diff/arquivos gerados",
+                "Usar Desfazer execução se precisar reverter",
                 "Rodar a suite de testes do projeto alvo",
             ],
         )

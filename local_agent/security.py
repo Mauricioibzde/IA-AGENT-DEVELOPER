@@ -83,3 +83,23 @@ def atomic_write_text(path: Path, content: str, encoding: str = "utf-8") -> None
     tmp = path.with_name(f".{path.name}.tmp-{os.getpid()}")
     tmp.write_text(content, encoding=encoding)
     tmp.replace(path)
+
+
+def to_rel_path(workspace: str | Path, path: str | Path | None) -> str:
+    """Normalize a path to workspace-relative POSIX form when possible."""
+    if path is None or str(path).strip() == "":
+        return "."
+    workspace_root = Path(workspace).resolve()
+    raw = Path(str(path))
+    try:
+        if raw.is_absolute():
+            return str(raw.resolve().relative_to(workspace_root)).replace("\\", "/")
+        # Already relative — normalize separators / dots without requiring existence.
+        joined = (workspace_root / raw)
+        try:
+            resolved = joined.resolve()
+            return str(resolved.relative_to(workspace_root)).replace("\\", "/")
+        except (OSError, ValueError):
+            return str(raw).replace("\\", "/")
+    except ValueError:
+        return str(path).replace("\\", "/")

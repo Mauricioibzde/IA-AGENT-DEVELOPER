@@ -52,7 +52,10 @@ def _scaffold_files(project_name: str, template: str) -> Dict[str, str]:
                 "vite.config.js": (
                     'import { defineConfig } from "vite";\n'
                     'import react from "@vitejs/plugin-react";\n\n'
-                    "export default defineConfig({ plugins: [react()] });\n"
+                    "export default defineConfig({\n"
+                    "  plugins: [react()],\n"
+                    '  server: { host: "127.0.0.1", port: Number(process.env.PORT) || 5173 },\n'
+                    "});\n"
                 ),
                 "index.html": (
                     "<!doctype html>\n<html lang=\"pt-BR\">\n  <head>\n"
@@ -97,14 +100,13 @@ def scaffold_project(args: Dict[str, Any], **context: Any) -> ToolResult:
     cfg: AgentConfig = context["config"]
     project_name = str(args.get("name", "project"))
     template = str(args.get("template", "node"))
-    raw_path = str(args.get("path") or ".").strip() or "."
-    # Default: scaffold into the current workspace root (Forge project folder).
-    if raw_path in {".", "", project_name}:
+    # Default path="." scaffolds into the current workspace (Forge project folder).
+    # An explicit path (including one equal to the project name) creates a subdirectory.
+    raw_path = args.get("path")
+    if raw_path is None or str(raw_path).strip() in {"", "."}:
         target_dir = Path(workspace)
-        resolve_base = Path(workspace)
     else:
-        target_dir = resolve_in_workspace(workspace, raw_path)
-        resolve_base = target_dir
+        target_dir = resolve_in_workspace(workspace, str(raw_path).strip())
     files = _scaffold_files(project_name, template)
     if cfg.dry_run:
         return ToolResult(
@@ -120,7 +122,7 @@ def scaffold_project(args: Dict[str, Any], **context: Any) -> ToolResult:
     target_dir.mkdir(parents=True, exist_ok=True)
     created: List[str] = []
     for rel, content in files.items():
-        file_path = resolve_in_workspace(resolve_base, rel)
+        file_path = resolve_in_workspace(target_dir, rel)
         file_path.parent.mkdir(parents=True, exist_ok=True)
         atomic_write_text(file_path, content)
         created.append(str(file_path))
@@ -156,7 +158,10 @@ def build_project_tools() -> List[ToolDefinition]:
     return [
         ToolDefinition(
             name="scaffold_project",
-            description="Create a starter project (node|python|react). Prefer react for web UIs (Vite+React).",
+            description=(
+                "Create a starter project (node|python|react). Prefer react for web UIs (Vite+React). "
+                "Use path='.' to scaffold into the current workspace root; any other path creates a subdirectory."
+            ),
             argument_schema={
                 "type": "object",
                 "properties": {

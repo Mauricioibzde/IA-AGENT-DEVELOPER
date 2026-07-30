@@ -83,3 +83,33 @@ def test_install_windows_winget(monkeypatch: pytest.MonkeyPatch) -> None:
                         result = mgr.install()
     run.assert_called_once()
     assert result["ok"] is True
+
+
+def test_install_linux_uses_sudo_n_and_zstd(monkeypatch: pytest.MonkeyPatch) -> None:
+    mgr = OllamaServiceManager()
+    calls: list[list[str]] = []
+
+    def fake_run(cmd, **kwargs):
+        calls.append(list(cmd) if isinstance(cmd, (list, tuple)) else [str(cmd)])
+        return mock.Mock(returncode=0, stdout="", stderr="")
+
+    with mock.patch("platform.system", return_value="Linux"):
+        with mock.patch.object(mgr, "is_installed", side_effect=[False, True]):
+            with mock.patch.object(mgr, "_can_sudo_n", return_value=True):
+                with mock.patch.object(mgr, "_ensure_linux_extract_tools", return_value=None):
+                    with mock.patch("shutil.which", side_effect=lambda name: "/usr/bin/curl" if name == "curl" else "/usr/bin/zstd" if name == "zstd" else None):
+                        with mock.patch("subprocess.run", side_effect=fake_run):
+                            with mock.patch.object(mgr, "_wait_for_binary", return_value=True):
+                                result = mgr.install()
+    assert result["ok"] is True
+    # Official install should pipe through sudo -n sh
+    assert any("sudo -n sh" in " ".join(c) or (len(c) >= 3 and "curl" in " ".join(c)) for c in calls)
+
+
+def test_ensure_linux_extract_tools_reports_missing_zstd() -> None:
+    mgr = OllamaServiceManager()
+    with mock.patch.object(mgr, "_can_sudo_n", return_value=False):
+        with mock.patch("shutil.which", return_value=None):
+            err = mgr._ensure_linux_extract_tools(None)
+    assert err is not None
+    assert "zstd" in err.lower()

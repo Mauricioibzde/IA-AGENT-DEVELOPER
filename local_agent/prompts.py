@@ -78,7 +78,7 @@ RULES:
 8. For complex edits prefer edit_file or apply_patch over write_file.
 9. Keep edits minimal and focused — change only what is needed for the goal.
 10. If you need more context, read more files before deciding.
-11. For web UI apps prefer React + Vite (scaffold_project template=react) or solid HTML/CSS.
+11. For web UI apps prefer React + Vite (scaffold_project template=react, path=".") or solid HTML/CSS.
 12. Never leave a React app without package.json, vite.config, index.html, and a mounted main entry.
 13. Apply SENIOR ENGINEERING STANDARDS: clean architecture, FE+BE quality, security, tests.
 14. Choose validation by stack: Python→pytest/compileall; Node/React→npm test|build;
@@ -97,7 +97,15 @@ def system_prompt(workspace: str) -> str:
     )
 
 
-def planner_prompt(goal: str, project_summary: str) -> str:
+def planner_prompt(goal: str, project_summary: str, conversation: str = "") -> str:
+    conversation_block = ""
+    if conversation and conversation.strip():
+        conversation_block = (
+            "\nRecent chat context (the user may ask to APPLY these suggestions in code):\n"
+            f"{conversation.strip()[:4500]}\n"
+            "If the user goal is to implement/apply improvements from chat, plan concrete file edits "
+            "based on that context — do not plan a generic explanation-only task.\n"
+        )
     return (
         "You are the PLANNER for a senior full-stack coding agent.\n"
         "Do NOT modify files. Return ONLY a JSON object.\n\n"
@@ -131,7 +139,8 @@ def planner_prompt(goal: str, project_summary: str) -> str:
         "- Prefer maintainable structure (components/services/tests) over one giant file.\n"
         "- Include a final validation/review task.\n"
         "- Identify files via relevant_files.\n\n"
-        f"User goal:\n{goal}\n\n"
+        f"User goal:\n{goal}\n"
+        f"{conversation_block}\n"
         f"Project summary:\n{project_summary}\n"
     )
 
@@ -227,10 +236,21 @@ def _goal_looks_frontend(goal: str) -> bool:
     g = goal.lower()
     return bool(
         re.search(
-            r"\b(react|vite|html|css|landing|frontend|front-end|ui|ux|página|pagina|website|site|dashboard)\b",
+            r"\b(react|vite|html|css|landing|frontend|front-end|ui|ux|página|pagina|website|site|dashboard|javascript|\bjs\b|aplicativ)\b",
             g,
         )
     )
+
+
+def _goal_looks_react(goal: str) -> bool:
+    g = goal.lower()
+    return bool(re.search(r"\b(react|vite|next\.?js|tsx|jsx|spa)\b", g))
+
+
+def _goal_looks_plain_web(goal: str) -> bool:
+    from .web_scaffold import looks_like_plain_web_goal
+
+    return looks_like_plain_web_goal(goal)
 
 
 def _goal_looks_backend(goal: str) -> bool:
@@ -246,8 +266,60 @@ def _goal_looks_backend(goal: str) -> bool:
 def minimal_safe_plan(goal: str) -> dict:
     frontend = _goal_looks_frontend(goal)
     backend = _goal_looks_backend(goal)
+    plain_web = _goal_looks_plain_web(goal)
+    react = _goal_looks_react(goal)
+    g = (goal or "").lower()
+    # "Adicione uma seção na página" on an existing HTML app — treat as plain web edit.
+    page_edit = bool(
+        re.search(r"\b(se[cç][aã]o|section|página|pagina|layout|hero|rodapé|footer)\b", g)
+    ) and not react
+
+    if (plain_web or (page_edit and not backend)) and not backend:
+        validate: list[str] = []
+        editing = bool(re.search(r"\b(adicion|alter|edit|atualiz|inclu|melhor)\b", g)) or "index.html" in g
+        execute_desc = (
+            f"{goal}\n"
+            + (
+                "Edite a página estática existente (index.html + style.css + app.js). "
+                "HTML semântico, CSS polido, JS mínimo. NÃO use React/Vite/npm. "
+                "Não rode npm/pytest/python."
+                if editing
+                else "Crie/atualize uma app pequena estática: index.html + style.css + app.js. "
+                "HTML semântico, CSS polido, JS mínimo funcional. NÃO use React/Vite/npm "
+                "a menos que o usuário peça. Não rode npm run build."
+            )
+        )
+        return {
+            "goal": goal,
+            "summary": "Plano rápido: app HTML/CSS/JS estática (fallback).",
+            "risks": ["Model failed to produce a valid plan — using static web fallback"],
+            "tasks": [
+                {
+                    "id": "task-1",
+                    "title": "Editar HTML/CSS/JS" if editing else "Criar app HTML/CSS/JS",
+                    "description": execute_desc,
+                    "dependencies": [],
+                    "relevant_files": ["index.html", "style.css", "app.js"],
+                    "validation_commands": validate,
+                    "risk_level": "low",
+                },
+                {
+                    "id": "task-2",
+                    "title": "Revisar preview",
+                    "description": (
+                        "Garantir que index.html linka style.css e app.js, "
+                        "e que a UI abre no preview sem erros óbvios."
+                    ),
+                    "dependencies": ["task-1"],
+                    "relevant_files": ["index.html", "style.css", "app.js"],
+                    "validation_commands": [],
+                    "risk_level": "low",
+                },
+            ],
+        }
+
     if frontend and not backend:
-        validate = ["npm run build"]
+        validate = ["npm run build"] if react else []
         execute_desc = (
             f"{goal}\nApply senior frontend practices: semantic HTML/accessible UI or "
             "React+Vite with proper mount, polished layout, no stubs."

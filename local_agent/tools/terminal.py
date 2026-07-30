@@ -101,10 +101,22 @@ def _maybe_shell(command: str) -> tuple[Any, bool]:
         return command, True
 
 
+def _normalize_python_command(command: str) -> str:
+    """Prefer python3 when bare `python` is missing (common on Linux)."""
+    import shutil
+
+    text = str(command or "").strip()
+    if not text:
+        return text
+    if re.match(r"^python(\s|$)", text) and shutil.which("python") is None and shutil.which("python3"):
+        return "python3" + text[6:]
+    return text
+
+
 def run_command(args: Dict[str, Any], **context: Any) -> ToolResult:
     cfg: AgentConfig = context["config"]
     workspace = context["workspace"]
-    command = str(args.get("command", "")).strip()
+    command = _normalize_python_command(str(args.get("command", "")).strip())
     if not command:
         return ToolResult(ok=False, error="run_command requires a non-empty command")
 
@@ -113,17 +125,30 @@ def run_command(args: Dict[str, Any], **context: Any) -> ToolResult:
         return ToolResult(ok=False, error=reason, data={"command": command, "blocked": True})
 
     risk = classify_command_risk(command)
-    if risk in {RiskLevel.HIGH, RiskLevel.CRITICAL} and not cfg.auto_approve_low_risk:
-        return ToolResult(
-            ok=False,
-            error=f"Command requires confirmation due to risk={risk.value}",
-            data={"command": command, "risk_level": risk.value},
-        )
     if risk == RiskLevel.CRITICAL:
         return ToolResult(
             ok=False,
-            error=f"Refusing critical-risk command: {command}",
-            data={"command": command, "risk_level": risk.value},
+            error=f"Comando crítico bloqueado: {command}",
+            data={"command": command, "risk_level": risk.value, "confirmation_required": True},
+        )
+    if risk == RiskLevel.HIGH:
+        # Never auto-approve HIGH (rm, curl, chmod, git push, …).
+        return ToolResult(
+            ok=False,
+            error=(
+                f"Ação sensível bloqueada: revise antes de continuar "
+                f"(comando com risco={risk.value})."
+            ),
+            data={"command": command, "risk_level": risk.value, "confirmation_required": True},
+        )
+    if risk == RiskLevel.MEDIUM and not cfg.auto_approve_low_risk:
+        return ToolResult(
+            ok=False,
+            error=(
+                f"Ação sensível bloqueada: revise antes de continuar "
+                f"(comando com risco={risk.value})."
+            ),
+            data={"command": command, "risk_level": risk.value, "confirmation_required": True},
         )
 
     cwd = resolve_in_workspace(workspace, args.get("cwd", "."))

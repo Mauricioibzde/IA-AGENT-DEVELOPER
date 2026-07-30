@@ -89,6 +89,36 @@ def search_symbol(args: Dict[str, Any], **context: Any) -> ToolResult:
     return search_text({"pattern": pattern, "regex": True, "limit": args.get("limit", 50)}, **context)
 
 
+def search_relevant(args: Dict[str, Any], **context: Any) -> ToolResult:
+    """Find the most relevant project files for a natural-language query (RAG-lite)."""
+    from ..project_index import ProjectIndex
+
+    workspace = Path(context["workspace"]).resolve()
+    query = str(args.get("query", "")).strip()
+    limit = int(args.get("limit", 12))
+    if not query:
+        return ToolResult(ok=False, error="query is required")
+    index = ProjectIndex(workspace)
+    index.build()
+    matches = index.search_relevant(query, limit=limit)
+    return ToolResult(
+        ok=True,
+        data={
+            "query": query,
+            "matches": [
+                {
+                    "path": f.path,
+                    "language": f.language,
+                    "symbols": f.symbols[:8],
+                    "size": f.size,
+                }
+                for f in matches
+            ],
+            "count": len(matches),
+        },
+    )
+
+
 def build_search_tools() -> List[ToolDefinition]:
     return [
         ToolDefinition(
@@ -137,5 +167,18 @@ def build_search_tools() -> List[ToolDefinition]:
             mutating=False,
             requires_confirmation=False,
             handler=search_symbol,
+        ),
+        ToolDefinition(
+            name="search_relevant",
+            description="Find the most relevant project files for a natural-language query (RAG-lite index)",
+            argument_schema={
+                "type": "object",
+                "properties": {"query": {"type": "string"}, "limit": {"type": "integer"}},
+                "required": ["query"],
+            },
+            risk_level=RiskLevel.LOW,
+            mutating=False,
+            requires_confirmation=False,
+            handler=search_relevant,
         ),
     ]

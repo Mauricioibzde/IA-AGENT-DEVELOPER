@@ -2,6 +2,8 @@
 
 from __future__ import annotations
 
+import json
+
 from ia_platform.hardware import _compute_tier, detect_hardware
 
 
@@ -11,6 +13,15 @@ def test_detect_hardware_returns_profile() -> None:
     assert hw["cpu_cores"] >= 1
     assert hw["tier"] in {"minimal", "low", "medium", "high", "ultra"}
     assert "effective_memory_gb" in hw
+    assert hw["hostname"]
+    assert hw["fingerprint"]
+    assert hw["detected_at"] > 0
+    assert hw["scope"] == "server"
+    assert hw["source"] in {"native", "wsl", "container"}
+    assert hw.get("cpu_percent") is None or 0 <= float(hw["cpu_percent"]) <= 100
+    assert hw.get("ram_percent") is None or 0 <= float(hw["ram_percent"]) <= 100
+    assert "ram_used_gb" in hw
+    assert hw["ram_used_gb"] >= 0
 
 
 def test_compute_tier_ultra() -> None:
@@ -146,4 +157,65 @@ def test_detect_linux_intel_gpu(monkeypatch) -> None:
     assert len(gpus) == 1
     assert gpus[0]["vendor"] == "intel"
     assert gpus[0]["shared_memory"] is True
+
+
+def test_detect_windows_gpus_from_wmi(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.platform, "system", lambda: "Windows")
+    payload = json.dumps(
+        [
+            {"Name": "NVIDIA GeForce RTX 3060", "AdapterRAM": 12884901888, "DriverVersion": "31.0"},
+            {"Name": "Microsoft Basic Display Adapter", "AdapterRAM": 0, "DriverVersion": "10.0"},
+        ]
+    )
+
+    def fake_check_output(cmd, text=True, timeout=8, stderr=None):
+        assert "powershell" in cmd[0].lower() or cmd[0].lower() == "powershell"
+        return payload
+
+    monkeypatch.setattr(hwmod.subprocess, "check_output", fake_check_output)
+    gpus = hwmod._detect_windows_gpus()
+    assert len(gpus) == 1
+    assert gpus[0]["vendor"] == "nvidia"
+    assert gpus[0]["name"].startswith("NVIDIA")
+
+
+def test_detect_cpu_percent_from_proc_stat(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    samples = iter([(100, 200), (120, 300)])  # idle +20 / total +100 → 80% used
+
+    monkeypatch.setattr(hwmod, "_read_linux_cpu_times", lambda: next(samples))
+    monkeypatch.setattr(hwmod.time, "sleep", lambda _s: None)
+    pct = hwmod._detect_cpu_percent(sample_seconds=0.01)
+    assert pct == 80.0
+
+
+def test_nvidia_smi_parses_utilization(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.shutil, "which", lambda _cmd: "/usr/bin/nvidia-smi")
+
+    def fake_check_output(cmd, text=True, timeout=5, stderr=None):
+        assert any("utilization.gpu" in str(part) for part in cmd)
+        return "NVIDIA GeForce RTX 3060, 12288, 4096, 37, 535.00\n"
+
+    monkeypatch.setattr(hwmod.subprocess, "check_output", fake_check_output)
+    gpus = hwmod._detect_nvidia_gpus()
+    assert len(gpus) == 1
+    assert gpus[0]["utilization_percent"] == 37.0
+    assert gpus[0]["vram_total_gb"] == 12.0
+    assert gpus[0]["vram_free_gb"] == 4.0
+
+
+def test_memory_reader_prefers_windows_on_windows(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.platform, "system", lambda: "Windows")
+    monkeypatch.setattr(hwmod, "_read_windows_memory", lambda: (16 * 1024**3, 10 * 1024**3))
+    monkeypatch.setattr(hwmod, "_read_linux_meminfo", lambda: (_ for _ in ()).throw(AssertionError("linux")))
+    total, available = hwmod._detect_memory()
+    assert total == 16.0
+    assert available == 10.0
 

@@ -35,6 +35,15 @@ def _patch_ollama_offline(monkeypatch: pytest.MonkeyPatch) -> None:
         },
     )
 
+    class OfflineClient:
+        def check_available(self, timeout: int = 5) -> bool:
+            return False
+
+        def list_models(self) -> list[str]:
+            return []
+
+    monkeypatch.setattr("local_agent.ollama_client.OllamaClient", lambda cfg: OfflineClient())
+
 
 def _patch_ollama_online(monkeypatch: pytest.MonkeyPatch, models: list[str] | None = None) -> None:
     installed = models if models is not None else []
@@ -214,12 +223,15 @@ def test_create_react_template(platform_url: str, tmp_path: Path, monkeypatch: p
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
     assert data["template"] == "react"
+    assert data["has_dev_script"] is True
     project_dir = tmp_path / "projects" / "my-react"
     assert (project_dir / "package.json").is_file()
     assert (project_dir / "vite.config.js").is_file()
     assert (project_dir / "src" / "App.jsx").is_file()
     pkg = json.loads((project_dir / "package.json").read_text(encoding="utf-8"))
+    assert pkg["name"] == "my-react"
     assert "dev" in pkg.get("scripts", {})
+    assert "my-react" in (project_dir / "index.html").read_text(encoding="utf-8")
 
 
 def test_run_stream_emits_sse(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -268,14 +280,14 @@ def test_run_cancel_endpoint(platform_url: str) -> None:
     try:
         req = urllib.request.Request(
             f"{platform_url}/api/run/cancel",
-            data=json.dumps({"run_id": run_id}).encode(),
+            data=json.dumps({"run_id": run_id, "force": True}).encode(),
             headers={"Content-Type": "application/json"},
             method="POST",
         )
         with urllib.request.urlopen(req, timeout=5) as resp:
             data = json.loads(resp.read().decode())
         assert data["cancelled"] is True
-        assert run_manager.is_cancelled(run_id)
+        assert data.get("force") is True
     finally:
         run_manager.clear(run_id)
 
@@ -288,6 +300,20 @@ def test_run_cancel_endpoint(platform_url: str) -> None:
     with urllib.request.urlopen(req, timeout=5) as resp:
         data = json.loads(resp.read().decode())
     assert data["cancelled"] is False
+
+
+def test_run_cancel_force_releases_workspace(tmp_path: Path) -> None:
+    from ia_platform.run_manager import RunManager
+
+    mgr = RunManager()
+    ws = tmp_path / "proj"
+    ws.mkdir()
+    run_id = mgr.acquire(str(ws))
+    assert run_id
+    assert mgr.is_workspace_busy(str(ws))
+    assert mgr.cancel(run_id, force=True) is True
+    assert mgr.is_workspace_busy(str(ws)) is False
+    assert mgr.is_cancelled(run_id) is True
 
 
 def test_run_stream_rejects_busy_workspace(platform_url: str, tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -362,6 +388,16 @@ def test_hardware_endpoint(platform_url: str) -> None:
         data = json.loads(resp.read().decode())
     assert data["hardware"]["ram_total_gb"] > 0
     assert data["hardware"]["tier"]
+    assert data["detected"]["ram_total_gb"] > 0
+    assert "cpu_cores" in data["detected"]
+
+
+def test_hardware_alias_endpoint(platform_url: str) -> None:
+    with urllib.request.urlopen(f"{platform_url}/api/hardware?refresh=1", timeout=8) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["detected"]["ram_total_gb"] > 0
+    assert data["detected"]["cpu_cores"] >= 1
+    assert data["detected"].get("cpu_percent") is None or 0 <= float(data["detected"]["cpu_percent"]) <= 100
 
 
 def test_model_recommendations_endpoint(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -486,6 +522,7 @@ def test_ollama_setup_stream_starts_daemon(platform_url: str, monkeypatch: pytes
             "message": "ready",
         },
     )
+    monkeypatch.setattr(_mod.ollama_service, "is_api_ready", lambda host, timeout=2.0: False)
 
     class FakeClient:
         def check_available(self, timeout: int = 5) -> bool:
@@ -502,7 +539,8 @@ def test_ollama_setup_stream_starts_daemon(platform_url: str, monkeypatch: pytes
     with urllib.request.urlopen(req, timeout=10) as resp:
         body = resp.read().decode("utf-8")
     assert "done" in body
-    assert "ready" in body or '"ok": true' in body.replace(" ", "")
+    compact = body.replace(" ", "")
+    assert "ready" in body or '"ok":true' in compact
 
 
 def test_setup_status(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:
@@ -574,4 +612,36 @@ def test_ollama_ensure_starts_daemon(platform_url: str, monkeypatch: pytest.Monk
         data = json.loads(resp.read().decode())
     assert data["ok"] is True
     assert data.get("started") is True
+
+
+def test_resolve_workspace_projects_and_sandbox(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects = tmp_path / "projects"
+    sandbox = tmp_path / "sandbox"
+    projects.mkdir()
+    sandbox.mkdir()
+    (projects / "demo").mkdir()
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", projects)
+    monkeypatch.setattr(_mod, "DEFAULT_WORKSPACE", sandbox)
+    monkeypatch.setattr(_mod, "ROOT", tmp_path / "ia_platform")
+
+    assert _mod._resolve_workspace("projects/demo") == (projects / "demo").resolve()
+    assert _mod._resolve_workspace(None) == sandbox.resolve()
+    assert _mod._resolve_workspace("sandbox") == sandbox.resolve()
+    nested = _mod._resolve_workspace("sandbox/nested")
+    assert nested == (sandbox / "nested").resolve()
+
+
+def test_resolve_workspace_rejects_escape(tmp_path: Path, monkeypatch: pytest.MonkeyPatch) -> None:
+    projects = tmp_path / "projects"
+    sandbox = tmp_path / "sandbox"
+    projects.mkdir()
+    sandbox.mkdir()
+    monkeypatch.setattr(_mod, "PROJECTS_ROOT", projects)
+    monkeypatch.setattr(_mod, "DEFAULT_WORKSPACE", sandbox)
+    monkeypatch.setattr(_mod, "ROOT", tmp_path / "ia_platform")
+
+    with pytest.raises(ValueError, match="not allowed|must be under"):
+        _mod._resolve_workspace("/tmp/evil")
+    with pytest.raises(ValueError, match="must be under"):
+        _mod._resolve_workspace("../outside")
 

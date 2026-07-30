@@ -3,7 +3,6 @@
 from __future__ import annotations
 
 import json
-import sys
 import time
 import urllib.error
 import urllib.request
@@ -17,12 +16,80 @@ class OllamaError(RuntimeError):
     """Raised when Ollama cannot be reached or returns an invalid payload."""
 
 
+def _read_http_error_body(exc: urllib.error.HTTPError, limit: int = 400) -> str:
+    try:
+        return exc.read().decode("utf-8", errors="replace")[:limit]
+    except Exception:
+        return ""
+
+
+def is_likely_oom_error(message: str) -> bool:
+    """True when the error likely means the model could not be loaded in memory."""
+    lower = (message or "").lower()
+    tokens = (
+        "insufficient memory",
+        "out of memory",
+        "can't allocate",
+        "cannot allocate",
+        "failed to allocate",
+        "oom",
+        "não cabe na memória",
+        "nao cabe na memoria",
+        "memória insuficiente",
+        "memoria insuficiente",
+        "http error 500",
+        "internal server error",
+    )
+    return any(token in lower for token in tokens)
+
+
+def _format_ollama_http_error(exc: urllib.error.HTTPError, model_name: Optional[str] = None) -> str:
+    detail = _read_http_error_body(exc)
+    lower = detail.lower()
+    model = (model_name or "").strip() or "modelo"
+    if any(
+        token in lower
+        for token in (
+            "insufficient memory",
+            "out of memory",
+            "can't allocate",
+            "cannot allocate",
+            "failed to allocate",
+            "oom",
+        )
+    ) or (exc.code == 500 and not detail.strip()):
+        return (
+            f"O modelo '{model}' está instalado, mas não cabe na memória deste computador "
+            f"(Ollama sem RAM/VRAM suficiente para carregar). "
+            f"Escolha Auto ou um modelo menor (ex.: 7B / 6.7B). {detail}".strip()
+        )
+    if exc.code == 500:
+        return (
+            f"O modelo '{model}' falhou no Ollama (HTTP 500). "
+            f"Costuma ser falta de memória ao carregar o modelo. "
+            f"Escolha Auto ou um modelo menor (ex.: 7B). {detail}".strip()
+        )
+    if exc.code == 404:
+        return (
+            f"Modelo '{model}' não encontrado no Ollama (404). "
+            f"Escolha outro modelo ou use Auto. {detail}".strip()
+        )
+    return f"HTTP Error {exc.code}: {exc.reason}" + (f" — {detail}" if detail else "")
+
+
 class OllamaClient:
     def __init__(self, config: AgentConfig, logger: Optional[AgentLogger] = None) -> None:
         self.config = config
         self.logger = logger
         self.call_count = 0
         self.total_chars_received = 0
+        # When a large model OOMs, stick to a smaller installed model for the rest of the run.
+        self.active_model: Optional[str] = None
+        self.last_fallback: Optional[Dict[str, str]] = None
+        self._fallback_attempted_for: set[str] = set()
+
+    def resolve_model(self, model: Optional[str] = None) -> str:
+        return self.active_model or model or self.config.coder_model
 
     def chat(
         self,
@@ -34,7 +101,7 @@ class OllamaClient:
         *,
         system: Optional[str] = None,
     ) -> str:
-        model_name = model or self.config.coder_model
+        model_name = self.resolve_model(model)
         self.call_count += 1
         if self.call_count > self.config.max_model_calls:
             raise OllamaError(f"Model call budget exceeded ({self.config.max_model_calls})")
@@ -55,6 +122,13 @@ class OllamaClient:
                 last_error = exc
                 if self.logger:
                     self.logger.warn("llm_retry", message=str(exc), attempt=attempt + 1, model=model_name)
+                if is_likely_oom_error(str(exc)):
+                    fallback = self._activate_fallback(model_name)
+                    if fallback:
+                        model_name = fallback
+                        continue
+                    # Do not burn retries on a model that cannot load.
+                    break
                 time.sleep(min(2 ** attempt, 4))
         raise OllamaError(f"Ollama request failed after {retries + 1} attempts: {last_error}")
 
@@ -70,7 +144,7 @@ class OllamaClient:
         cancel_check: Optional[Callable[[], bool]] = None,
     ) -> str:
         """Stream chat response chunks; returns full stripped content."""
-        model_name = model or self.config.coder_model
+        model_name = self.resolve_model(model)
         self.call_count += 1
         if self.call_count > self.config.max_model_calls:
             raise OllamaError(f"Model call budget exceeded ({self.config.max_model_calls})")
@@ -92,14 +166,27 @@ class OllamaClient:
                 raise OllamaError("cancelled") from stream_exc
             if self.logger:
                 self.logger.warn("llm_stream_fallback", message=str(stream_exc), model=model_name)
+
+            # OOM/500: switch model before non-stream retry so we don't thrash the same giant model.
+            if is_likely_oom_error(str(stream_exc)):
+                fallback = self._activate_fallback(model_name)
+                if fallback:
+                    model_name = fallback
+
             try:
-                # Non-stream chat (also falls back to /api/generate) when stream 404s or fails.
                 content = self._chat_once(messages, model_name, temperature, timeout)
             except Exception as fallback_exc:
-                raise OllamaError(
-                    f"Chat falhou no modelo '{model_name}': {fallback_exc}. "
-                    "Escolha Auto ou outro modelo instalado."
-                ) from fallback_exc
+                if is_likely_oom_error(str(fallback_exc)):
+                    next_model = self._activate_fallback(model_name)
+                    if next_model:
+                        try:
+                            content = self._chat_once(messages, next_model, temperature, timeout)
+                        except Exception as final_exc:
+                            raise OllamaError(self._format_chat_failure(next_model, final_exc)) from final_exc
+                    else:
+                        raise OllamaError(self._format_chat_failure(model_name, fallback_exc)) from fallback_exc
+                else:
+                    raise OllamaError(self._format_chat_failure(model_name, fallback_exc)) from fallback_exc
             if on_chunk and content:
                 on_chunk(content)
 
@@ -109,6 +196,64 @@ class OllamaClient:
         if not content:
             raise OllamaError("Ollama returned an empty streaming response")
         return content
+
+    def _format_chat_failure(self, model_name: str, exc: Exception) -> str:
+        msg = str(exc)
+        if msg.startswith(f"Chat falhou no modelo '{model_name}'"):
+            return msg
+        return (
+            f"Chat falhou no modelo '{model_name}': {exc}. "
+            "Escolha Auto ou um modelo que caiba na memória deste PC."
+        )
+
+    def _activate_fallback(self, failed_model: str) -> Optional[str]:
+        failed = (failed_model or "").strip()
+        if not failed:
+            return None
+        if failed.lower() in self._fallback_attempted_for:
+            return self.active_model if self.active_model and self.active_model.lower() != failed.lower() else None
+        self._fallback_attempted_for.add(failed.lower())
+
+        try:
+            from ia_platform.model_catalog import pick_smaller_fallback_model
+        except Exception:
+            pick_smaller_fallback_model = None  # type: ignore[assignment]
+
+        installed = self.list_models()
+        fallback = None
+        if pick_smaller_fallback_model:
+            fallback = pick_smaller_fallback_model(failed, installed)
+        if not fallback:
+            # Lightweight local ranking if catalog import is unavailable.
+            for name in installed:
+                lower = name.lower()
+                if lower == failed.lower() or "embed" in lower or lower.endswith("-base"):
+                    continue
+                if any(tag in lower for tag in ("7b", "6.7b", "3b", "1.5b", "8b")):
+                    fallback = name
+                    break
+            if not fallback:
+                for name in installed:
+                    if name.lower() != failed.lower() and "embed" not in name.lower():
+                        fallback = name
+                        break
+        if not fallback or fallback.lower() == failed.lower():
+            return None
+
+        self.active_model = fallback
+        self.config.model = fallback
+        self.config.coder_model = fallback
+        self.config.planner_model = fallback
+        self.config.reflection_model = fallback
+        self.last_fallback = {"from": failed, "to": fallback}
+        if self.logger:
+            self.logger.warn("llm_model_fallback", from_model=failed, to_model=fallback)
+        return fallback
+
+    def consume_fallback_event(self) -> Optional[Dict[str, str]]:
+        event = self.last_fallback
+        self.last_fallback = None
+        return event
 
     def _stream_chat_once(
         self,
@@ -135,17 +280,9 @@ class OllamaClient:
         try:
             response = urllib.request.urlopen(req, timeout=timeout)
         except urllib.error.HTTPError as exc:
-            detail = ""
-            try:
-                detail = exc.read().decode("utf-8", errors="replace")[:300]
-            except Exception:
-                pass
-            if exc.code == 404:
-                raise OllamaError(
-                    f"Modelo '{model_name}' não encontrado no Ollama (404). "
-                    f"Escolha outro modelo ou use Auto. {detail}".strip()
-                ) from exc
-            raise OllamaError(f"Streaming chat failed: HTTP Error {exc.code}: {exc.reason}") from exc
+            raise OllamaError(
+                f"Chat falhou no modelo '{model_name}': {_format_ollama_http_error(exc, model_name)}"
+            ) from exc
         except Exception as exc:
             raise OllamaError(f"Streaming chat failed: {exc}") from exc
 
@@ -212,7 +349,7 @@ class OllamaClient:
         timeout: int = 300,
     ) -> Iterator[str]:
         """Yield response chunks for real-time terminal output."""
-        model_name = model or self.config.coder_model
+        model_name = self.resolve_model(model)
         self.call_count += 1
         if self.call_count > self.config.max_model_calls:
             raise OllamaError(f"Model call budget exceeded ({self.config.max_model_calls})")
@@ -295,6 +432,9 @@ class OllamaClient:
         except (urllib.error.URLError, urllib.error.HTTPError, TimeoutError, json.JSONDecodeError, OllamaError) as exc:
             if self.logger:
                 self.logger.debug("llm_chat_fallback", message=str(exc))
+            # Propagate OOM/500 immediately — retrying /api/generate with the same model rarely helps.
+            if isinstance(exc, OllamaError) and is_likely_oom_error(str(exc)):
+                raise
 
         prompt = "\n".join(f"{m.get('role', 'user')}: {m.get('content', '')}" for m in messages)
         data = self._post(
@@ -313,6 +453,7 @@ class OllamaClient:
     def _strip_thinking(text: str) -> str:
         """Remove <think>...</think> blocks that some models produce."""
         import re
+
         cleaned = re.sub(r"<think>.*?</think>\s*", "", text, flags=re.S)
         return cleaned.strip() or text.strip()
 
@@ -323,8 +464,12 @@ class OllamaClient:
             headers={"Content-Type": "application/json"},
             method="POST",
         )
-        with urllib.request.urlopen(req, timeout=timeout) as response:
-            raw = response.read().decode("utf-8")
+        try:
+            with urllib.request.urlopen(req, timeout=timeout) as response:
+                raw = response.read().decode("utf-8")
+        except urllib.error.HTTPError as exc:
+            model_name = str(payload.get("model") or "")
+            raise OllamaError(_format_ollama_http_error(exc, model_name)) from exc
         try:
             data = json.loads(raw)
         except json.JSONDecodeError as exc:
@@ -339,4 +484,5 @@ class OllamaClient:
             "call_count": self.call_count,
             "total_chars_received": self.total_chars_received,
             "budget_remaining": max(0, self.config.max_model_calls - self.call_count),
+            "active_model": self.active_model or self.config.coder_model,
         }

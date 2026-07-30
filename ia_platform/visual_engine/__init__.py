@@ -1,0 +1,9 @@
+"""Forge Visual Engine — Python facade over the Node capture/compare core."""
+
+from .models import CompareRequest, Side, VisualReport
+from .service import VisualEngine
+
+__all__ = ["VisualEngine", "CompareRequest", "Side", "VisualReport", "api"]
+
+# Lazy-friendly submodule access for server routes.
+from . import api as api  # noqa: E402

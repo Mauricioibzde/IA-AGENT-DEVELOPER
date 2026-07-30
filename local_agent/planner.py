@@ -23,15 +23,18 @@ class Planner:
         project_summary: str,
         *,
         index: Optional[ProjectIndex] = None,
+        conversation: str = "",
     ) -> Plan:
-        prompt = planner_prompt(goal, project_summary)
+        prompt = planner_prompt(goal, project_summary, conversation=conversation)
+        # Prefer the live model (may already have fallen back after an OOM).
+        model = getattr(self.client, "active_model", None) or self.model
         try:
-            raw = self.client.complete(prompt, model=self.model, temperature=0.1)
+            raw = self.client.complete(prompt, model=model, temperature=0.1)
             data = self._parse_plan_json(raw)
             if data is None:
                 repair = self.client.complete(
                     "Your previous output was not valid JSON. Fix it and return ONLY the plan JSON:\n" + raw[:3000],
-                    model=self.model,
+                    model=getattr(self.client, "active_model", None) or model,
                     temperature=0,
                 )
                 data = self._parse_plan_json(repair)
@@ -40,9 +43,22 @@ class Planner:
         except Exception:
             data = minimal_safe_plan(goal)
 
+        # Existing static HTML/CSS/JS projects should get an edit-oriented fallback.
+        from .web_scaffold import is_plain_web_workspace
+
+        if (
+            index
+            and is_plain_web_workspace(index.workspace)
+            and str(data.get("summary") or "").startswith("Plano mínimo seguro")
+        ):
+            data = minimal_safe_plan(
+                f"{goal}\n(contexto: projeto HTML/CSS/JS estático com index.html)"
+            )
+
         plan = self._to_plan(data, fallback_goal=goal)
 
         # Post-process: auto-discover relevant_files if the planner left them empty.
+        self._last_index = index
         if index:
             self._enrich_with_index(plan, index, goal)
 
@@ -51,7 +67,7 @@ class Planner:
 
         return plan
 
-    def update_plan(self, plan: Plan, error: str) -> Plan:
+    def update_plan(self, plan: Plan, error: str, index: Optional[ProjectIndex] = None) -> Plan:
         prompt = (
             "Update this JSON plan after the error. Return ONLY JSON plan.\n"
             f"Error: {error}\nCurrent plan:\n{json.dumps(self._plan_to_dict(plan), ensure_ascii=False)}"
@@ -67,6 +83,8 @@ class Planner:
             if task.id in done:
                 task.status = TaskStatus.COMPLETED
                 task.attempts = done[task.id].attempts
+        idx = index if index is not None else getattr(self, "_last_index", None)
+        self._ensure_validation_commands(updated, idx)
         return updated
 
     def _enrich_with_index(self, plan: Plan, index: ProjectIndex, goal: str) -> None:
@@ -107,19 +125,38 @@ class Planner:
         goal_lower = (plan.goal or "").lower()
         frontend_goal = bool(
             re.search(
-                r"\b(react|vite|html|css|landing|frontend|ui|website|site|dashboard|página|pagina)\b",
+                r"\b(react|vite|html|css|landing|frontend|ui|website|site|dashboard|página|pagina|javascript|\bjs\b)\b",
                 goal_lower,
             )
         )
+        from .web_scaffold import is_plain_web_workspace, looks_like_plain_web_goal
+
+        plain_web_goal = looks_like_plain_web_goal(plan.goal or "")
+        plain_web_project = bool(index and is_plain_web_workspace(index.workspace))
+        plain_web = plain_web_goal or plain_web_project
         for task in plan.tasks:
             if task.validation_commands:
                 # Drop python compileall on frontend-only goals if model added it by habit.
-                if frontend_goal:
+                if frontend_goal or plain_web:
                     task.validation_commands = [
-                        c for c in task.validation_commands if "compileall" not in c.lower()
+                        c
+                        for c in task.validation_commands
+                        if "compileall" not in c.lower()
+                        and "pytest" not in c.lower()
+                        and not re.search(r"\bpython3?\b", c.lower())
+                    ]
+                # Plain HTML/CSS/JS must never require npm build.
+                if plain_web:
+                    task.validation_commands = [
+                        c
+                        for c in task.validation_commands
+                        if not c.strip().startswith("npm") and "vite" not in c.lower()
                     ]
                 if task.validation_commands:
                     continue
+            if plain_web:
+                task.validation_commands = []
+                continue
             desc_lower = task.description.lower()
             if not any(word in desc_lower for word in mutate_words):
                 continue
@@ -135,6 +172,8 @@ class Planner:
                             nodeish = [c for c in detected if c.startswith("npm")]
                             if nodeish:
                                 pick = nodeish[0]
+                            elif any(x in pick for x in ("pytest", "compileall", "python")):
+                                continue
                         cmds.append(pick)
                         break
                 if not cmds and index.package_scripts:
@@ -162,12 +201,12 @@ class Planner:
                 elif has_rust:
                     cmds = ["cargo check"]
                 elif has_python and not has_node:
-                    cmds = ["python -m compileall ."]
+                    cmds = ["python3 -m compileall ."]
 
             if not cmds and index:
                 has_python = any(f.language == "python" for f in index.files)
                 if has_python and not index.package_scripts and not frontend_goal:
-                    cmds = ["python -m compileall ."]
+                    cmds = ["python3 -m compileall ."]
 
             task.validation_commands = cmds
             if not cmds:
@@ -179,28 +218,14 @@ class Planner:
                         pass
                     elif extra not in task.validation_commands:
                         task.validation_commands.append(extra)
-                elif not frontend_goal and "python -m pytest -q --tb=short" not in task.validation_commands:
+                elif not frontend_goal and "python3 -m pytest -q --tb=short" not in task.validation_commands:
                     if index and any(f.language == "python" for f in index.files):
-                        task.validation_commands.append("python -m pytest -q --tb=short")
+                        task.validation_commands.append("python3 -m pytest -q --tb=short")
 
     def _parse_plan_json(self, text: str) -> Optional[Dict[str, Any]]:
-        content = text.strip()
-        if content.startswith("```"):
-            content = re.sub(r"^```(?:json)?\s*", "", content)
-            content = re.sub(r"\s*```$", "", content)
-        try:
-            data = json.loads(content)
-            if isinstance(data, dict) and "tasks" in data:
-                return data
-        except json.JSONDecodeError:
-            pass
-        match = re.search(r"\{.*\}", content, re.S)
-        if not match:
-            return None
-        try:
-            data = json.loads(match.group(0))
-        except json.JSONDecodeError:
-            return None
+        from .json_utils import loads_json_lenient
+
+        data = loads_json_lenient(text)
         if isinstance(data, dict) and "tasks" in data:
             return data
         return None
@@ -231,12 +256,67 @@ class Planner:
         if not tasks:
             safe = minimal_safe_plan(fallback_goal)
             return self._to_plan(safe, fallback_goal=fallback_goal)
+        tasks = self._normalize_tasks(tasks)
         return Plan(
             goal=str(data.get("goal") or fallback_goal),
             summary=str(data.get("summary") or ""),
             tasks=tasks,
             risks=[str(r) for r in data.get("risks") or []],
         )
+
+    @staticmethod
+    def _normalize_tasks(tasks: List[Task]) -> List[Task]:
+        """Deduplicate IDs and drop invalid/cyclic dependencies so _next_task never stalls."""
+        seen: Dict[str, int] = {}
+        for task in tasks:
+            base = task.id.strip() or "task"
+            if base not in seen:
+                seen[base] = 1
+                task.id = base
+            else:
+                seen[base] += 1
+                task.id = f"{base}-{seen[base]}"
+
+        ids = {t.id for t in tasks}
+        for task in tasks:
+            deps: List[str] = []
+            for dep in task.dependencies:
+                if dep == task.id:
+                    continue
+                if dep not in ids:
+                    continue
+                if dep not in deps:
+                    deps.append(dep)
+            task.dependencies = deps
+
+        # Break cycles by dropping the back-edge that closes a cycle.
+        adj = {t.id: list(t.dependencies) for t in tasks}
+        visiting: set[str] = set()
+        visited: set[str] = set()
+        drop: set[tuple[str, str]] = set()
+
+        def dfs(node: str, stack: List[str]) -> None:
+            visiting.add(node)
+            stack.append(node)
+            for dep in adj.get(node, []):
+                if dep in visiting:
+                    # cycle: node -> dep is a back edge into the stack
+                    drop.add((node, dep))
+                    continue
+                if dep not in visited:
+                    dfs(dep, stack)
+            stack.pop()
+            visiting.discard(node)
+            visited.add(node)
+
+        for tid in list(adj):
+            if tid not in visited:
+                dfs(tid, [])
+
+        if drop:
+            for task in tasks:
+                task.dependencies = [d for d in task.dependencies if (task.id, d) not in drop]
+        return tasks
 
     @staticmethod
     def _plan_to_dict(plan: Plan) -> Dict[str, Any]:

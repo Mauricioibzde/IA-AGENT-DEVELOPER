@@ -4,6 +4,7 @@ from __future__ import annotations
 
 from ia_platform.model_catalog import (
     MODEL_CATALOG,
+    pick_smaller_fallback_model,
     recommend_models,
     recommend_setup_model,
     resolve_model_for_chat,
@@ -177,4 +178,127 @@ def test_resolve_model_for_chat_avoids_base_when_auto() -> None:
     installed = ["qwen2.5-coder:1.5b-base", "mistral:7b"]
     model = resolve_model_for_chat("", installed, hw)
     assert model == "mistral:7b"
+
+
+def test_installed_model_name_does_not_cross_match_size_tags() -> None:
+    from ia_platform.model_catalog import _installed_model_name
+
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert _installed_model_name("qwen2.5-coder:7b", installed) is None
+    assert _installed_model_name("qwen2.5-coder:32b", installed) == "qwen2.5-coder:32b"
+    assert _installed_model_name("deepseek-coder:6.7b", installed) == "deepseek-coder:6.7b"
+    assert _installed_model_name("llama3.2", ["llama3.2:3b"]) == "llama3.2:3b"
+
+
+def test_pick_smaller_fallback_prefers_coder_under_failed() -> None:
+    from ia_platform.model_catalog import pick_smaller_fallback_model
+
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b", "llama3.2:3b"]
+    assert pick_smaller_fallback_model("qwen2.5-coder:32b", installed) == "deepseek-coder:6.7b"
+    assert pick_smaller_fallback_model("deepseek-coder:6.7b", ["qwen2.5-coder:1.5b", "llama3.2:3b"]) in {
+        "qwen2.5-coder:1.5b",
+        "llama3.2:3b",
+    }
+
+
+def test_resolve_explicit_oversized_model_downgrades() -> None:
+    hw = {
+        "tier": "medium",
+        "effective_memory_gb": 15,
+        "ram_total_gb": 16,
+        "ram_available_gb": 15,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert resolve_model_for_run("qwen2.5-coder:32b", installed, hw) == "deepseek-coder:6.7b"
+
+
+def test_recommend_setup_prefers_installed_over_missing_download() -> None:
+    hw = {
+        "tier": "minimal",
+        "effective_memory_gb": 3.5,
+        "ram_total_gb": 16,
+        "ram_available_gb": 3.5,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert recommend_setup_model(hw, installed) == "deepseek-coder:6.7b"
+    assert resolve_model_for_run(None, installed, hw) == "deepseek-coder:6.7b"
+
+
+def test_resolve_explicit_smaller_model_never_upgrades() -> None:
+    hw = {
+        "tier": "minimal",
+        "effective_memory_gb": 4.5,
+        "ram_total_gb": 16,
+        "ram_available_gb": 4.5,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert resolve_model_for_run("deepseek-coder:6.7b", installed, hw) == "deepseek-coder:6.7b"
+    assert pick_smaller_fallback_model("deepseek-coder:6.7b", installed) is None
+
+
+def test_resolve_model_for_chat_skips_oversized_installed() -> None:
+    hw = {
+        "tier": "medium",
+        "effective_memory_gb": 15,
+        "ram_total_gb": 16,
+        "ram_available_gb": 15,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    model = resolve_model_for_chat(None, installed, hw)
+    assert model == "deepseek-coder:6.7b"
+
+
+def test_recommend_setup_skips_oversized_when_smaller_fits() -> None:
+    hw = {
+        "tier": "medium",
+        "effective_memory_gb": 15,
+        "ram_total_gb": 16,
+        "ram_available_gb": 15,
+        "has_gpu": False,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    installed = ["qwen2.5-coder:32b", "deepseek-coder:6.7b"]
+    assert recommend_setup_model(hw, installed) == "deepseek-coder:6.7b"
+
+
+def test_catalog_marks_only_exact_tag_installed() -> None:
+    hw = {
+        "tier": "medium",
+        "effective_memory_gb": 15,
+        "has_gpu": False,
+        "ram_total_gb": 16,
+        "ram_available_gb": 15,
+        "vram_total_gb": 0,
+        "vram_free_gb": 0,
+        "cpu_cores": 4,
+        "gpus": [],
+    }
+    rec = recommend_models(hw, installed=["qwen2.5-coder:32b"])
+    by_name = {item["ollama_name"]: item for item in rec["catalog"]}
+    assert by_name["qwen2.5-coder:32b"]["installed"] is True
+    assert by_name["qwen2.5-coder:7b"]["installed"] is False
+    assert by_name["qwen2.5-coder:32b"]["fits"] is False
 

@@ -2,6 +2,7 @@
 
 from __future__ import annotations
 
+import difflib
 import re
 import shutil
 from pathlib import Path
@@ -75,10 +76,29 @@ def write_file(args: Dict[str, Any], **context: Any) -> ToolResult:
     content = str(args.get("content", ""))
     if cfg.dry_run:
         return ToolResult(ok=True, dry_run=True, data={"action": "write_file", "path": str(path)})
+    existed = path.exists()
+    before = path.read_text(encoding="utf-8") if existed else ""
     path.parent.mkdir(parents=True, exist_ok=True)
     atomic_write_text(path, content)
-    return ToolResult(ok=True, data={"path": str(path), "size": len(content)})
-
+    diff_lines = list(
+        difflib.unified_diff(
+            before.splitlines(),
+            content.splitlines(),
+            fromfile=f"a/{path.name}",
+            tofile=f"b/{path.name}",
+            lineterm="",
+        )
+    )
+    return ToolResult(
+        ok=True,
+        data={
+            "path": str(path),
+            "size": len(content),
+            "created": not existed,
+            "total_lines": len(content.splitlines()),
+            "diff": "\n".join(diff_lines[:200]),
+        },
+    )
 
 def edit_file(args: Dict[str, Any], **context: Any) -> ToolResult:
     """Line-targeted edit: replace old text with new at/near a specific line.
@@ -147,6 +167,15 @@ def edit_file(args: Dict[str, Any], **context: Any) -> ToolResult:
     orig_lines = original.splitlines()
     new_lines = updated.splitlines()
     added = len(new_lines) - len(orig_lines)
+    diff_lines = list(
+        difflib.unified_diff(
+            orig_lines,
+            new_lines,
+            fromfile=f"a/{path.name}",
+            tofile=f"b/{path.name}",
+            lineterm="",
+        )
+    )
     return ToolResult(
         ok=True,
         data={
@@ -154,6 +183,10 @@ def edit_file(args: Dict[str, Any], **context: Any) -> ToolResult:
             "backup": str(backup),
             "lines_delta": added,
             "total_lines": len(new_lines),
+            "diff": "\n".join(diff_lines[:200]),
+            "old": str(args.get("old", ""))[:500],
+            "new": str(args.get("new", ""))[:500],
+            "line": target_line or None,
         },
     )
 

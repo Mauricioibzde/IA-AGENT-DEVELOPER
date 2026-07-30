@@ -103,7 +103,7 @@ def test_no_progress_detection(tmp_path: Path) -> None:
     )
     decisions = []
 
-    def fake_reflect(task, tool_results, validation_summary, no_progress=False):
+    def fake_reflect(task, tool_results, validation_summary, no_progress=False, **kwargs):
         decisions.append(no_progress)
         if no_progress:
             return ReflectionDecision(ReflectionStatus.ABORT, "no progress", "stop")
@@ -112,4 +112,5 @@ def test_no_progress_detection(tmp_path: Path) -> None:
     agent.reflector.reflect = fake_reflect
     agent.validator.establish_baseline = lambda: []
     report = agent.run("do bad thing")
-    assert True in decisions or report.status in {FinalStatus.FAILED, FinalStatus.PARTIAL_SUCCESS, FinalStatus.BLOCKED}
+    assert True in decisions
+    assert report.status in {FinalStatus.FAILED, FinalStatus.PARTIAL_SUCCESS, FinalStatus.BLOCKED, FinalStatus.SUCCESS}
