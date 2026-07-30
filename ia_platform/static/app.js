@@ -60,6 +60,9 @@
     setupInstallUrl: null,
     serverFeatures: null,
     platformVersion: null,
+    visualApiOk: null,
+    lastToolTab: null,
+    activeToolGroup: "app",
     surfaceMode: "chat", // chat | work
     attachments: [],
     chats: [],
@@ -2989,9 +2992,10 @@
     state.mobilePanelOpen = false;
   }
 
-  function syncMobileTabs(name) {
+  function syncMobileTabs(name, group) {
+    const g = group || TAB_TO_GROUP[name] || state.activeToolGroup || "app";
     document.querySelectorAll(".mobile-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.tab === name);
+      tab.classList.toggle("active", tab.dataset.group === g);
     });
   }
 
@@ -5547,23 +5551,62 @@
     }
   }
 
-  // ── Tabs ──
+  // ── Tabs / tool groups (App · Agente · Visual) ──
 
-  function switchTab(name) {
-    document.querySelectorAll(".panel-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.tab === name);
+  const TOOL_GROUP_DEFAULT = { app: "preview", agent: "live", visual: "compare" };
+  const TAB_TO_GROUP = {
+    preview: "app",
+    files: "app",
+    live: "agent",
+    report: "agent",
+    compare: "visual",
+  };
+
+  function switchToolGroup(group, preferredTab) {
+    const g = TOOL_GROUP_DEFAULT[group] ? group : "app";
+    const tab = preferredTab && TAB_TO_GROUP[preferredTab] === g
+      ? preferredTab
+      : (state.lastToolTab?.[g] || TOOL_GROUP_DEFAULT[g]);
+    document.querySelectorAll(".tools-group").forEach((btn) => {
+      const on = btn.dataset.group === g;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
     });
-    $("panelLive")?.classList.toggle("hidden", name !== "live");
-    $("panelFiles").classList.toggle("hidden", name !== "files");
-    $("panelPreview").classList.toggle("hidden", name !== "preview");
-    $("panelCompare")?.classList.toggle("hidden", name !== "compare");
-    $("panelReport").classList.toggle("hidden", name !== "report");
-    syncMobileTabs(name);
+    document.querySelectorAll(".tools-subrow").forEach((row) => {
+      row.classList.toggle("hidden", row.dataset.groupPanel !== g);
+    });
+    switchTab(tab, { group: g });
+  }
+
+  function switchTab(name, opts = {}) {
+    const tab = TAB_TO_GROUP[name] ? name : "preview";
+    const group = opts.group || TAB_TO_GROUP[tab] || "app";
+    if (!state.lastToolTab) state.lastToolTab = {};
+    state.lastToolTab[group] = tab;
+    state.activeToolGroup = group;
+
+    document.querySelectorAll(".tools-group").forEach((btn) => {
+      const on = btn.dataset.group === group;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    document.querySelectorAll(".tools-subrow").forEach((row) => {
+      row.classList.toggle("hidden", row.dataset.groupPanel !== group);
+    });
+    document.querySelectorAll(".panel-tab").forEach((el) => {
+      el.classList.toggle("active", el.dataset.tab === tab);
+    });
+    $("panelLive")?.classList.toggle("hidden", tab !== "live");
+    $("panelFiles").classList.toggle("hidden", tab !== "files");
+    $("panelPreview").classList.toggle("hidden", tab !== "preview");
+    $("panelCompare")?.classList.toggle("hidden", tab !== "compare");
+    $("panelReport").classList.toggle("hidden", tab !== "report");
+    syncMobileTabs(tab, group);
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
-    if (name === "preview") updatePreview();
+    if (tab === "preview") updatePreview();
     else stopPreviewPolling();
-    if (name === "compare") refreshComparePanel();
+    if (tab === "compare") refreshComparePanel();
   }
 
   function parseCompareViewport() {
@@ -5735,6 +5778,12 @@
 
   async function uploadMockupFile(file) {
     if (!state.current?.id || !file) return;
+    if (state.visualApiOk === false) {
+      const msg = visualApiMissingMessage({ status: 404, message: "not found" });
+      showToast(msg, "err");
+      if (els.compareStatus) els.compareStatus.textContent = msg;
+      return;
+    }
     if (els.compareStatus) els.compareStatus.textContent = "Enviando mockup…";
     try {
       const b64 = await fileToPngBase64(file);
@@ -5751,9 +5800,43 @@
       showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
       if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
     } catch (e) {
-      showToast(e.message || "Falha no upload do mockup", "err");
-      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha no upload";
+      const msg = visualApiMissingMessage(e);
+      showToast(msg, "err");
+      if (els.compareStatus) els.compareStatus.textContent = msg;
+      if (e?.status === 404) {
+        state.visualApiOk = false;
+        setVisualControlsEnabled(false);
+      }
     }
+  }
+
+  function setVisualControlsEnabled(enabled) {
+    [
+      els.btnCompareNow,
+      els.btnCapturePreview,
+      els.btnPixelPerfect,
+      els.btnCorrectAuto,
+      els.btnUploadMockup,
+      els.btnBaselineApprove,
+      els.btnBaselineReject,
+      els.btnBaselineCompare,
+    ].forEach((btn) => {
+      if (btn) btn.disabled = !enabled;
+    });
+  }
+
+  function visualApiMissingMessage(err) {
+    const msg = String(err?.message || err?.data?.error || "");
+    if (err?.status === 404 && (!msg || /not found|não encontrado/i.test(msg))) {
+      return (
+        "API Visual ausente neste servidor. Pare o Forge e reinicie na branch com Visual Engine " +
+        "(feature/visual-engine-integration ou cursor/ui-nav-simplify-40ee), depois atualize a página."
+      );
+    }
+    if (err?.status === 404 && /project not found/i.test(msg)) {
+      return "Projeto não encontrado no servidor. Reabra o projeto na sidebar.";
+    }
+    return msg || "Falha ao carregar Visual Engine.";
   }
 
   async function refreshComparePanel() {
@@ -5761,12 +5844,21 @@
       if (els.compareStatus) els.compareStatus.textContent = "Abra um projeto para comparar.";
       return;
     }
+    if (state.serverFeatures && state.serverFeatures.visual_engine === false) {
+      if (els.compareStatus) {
+        els.compareStatus.textContent = "Este servidor não inclui Visual Engine.";
+      }
+      setVisualControlsEnabled(false);
+      return;
+    }
     try {
       const st = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/status`);
+      state.visualApiOk = true;
+      setVisualControlsEnabled(true);
       if (els.compareStatus) {
         els.compareStatus.textContent = st.ok
           ? `Visual Engine pronto${st.bridge?.chrome ? " · Chrome detectado" : ""}.`
-          : st.error || "Visual Engine indisponível (Node/Chrome).";
+          : st.error || "Visual Engine indisponível (Node/Chrome). Instale: cd visual_engine && npm install";
       }
       const hist = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons`);
       const items = hist.comparisons || [];
@@ -5786,7 +5878,12 @@
       await refreshBaselinesList();
       if (items[0] && items[0].mode !== "pixel_perfect") renderCompareReport(items[0]);
     } catch (e) {
-      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha ao carregar Visual Engine.";
+      state.visualApiOk = false;
+      setVisualControlsEnabled(false);
+      if (els.compareStatus) els.compareStatus.textContent = visualApiMissingMessage(e);
+      if (els.compareHistoryList) {
+        els.compareHistoryList.innerHTML = "<li class='muted'>Histórico indisponível até o servidor Visual estar ativo.</li>";
+      }
     }
   }
 
@@ -6132,8 +6229,24 @@
   els.btnSend.addEventListener("click", sendPrompt);
   els.mobileTabs?.addEventListener("click", (e) => {
     const btn = e.target.closest(".mobile-tab");
-    if (!btn?.dataset.tab) return;
-    switchTab(btn.dataset.tab);
+    if (!btn) return;
+    if (btn.dataset.group) {
+      switchToolGroup(btn.dataset.group, btn.dataset.tab);
+      return;
+    }
+    if (btn.dataset.tab) switchTab(btn.dataset.tab);
+  });
+
+  document.getElementById("toolsGroups")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tools-group");
+    if (!btn?.dataset.group) return;
+    switchToolGroup(btn.dataset.group);
+  });
+
+  document.addEventListener("click", (e) => {
+    const more = document.getElementById("topbarMore");
+    if (!more?.open) return;
+    if (!more.contains(e.target)) more.open = false;
   });
   els.mobileBackdrop?.addEventListener("click", closeMobilePanel);
   window.addEventListener("resize", () => {
@@ -6460,7 +6573,8 @@
     const mode = els.modeSelect?.value || "chat";
     const isChat = mode === "chat";
     const isExecute = mode === "execute";
-    document.querySelector(".steps-control")?.classList.toggle("hidden", isChat);
+    document.getElementById("stepsControl")?.classList.toggle("hidden", isChat);
+    document.querySelector('label[for="maxStepsInput"]')?.classList.toggle("hidden", isChat);
     if (els.modeChip) {
       els.modeChip.textContent = isExecute ? "Executar" : "Chat";
       els.modeChip.classList.toggle("mode-chip--execute", isExecute);
@@ -6503,7 +6617,10 @@
   bindPreviewFrameLoad();
 
   document.querySelectorAll(".panel-tab").forEach((tab) => {
-    tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+    tab.addEventListener("click", () => {
+      if (tab.dataset.group) switchToolGroup(tab.dataset.group, tab.dataset.tab);
+      else switchTab(tab.dataset.tab);
+    });
   });
 
   document.querySelectorAll(".quick-card").forEach((card) => {
