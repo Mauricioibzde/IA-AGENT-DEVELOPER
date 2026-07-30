@@ -12,20 +12,22 @@ $RepoUrl = "https://github.com/Mauricioibzde/IA-AGENT-DEVELOPER.git"
 $Branch = "cursor/mockup-to-code-loop-40ee"
 $TargetDir = Join-Path $HOME "IA-AGENT-DEVELOPER"
 
-Write-Host "Baixando Forge para $TargetDir (branch $Branch)..." -ForegroundColor Cyan
+Write-Host ("Downloading Forge to " + $TargetDir + " (branch " + $Branch + ")...") -ForegroundColor Cyan
 
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
-    throw "Git nao encontrado. Instale: https://git-scm.com/download/win"
+    throw "Git not found. Install: https://git-scm.com/download/win"
 }
 
 if (-not (Test-Path (Join-Path $TargetDir "ia_platform\server.py"))) {
     if (Test-Path $TargetDir) {
-        throw "Pasta existe mas nao e o repositorio: $TargetDir"
+        throw ("Folder exists but is not the repository: " + $TargetDir)
     }
     git clone --branch $Branch --single-branch $RepoUrl $TargetDir
-} else {
-    Write-Host "Repositorio ja existe — atualizando..."
+    if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
+}
+else {
+    Write-Host "Repository already exists - updating..."
 }
 
 Set-Location $TargetDir
-& "$TargetDir\scripts\bootstrap-windows.ps1"
+& (Join-Path $TargetDir "scripts\bootstrap-windows.ps1")
