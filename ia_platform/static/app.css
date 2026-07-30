@@ -1020,6 +1020,97 @@ body.surface-work .view-workspace:not([data-layout-ready]) {
 }
 .project-changes-list .chg-add { color: var(--ok); font-weight: 600; }
 
+.workspace-dock {
+  display: grid;
+  grid-template-columns: 1.2fr 1fr 0.9fr;
+  gap: 8px;
+  padding: 8px 10px 10px;
+  border-top: 1px solid #1f2b43;
+  background: #0a121f;
+}
+.dock-card {
+  background: #101a2a;
+  border: 1px solid #283854;
+  border-radius: 10px;
+  padding: 8px 10px;
+  min-height: 92px;
+  display: flex;
+  flex-direction: column;
+  gap: 6px;
+}
+.dock-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 8px;
+  font-size: 0.75rem;
+}
+.dock-open-btn {
+  height: 26px;
+  padding: 0 8px;
+  border-radius: 7px;
+  font-size: 0.67rem;
+}
+.dock-main {
+  font-size: 0.76rem;
+  color: var(--text);
+  line-height: 1.35;
+}
+.dock-meta {
+  font-size: 0.68rem;
+}
+.dock-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.7rem;
+}
+.dock-run-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+}
+.dock-run-list .ok { color: var(--ok); }
+.dock-run-list .err { color: var(--err); }
+.dock-run-list .warn { color: var(--warn); }
+.dock-metric-grid {
+  display: grid;
+  grid-template-columns: repeat(3, minmax(0, 1fr));
+  gap: 6px;
+}
+.dock-metric {
+  border: 1px solid #2b3e60;
+  border-radius: 8px;
+  background: #0e1727;
+  min-height: 52px;
+  padding: 6px 6px 5px;
+  display: flex;
+  flex-direction: column;
+  justify-content: space-between;
+}
+.dock-metric span {
+  font-size: 0.63rem;
+  color: var(--muted);
+}
+.dock-metric b {
+  font-size: 0.96rem;
+  color: var(--text);
+  line-height: 1;
+}
+
+@media (max-width: 1400px) {
+  .workspace-dock {
+    grid-template-columns: 1fr 1fr;
+  }
+  .dock-metrics {
+    grid-column: 1 / -1;
+  }
+}
+
 body.surface-work #workRail:not(.hidden) { display: grid; }
 body.surface-chat #workRail { display: none !important; }
 
@@ -3651,6 +3742,7 @@ body.surface-work .btn-deploy { display: inline-flex; }
   .workspace-body { grid-template-columns: 1fr; }
   .layout-splitter { display: none !important; }
   .btn-collapse-panel { display: none !important; }
+  .workspace-dock { display: none; }
   .mobile-tabs { display: flex; }
   .quick-actions { grid-template-columns: 1fr 1fr; }
   .right-panel {

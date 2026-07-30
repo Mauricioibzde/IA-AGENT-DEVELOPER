@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=35" />
+  <link rel="stylesheet" href="/static/app.css?v=36" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -574,6 +574,36 @@
             </div>
           </aside>
         </div>
+        <section class="workspace-dock" id="workspaceDock" aria-label="Painéis inferiores">
+          <article class="dock-card dock-compare">
+            <header class="dock-head">
+              <strong>Comparação visual</strong>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="visual" data-open-tab="compare">Abrir</button>
+            </header>
+            <p class="dock-main" id="dockCompareStatus">Sem comparações recentes.</p>
+            <p class="dock-meta muted" id="dockCompareMeta">Use “Visual” para iniciar uma nova comparação.</p>
+          </article>
+          <article class="dock-card dock-history">
+            <header class="dock-head">
+              <strong>Histórico</strong>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Ver runs</button>
+            </header>
+            <ul class="dock-run-list" id="dockRunList">
+              <li class="muted">Nenhuma execução registrada.</li>
+            </ul>
+          </article>
+          <article class="dock-card dock-metrics">
+            <header class="dock-head">
+              <strong>Métricas</strong>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="live">Ao vivo</button>
+            </header>
+            <div class="dock-metric-grid">
+              <div class="dock-metric"><span>Total</span><b id="dockMetricTotal">0</b></div>
+              <div class="dock-metric"><span>Sucesso</span><b id="dockMetricSuccess">0</b></div>
+              <div class="dock-metric"><span>Falhas</span><b id="dockMetricFail">0</b></div>
+            </div>
+          </article>
+        </section>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
           <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">App</button>
           <button type="button" class="mobile-tab" data-group="agent" data-tab="live">Agente</button>
@@ -800,6 +830,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=35"></script>
+  <script src="/static/app.js?v=36"></script>
 </body>
 </html>

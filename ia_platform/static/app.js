@@ -185,6 +185,13 @@
     workStepper: $("workStepper"),
     workPlanList: $("workPlanList"),
     workPlanMeta: $("workPlanMeta"),
+    workspaceDock: $("workspaceDock"),
+    dockCompareStatus: $("dockCompareStatus"),
+    dockCompareMeta: $("dockCompareMeta"),
+    dockRunList: $("dockRunList"),
+    dockMetricTotal: $("dockMetricTotal"),
+    dockMetricSuccess: $("dockMetricSuccess"),
+    dockMetricFail: $("dockMetricFail"),
     projectChanges: $("projectChanges"),
     projectChangesList: $("projectChangesList"),
     projectChangesMeta: $("projectChangesMeta"),
@@ -2736,6 +2743,7 @@
     clearPreviewLoadTimer();
     els.emptyView.classList.remove("hidden");
     els.workspaceView.classList.add("hidden");
+    renderWorkspaceDock();
     renderProjectList();
   }
 
@@ -3414,6 +3422,49 @@
     return "err";
   }
 
+  function renderWorkspaceDock() {
+    if (!els.workspaceDock) return;
+    const hasProject = !!state.current;
+    els.workspaceDock.classList.toggle("hidden", !hasProject);
+    if (!hasProject) return;
+
+    const compareText = (els.compareStatus?.textContent || "").trim();
+    if (els.dockCompareStatus) {
+      els.dockCompareStatus.textContent = compareText || "Sem comparações recentes.";
+    }
+    if (els.dockCompareMeta) {
+      const project = state.current?.name || "projeto";
+      els.dockCompareMeta.textContent = `Dados de visual do ${project}.`;
+    }
+
+    const runs = state.runs || [];
+    if (els.dockRunList) {
+      if (!runs.length) {
+        els.dockRunList.innerHTML = "<li class='muted'>Nenhuma execução registrada.</li>";
+      } else {
+        els.dockRunList.innerHTML = runs
+          .slice(0, 3)
+          .map((run) => {
+            const label = String(run.status || "RUN").toUpperCase();
+            const cls = runStatusClass(run.status);
+            const goal = (run.goal || run.summary || "Execução").slice(0, 28);
+            return `<li><span>${escapeHtml(goal)}</span><strong class="${cls}">${escapeHtml(label)}</strong></li>`;
+          })
+          .join("");
+      }
+    }
+
+    const total = runs.length;
+    const success = runs.filter((r) => String(r.status || "").toUpperCase() === "SUCCESS").length;
+    const fail = runs.filter((r) => {
+      const s = String(r.status || "").toUpperCase();
+      return s === "FAILED" || s === "ERROR" || s === "FAIL";
+    }).length;
+    if (els.dockMetricTotal) els.dockMetricTotal.textContent = String(total);
+    if (els.dockMetricSuccess) els.dockMetricSuccess.textContent = String(success);
+    if (els.dockMetricFail) els.dockMetricFail.textContent = String(fail);
+  }
+
   function formatRunTime(ts) {
     if (!ts) return "";
     return new Date(ts * 1000).toLocaleString("pt-BR", {
@@ -3429,6 +3480,7 @@
     const runs = state.runs || [];
     if (!runs.length) {
       els.runHistoryList.innerHTML = '<li class="run-empty">Nenhuma execução registrada.</li>';
+      renderWorkspaceDock();
       return;
     }
     els.runHistoryList.innerHTML = runs
@@ -3449,6 +3501,7 @@
     els.runHistoryList.querySelectorAll("[data-run-id]").forEach((item) => {
       item.addEventListener("click", () => selectRun(item.dataset.runId));
     });
+    renderWorkspaceDock();
   }
 
   function formatTimelineEvent(ev) {
@@ -6585,6 +6638,7 @@
     }
     renderCompareRegions(report);
     setCompareView(state.compareView || "side");
+    renderWorkspaceDock();
   }
 
   function renderCompareRegions(report) {
@@ -7094,6 +7148,14 @@
   // ── Events ──
 
   els.btnSend.addEventListener("click", sendPrompt);
+  els.workspaceDock?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".dock-open-btn");
+    if (!btn) return;
+    const group = btn.dataset.openGroup;
+    const tab = btn.dataset.openTab;
+    if (!group || !tab) return;
+    switchToolGroup(group, tab);
+  });
   els.mobileTabs?.addEventListener("click", (e) => {
     const btn = e.target.closest(".mobile-tab");
     if (!btn) return;
