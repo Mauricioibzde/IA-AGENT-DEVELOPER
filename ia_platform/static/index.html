@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=57" />
+  <link rel="stylesheet" href="/static/app.css?v=58" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -122,7 +122,9 @@
             </div>
           </div>
           <div class="sidebar-footer">
-            <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
+            <button type="button" class="health-status-btn" id="healthStatus" title="Status do Ollama">
+              <span class="status-dot err"></span> verificando...
+            </button>
             <div class="sidebar-setup-pill hidden" id="sidebarSetupPill">
               <span id="sidebarSetupLabel">Configurando...</span>
               <span class="mini-bar"><span class="mini-bar-fill" id="sidebarSetupBar"></span></span>
@@ -208,7 +210,7 @@
             </button>
             <div class="project-heading">
               <h2 id="projectTitle">Projeto</h2>
-              <span class="project-badge" id="projectBadge" data-surface="work">Work</span>
+              <button type="button" class="project-badge" id="projectBadge" data-surface="work" title="Alternar Chat / Work">Work</button>
             </div>
           </div>
           <div class="topbar-controls">
@@ -457,7 +459,11 @@
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevRestart">Reiniciar</button>
                 <span class="dev-status" id="devStatus"></span>
               </div>
-              <pre class="dev-error-log hidden" id="devErrorLog"></pre>
+              <div class="dev-error-panel hidden" id="devErrorPanel">
+                <p class="dev-error-summary" id="devErrorSummary">Falha no preview ao vivo.</p>
+                <pre class="dev-error-log" id="devErrorLog"></pre>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnDevErrorRestart">Reiniciar preview</button>
+              </div>
               <div class="app-workbench" id="appWorkbench">
                 <div class="app-preview-col">
                   <div class="preview-viewport device-desktop" id="previewViewport">
@@ -527,6 +533,10 @@
               <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
               <input id="compareTargetUrl" type="url" placeholder="https://…" class="compare-input" />
               <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-primary-cta hidden" id="comparePrimaryCta">
+                <button type="button" class="btn btn-primary btn-sm" id="btnCorrectPrimary">Corrigir para ficar parecido</button>
+                <p class="muted compare-primary-hint">Roda o loop de correção com o mockup atual.</p>
+              </div>
               <details class="compare-advanced" id="compareAdvanced">
                 <summary>Ferramentas avançadas</summary>
                 <div class="compare-advanced-body">
@@ -855,6 +865,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=45"></script>
+  <script src="/static/app.js?v=46"></script>
 </body>
 </html>

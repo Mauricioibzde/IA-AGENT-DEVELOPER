@@ -7603,3 +7603,133 @@ body.is-running .composer {
 body.is-running .btn-send {
   opacity: 0.45;
 }
+
+/* ── Workspace improvements: feedback, files, visual, health ── */
+button.project-badge {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
+button.project-badge:hover {
+  filter: brightness(1.08);
+}
+
+.health-status-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.health-status-btn.is-offline {
+  color: #b45309;
+  font-weight: 650;
+}
+
+.health-status-btn:hover {
+  text-decoration: underline;
+}
+
+.file-node.changed,
+.file-dir.changed > .file-dir-toggle {
+  background: color-mix(in srgb, #d97706 12%, transparent);
+}
+
+.file-node.changed .file-changed {
+  color: #b45309;
+  font-weight: 800;
+}
+
+.next-steps-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.next-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  color: inherit;
+}
+
+.next-file em {
+  font-style: normal;
+  opacity: 0.65;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.next-steps-actions .btn-primary {
+  order: -1;
+}
+
+.dev-error-panel {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #ef4444 28%, transparent);
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+  display: grid;
+  gap: 8px;
+}
+
+.dev-error-summary {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: #b91c1c;
+}
+
+.dev-error-panel .dev-error-log {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+
+.compare-primary-cta {
+  display: grid;
+  gap: 4px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
+.compare-primary-hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+body.surface-chat .work-rail,
+body.surface-chat #splitWorkRail {
+  display: none !important;
+}
+
+.work-plan-card::after {
+  display: none !important;
+}

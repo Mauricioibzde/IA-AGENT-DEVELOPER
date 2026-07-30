@@ -161,6 +161,12 @@
     btnPixelPerfect: $("btnPixelPerfect"),
     btnCapturePreview: $("btnCapturePreview"),
     btnCorrectAuto: $("btnCorrectAuto"),
+    btnCorrectPrimary: $("btnCorrectPrimary"),
+    comparePrimaryCta: $("comparePrimaryCta"),
+    compareAdvanced: $("compareAdvanced"),
+    devErrorPanel: $("devErrorPanel"),
+    devErrorSummary: $("devErrorSummary"),
+    btnDevErrorRestart: $("btnDevErrorRestart"),
     btnCorrectCancel: $("btnCorrectCancel"),
     compareCorrection: $("compareCorrection"),
     compareCorrectionMeta: $("compareCorrectionMeta"),
@@ -799,6 +805,8 @@
       const serverOld = !state.platformVersion && !state.serverFeatures?.full_setup_stream;
       const serverHint = serverOld ? ' · <span class="status-warn">backend v1</span>' : "";
       els.healthStatus.innerHTML = `<span class="status-dot ok"></span>Ollama pronto${escapeHtml(modelLabel)}${liveMark}${serverHint}`;
+      els.healthStatus.title = "Ollama ok · clique para abrir Modelos";
+      els.healthStatus.classList.remove("is-offline");
     }
   }
 
@@ -1554,7 +1562,9 @@
       updateModelOptions(state.models);
       applyRecommendedModel(d.recommended_model || d.auto_model, state.models);
       if (!state.ollamaOk) {
-        els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline?';
+        els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline · configurar';
+        els.healthStatus.title = "Clique para configurar Ollama";
+        els.healthStatus.classList.add("is-offline");
       } else {
         updateActiveModelDisplay(getSelectedModel() || expectedAutoModel(), {
           source: isAutoModelSelected() ? "auto" : "manual",
@@ -1565,7 +1575,9 @@
       syncWorkbenchForSurface();
     } catch {
       state.ollamaOk = false;
-      els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
+      els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline · configurar';
+      els.healthStatus.title = "Clique para configurar Ollama";
+      els.healthStatus.classList.add("is-offline");
       updateOllamaOfflineUI();
       syncWorkbenchForSurface();
     } finally {
@@ -2311,6 +2323,7 @@
     if (els.projectBadge) {
       els.projectBadge.textContent = work ? "Work" : "Chat";
       els.projectBadge.dataset.surface = state.surfaceMode;
+      els.projectBadge.title = work ? "Modo Work · clique para Chat" : "Modo Chat · clique para Work";
     }
 
     document.querySelectorAll('.tools-group[data-group="visual"]').forEach((btn) => {
@@ -4281,15 +4294,24 @@
 
   function activityPhaseMeta(activity) {
     const stage = String(activity?.stage || "").toLowerCase();
-    if (activity?.finished || /conclu|finaliz/.test(stage)) return { cls: "ok", label: "concluído", phaseId: "done" };
-    if (/erro|falha/.test(stage)) return { cls: "err", label: "precisa de atenção", phaseId: activity?.phaseId || "work" };
+    if (activity?.finished || /conclu|finaliz|pronto/.test(stage)) return { cls: "ok", label: "pronto", phaseId: "done" };
+    if (/erro|falha|ollama/.test(stage)) return { cls: "err", label: "precisa de atenção", phaseId: activity?.phaseId || "work" };
     if (/cancel/.test(stage)) return { cls: "warn", label: "cancelando", phaseId: "done" };
-    if (/plano|planej|criando plano/.test(stage)) return { cls: "think", label: "planejando", phaseId: "plan" };
-    if (/modelo|gerando/.test(stage)) return { cls: "think", label: "modelo pensando", phaseId: "think" };
-    if (/ferrament/.test(stage)) return { cls: "work", label: "executando", phaseId: "work" };
-    if (/valid|avaliando|reflet/.test(stage)) return { cls: "check", label: "checando", phaseId: "check" };
-    if (/iniciado|prepar/.test(stage)) return { cls: "work", label: "preparando", phaseId: "prepare" };
-    return { cls: "work", label: "trabalhando", phaseId: activity?.phaseId || "work" };
+    if (/plano|planej|criando plano|estratégia/.test(stage)) return { cls: "think", label: "entendendo o pedido", phaseId: "plan" };
+    if (/modelo|decidindo|gerando|pensando/.test(stage)) return { cls: "think", label: "pensando na próxima edição", phaseId: "think" };
+    if (/lendo|leitura/.test(stage)) return { cls: "work", label: "lendo arquivos", phaseId: "work" };
+    if (/edit|escrev|arquivo|ferrament/.test(stage)) return { cls: "work", label: "editando o projeto", phaseId: "work" };
+    if (/valid|avaliando|reflet|chec/.test(stage)) return { cls: "check", label: "conferindo o resultado", phaseId: "check" };
+    if (/iniciado|prepar|trocando/.test(stage)) return { cls: "work", label: "preparando", phaseId: "prepare" };
+    return { cls: "work", label: "trabalhando no projeto", phaseId: activity?.phaseId || "work" };
+  }
+
+  function humanToolLabel(name) {
+    const n = String(name || "").toLowerCase();
+    if (/read|ler|list|glob|search/.test(n)) return "lendo arquivos";
+    if (/write|edit|patch|create/.test(n)) return "editando arquivos";
+    if (/run|shell|command|npm|test/.test(n)) return "rodando comando";
+    return name || "ferramenta";
   }
 
   function renderActivityPhases(phaseId) {
@@ -4601,10 +4623,10 @@
       phaseId: "done",
       stage: cancelled ? "Execução cancelada" : "Execução concluída",
       detail: cancelled
-        ? "O agente parou a pedido do usuário."
+        ? "Parou a pedido. Nada mais será editado."
         : changed.length
-          ? `Pronto. ${changed.length} arquivo(s) alterado(s).${usedModel ? ` Modelo: ${usedModel}.` : ""}`
-          : `Pronto. Relatório final disponível abaixo.${usedModel ? ` Modelo: ${usedModel}.` : ""}`,
+          ? `Pronto · ${changed.slice(0, 3).join(", ")}${changed.length > 3 ? "…" : ""}${usedModel ? ` · ${usedModel}` : ""}`
+          : `Pronto.${usedModel ? ` · ${usedModel}` : ""}`,
       step: activity.maxSteps || activity.step,
       model: usedModel || activity.model,
     });
@@ -4644,6 +4666,14 @@
 
   async function sendPrompt() {
     let prompt = els.promptInput.value.trim();
+    if (/^voltar\s+ao\s+chat\.?$/i.test(prompt)) {
+      setSurfaceMode("chat");
+      if (els.modeSelect) els.modeSelect.value = "chat";
+      syncModeControls();
+      els.promptInput.value = "";
+      addMessage("Voltei para Chat.", "system");
+      return;
+    }
     if ((!prompt && !state.attachments.length) || state.running) return;
 
     if (!state.current) {
@@ -4759,15 +4789,15 @@
         return sendAgentPrompt(enrichedPrompt, "execute", { displayPrompt: prompt, model: selectedModel });
       }
       if (looksLikeCodeRequest(prompt)) {
-        addMessage(prompt, "user");
-        els.promptInput.value = "";
-        updateChatHeroVisibility();
-        persistMessage("user", prompt).catch(() => {});
-        addExecuteHandoff(
-          prompt,
-          "Isso parece um pedido para criar ou editar código. No Chat continuamos a conversa; para alterar arquivos, execute:"
+        // Auto handoff: build intents go to Work immediately (less friction).
+        if (els.modeSelect) els.modeSelect.value = "execute";
+        syncModeControls();
+        if (state.surfaceMode !== "work") setSurfaceMode("work");
+        addMessage(
+          "Pedido de construção detectado — executei no Work. Se era só conversa, diga “voltar ao chat”.",
+          "system"
         );
-        return;
+        return sendAgentPrompt(enrichedPrompt, "execute", { displayPrompt: prompt, model: selectedModel });
       }
       return sendChatPrompt(prompt, { model: selectedModel });
     }
@@ -5469,18 +5499,18 @@
         updateActivity(activity, {
           runId: ev.run_id || activity.runId,
           phaseId: "prepare",
-          stage: ev.model ? `Agente iniciado · ${ev.model}` : "Agente iniciado",
+          stage: "Preparando o projeto",
           detail: ev.model
-            ? `Modelo em uso: ${ev.model}${ev.model_mode === "auto" ? " (Auto)" : ""}. Preparando leitura do projeto.`
-            : `Run ${ev.run_id || ""} aberto. Preparando leitura do projeto e contexto da conversa.`.trim(),
+            ? `Usando ${ev.model}${ev.model_mode === "auto" ? " (Auto)" : ""} — abrindo o contexto do projeto.`
+            : "Abrindo o contexto do projeto e da conversa.",
           model: ev.model || activity.model,
         });
         setWorkingState(
           agentEl,
-          ev.model ? `Agente iniciado · ${ev.model}` : "Agente iniciado",
+          "Preparando o projeto",
           ev.model
             ? `${ev.model_mode === "auto" ? "Auto → " : ""}${ev.model}`
-            : "Preparando leitura do projeto…",
+            : "Lendo o que já existe…",
           activity
         );
         break;
@@ -5529,16 +5559,16 @@
       case "planning":
         updateActivity(activity, {
           phaseId: "plan",
-          stage: "Criando plano",
-          detail: ev.message || "Lendo o projeto e montando uma sequência segura de tarefas.",
+          stage: "Entendendo o pedido",
+          detail: ev.message || "Analisando o projeto para decidir o que mudar.",
         });
-        setWorkingState(agentEl, "Planejando as mudanças", "Analisando arquivos do projeto…", activity);
+        setWorkingState(agentEl, "Entendendo o pedido", "Analisando arquivos do projeto…", activity);
         break;
       case "plan":
         updateActivity(activity, {
           phaseId: "plan",
-          stage: "Plano criado",
-          detail: "O agente terminou de decidir a estratégia e vai executar as tarefas uma por uma.",
+          stage: "Plano pronto",
+          detail: `Vai fazer ${ev.task_count || "algumas"} etapa(s) no projeto.`,
           planSummary: ev.summary || "Plano criado",
           taskCount: ev.task_count || null,
           planTasks: Array.isArray(ev.tasks) ? ev.tasks : activity.planTasks || [],
@@ -5546,15 +5576,15 @@
         setWorkingState(
           agentEl,
           "Plano pronto — começando a editar",
-          `${ev.task_count || "?"} tarefa(s) · cards de arquivo aparecem abaixo`,
+          `${ev.task_count || "?"} etapa(s)`,
           activity
         );
         break;
       case "step":
         updateActivity(activity, {
           phaseId: "think",
-          stage: "Executando tarefa",
-          detail: `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id || "tarefa"}`,
+          stage: "Editando o projeto",
+          detail: `${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id || "próxima mudança"}`,
           step: ev.step || activity.step,
           currentTaskId: ev.task_id || activity.currentTaskId,
           maxSteps: ev.max_steps || activity.maxSteps,
@@ -5566,23 +5596,23 @@
         });
         setWorkingState(
           agentEl,
-          `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || "trabalhando"}`,
-          "Lendo e editando arquivos — preview linha a linha abaixo",
+          ev.task_title || "Editando o projeto",
+          `Etapa ${ev.step}/${ev.max_steps}`,
           activity
         );
         break;
       case "llm_chunk":
         updateActivity(activity, {
           phaseId: "think",
-          stage: "Modelo decidindo a próxima ação",
-          detail: "Gerando a próxima leitura ou edição de arquivo…",
+          stage: "Pensando na próxima edição",
+          detail: "Escolhendo o próximo arquivo para ler ou alterar…",
           llmChars: (activity.llmChars || 0) + (ev.text ? ev.text.length : 0),
         });
         if (!activity.liveOp) {
           setWorkingState(
             agentEl,
-            "Decidindo a próxima edição",
-            `Tarefa: ${activity.task || "em andamento"}`,
+            "Pensando na próxima edição",
+            activity.task || "em andamento",
             activity
           );
         }
@@ -5602,32 +5632,37 @@
           markChangedFiles([ev.path]);
           scheduleFileRefresh(activity);
           if (isUiPath(ev.path)) {
-            window.setTimeout(() => updatePreview(/\.(html?)$/i.test(ev.path) ? ev.path : findPreviewPath()), 600);
+            window.setTimeout(() => {
+              if (state.surfaceMode === "work") switchToolGroup("app", "preview");
+              updatePreview(/\.(html?)$/i.test(ev.path) ? ev.path : findPreviewPath());
+            }, 500);
           }
         }
         break;
       }
-      case "tools_start":
+      case "tools_start": {
+        const labels = (ev.tools || []).slice(0, 3).map(humanToolLabel);
         updateActivity(activity, {
           phaseId: "work",
-          stage: "Executando ferramentas",
-          detail: `${ev.count || 0} chamada(s) em andamento: ${(ev.tools || []).join(", ") || "preparando"}.`,
+          stage: labels[0] || "Trabalhando nos arquivos",
+          detail: labels.length > 1 ? labels.join(" · ") : "Atualizando o projeto…",
           tools: ev.tools || [],
           toolCount: ev.count || 0,
           okTools: 0,
         });
         setWorkingState(
           agentEl,
-          `Executando: ${(ev.tools || []).slice(0, 3).join(", ") || "ferramentas"}`,
-          "Cards de arquivo atualizam conforme cada operação termina",
+          labels[0] || "Trabalhando nos arquivos",
+          "As mudanças aparecem abaixo conforme terminam",
           activity
         );
         break;
+      }
       case "tools":
         updateActivity(activity, {
           phaseId: "work",
-          stage: "Ferramentas executadas",
-          detail: `${ev.ok || 0} de ${ev.count || 0} chamadas concluíram com sucesso.`,
+          stage: "Mudanças aplicadas",
+          detail: `${ev.ok || 0}/${ev.count || 0} operações concluídas.`,
           tools: ev.tools || [],
           okTools: ev.ok || 0,
           toolCount: ev.count || 0,
@@ -5639,66 +5674,70 @@
         markChangedFiles(paths);
         updateActivity(activity, {
           phaseId: "work",
-          stage: "Arquivos atualizados",
+          stage: paths.length === 1 ? "Arquivo atualizado" : "Arquivos atualizados",
           detail: paths.length
-            ? `Alterações em: ${paths.slice(0, 4).join(", ")}${paths.length > 4 ? "…" : ""}`
-            : "Arquivos do projeto foram atualizados.",
+            ? paths.slice(0, 4).join(", ") + (paths.length > 4 ? "…" : "")
+            : "O projeto foi atualizado.",
           files: unique,
         });
         scheduleFileRefresh(activity);
         if (paths.some(isUiPath)) {
-          window.setTimeout(() => updatePreview(paths.find((p) => /\.html?$/i.test(p)) || findPreviewPath()), 800);
+          window.setTimeout(() => {
+            switchToolGroup("app", "preview");
+            updatePreview(paths.find((p) => /\.html?$/i.test(p)) || findPreviewPath());
+          }, 500);
         }
         break;
       }
       case "validation_start":
         updateActivity(activity, {
           phaseId: "check",
-          stage: "Validando alterações",
-          detail: `Rodando: ${(ev.commands || []).join(", ") || "validações automáticas"}.`,
+          stage: "Conferindo o resultado",
+          detail: `Checando: ${(ev.commands || []).slice(0, 2).join(", ") || "o que mudou"}.`,
         });
         setWorkingState(
           agentEl,
-          "Validando alterações",
-          (ev.commands || []).slice(0, 3).join(", ") || "checagens automáticas",
+          "Conferindo o resultado",
+          (ev.commands || []).slice(0, 2).join(", ") || "checagens",
           activity
         );
         break;
       case "validation":
         updateActivity(activity, {
           phaseId: "check",
-          stage: "Validação concluída",
-          detail: `${ev.ok || 0} de ${ev.count || 0} validações passaram.`,
+          stage: "Conferência concluída",
+          detail: `${ev.ok || 0}/${ev.count || 0} checagens ok.`,
           reflection: ev.summary || activity.reflection,
         });
         setWorkingState(
           agentEl,
-          "Validação concluída",
-          `${ev.ok || 0}/${ev.count || 0} passaram`,
+          "Conferência concluída",
+          `${ev.ok || 0}/${ev.count || 0} ok`,
           activity
         );
         break;
       case "reflection":
         updateActivity(activity, {
           phaseId: "check",
-          stage: "Avaliando resultado",
-          detail: `Decisão: ${ev.status || "continue"}`,
+          stage: "Avaliando se ficou bom",
+          detail: ev.status === "done" || ev.status === "success" ? "Parece suficiente." : "Pode precisar de mais um ajuste.",
           reflection: (ev.analysis || "").slice(0, 180),
         });
-        setWorkingState(agentEl, `Avaliando: ${ev.status || "continue"}`, "", activity);
+        setWorkingState(agentEl, "Avaliando se ficou bom", "", activity);
         break;
-      case "error":
+      case "error": {
+        const errMsg = ev.message || ev.error || "Erro desconhecido durante a execução.";
         updateActivity(activity, {
-          stage: "Erro encontrado",
-          detail: ev.message || ev.error || "Erro desconhecido durante a execução.",
+          stage: /ollama|modelo|memory|memória/i.test(errMsg) ? "Problema com o modelo" : "Erro encontrado",
+          detail: errMsg,
         });
-        setWorkingState(
-          agentEl,
-          "Erro na execução",
-          ev.message || ev.error || "erro desconhecido",
-          activity
-        );
+        setWorkingState(agentEl, "Algo falhou", errMsg, activity);
+        if (/ollama|offline|connection refused|econnrefused/i.test(errMsg)) {
+          showToast("Ollama ficou offline no meio da execução. Abra Modelos para reconectar.", "err", 7000);
+          updateOllamaOfflineUI();
+        }
         break;
+      }
       default:
         break;
     }
@@ -6122,9 +6161,9 @@
       const runtime = state.devStatus?.runtime || state.devStatus?.script;
       const msg = state.devStatus?.has_dev_script
         ? runtime === "uvicorn"
-          ? "API FastAPI — clique em Iniciar preview ao vivo (abre /docs)."
-          : "Apps React/Vite precisam de npm run dev — clique em Iniciar preview ao vivo."
-        : "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
+          ? "Ainda sem UI estática. Inicie o preview ao vivo para abrir /docs, ou peça uma landing HTML."
+          : "Ainda sem página pronta. Clique em Iniciar preview ao vivo (React/Vite) ou peça uma landing."
+        : "Ainda sem UI — peça no Work: “cria uma landing page com index.html”.";
       setPreviewEmptyVisible(true, msg);
       return;
     }
@@ -6143,59 +6182,68 @@
     const el = document.createElement("div");
     el.className = "msg system next-steps";
     const status = donePayload?.status || "";
+    const created = donePayload?.created_files || [];
     const htmlPath = changed.find((p) => /\.html?$/i.test(p));
     const actions = [];
     const hasDev = !!state.devStatus?.has_dev_script;
     const devRunning = !!state.devStatus?.running;
+    const hasMockupHint = !!(els.compareMockupPath?.value || "").trim();
 
-    if (hasDev && !devRunning) {
-      actions.push({ action: "start-dev", label: "Iniciar preview" });
-    }
     if (htmlPath || changed.some(isUiPath)) {
-      actions.push({ action: "preview", label: "Ver preview" });
+      actions.push({ action: "preview", label: "Ver preview", primary: true });
+    }
+    if (hasDev && !devRunning) {
+      actions.push({ action: "start-dev", label: "Iniciar preview ao vivo", primary: !htmlPath });
     }
     if (changed[0]) {
       actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0] });
     }
     if (changed.length) {
-      actions.push({ action: "files", label: `Arquivos (${changed.length})` });
+      actions.push({ action: "files", label: `Ver arquivos (${changed.length})` });
     }
-    actions.push({
-      action: "prompt",
-      label: "Melhorar visual",
-      prompt: "Melhore o visual desta página: tipografia, espaçamento, cores e responsividade, sem quebrar a estrutura.",
-    });
-    actions.push({
-      action: "prompt",
-      label: "Adicionar seção",
-      prompt: "Adicione uma nova seção relevante na página principal com bom layout e texto em português.",
-    });
+    if (visualEngineAvailable() && (hasMockupHint || htmlPath || changed.some(isUiPath))) {
+      actions.push({ action: "visual", label: hasMockupHint ? "Comparar mockup" : "Enviar mockup" });
+    }
     if (status && status !== "SUCCESS" && status !== "CANCELLED") {
       actions.push({
         action: "prompt",
-        label: "Corrigir o erro da última execução",
+        label: "Corrigir o erro",
         prompt:
           "Corrija o erro da última execução neste projeto. Leia o relatório e os logs, identifique a causa e aplique a correção mínima necessária.",
+      });
+    } else {
+      actions.push({
+        action: "prompt",
+        label: "Melhorar visual",
+        prompt: "Melhore o visual desta página: tipografia, espaçamento, cores e responsividade, sem quebrar a estrutura.",
       });
     }
     actions.push({ action: "deploy", label: "Deploy" });
 
+    const createdN = created.length;
+    const editedN = Math.max(0, changed.length - createdN);
+    const summaryBits = [];
+    if (createdN) summaryBits.push(`${createdN} criado(s)`);
+    if (editedN) summaryBits.push(`${editedN} editado(s)`);
     const title =
       status === "CANCELLED"
         ? "Execução cancelada"
         : changed.length
-          ? `${changed.length} arquivo(s) atualizado(s)`
+          ? `Pronto · ${summaryBits.join(" · ") || `${changed.length} arquivo(s)`}`
           : "Pronto para o próximo passo";
 
     el.innerHTML = `
       <div class="next-steps-card">
         <div class="next-steps-title">${escapeHtml(title)}</div>
-        ${changed.length ? `<div class="next-steps-files">${changed.slice(0, 5).map((p) => `<button type="button" class="next-file" data-path="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join("")}</div>` : ""}
+        ${changed.length ? `<div class="next-steps-files">${changed.slice(0, 5).map((p) => {
+          const tag = created.includes(p) ? "novo" : "editado";
+          return `<button type="button" class="next-file" data-path="${escapeHtml(p)}"><span>${escapeHtml(p)}</span><em>${tag}</em></button>`;
+        }).join("")}</div>` : ""}
         <div class="next-steps-actions">
           ${actions
             .map(
               (item) =>
-                `<button type="button" class="btn btn-ghost btn-sm next-action" data-action="${item.action}" ${
+                `<button type="button" class="btn ${item.primary ? "btn-primary btn-gradient" : "btn-ghost"} btn-sm next-action" data-action="${item.action}" ${
                   item.path ? `data-path="${escapeHtml(item.path)}"` : ""
                 } ${item.prompt ? `data-prompt="${escapeHtml(item.prompt)}"` : ""}>${escapeHtml(item.label)}</button>`
             )
@@ -6206,16 +6254,21 @@
     el.addEventListener("click", async (event) => {
       const fileBtn = event.target.closest(".next-file");
       if (fileBtn?.dataset.path) {
-        await openFile(fileBtn.dataset.path, { switchToFiles: true, preferPreview: false });
+        await openFile(fileBtn.dataset.path, {
+          switchToFiles: !/\.html?$/i.test(fileBtn.dataset.path),
+          preferPreview: /\.html?$/i.test(fileBtn.dataset.path),
+        });
         return;
       }
       const btn = event.target.closest(".next-action");
       if (!btn) return;
       const action = btn.dataset.action;
       if (action === "preview") {
-        switchTab("preview");
+        setSurfaceMode("work");
+        switchToolGroup("app", "preview");
         updatePreview(htmlPath || findPreviewPath());
       } else if (action === "start-dev") {
+        setSurfaceMode("work");
         state.previewMode = "dev";
         if (els.previewMode) els.previewMode.value = "dev";
         syncDevPolling();
@@ -6223,9 +6276,22 @@
       } else if (action === "deploy") {
         runDeploy();
       } else if (action === "files") {
-        switchTab("files");
+        setSurfaceMode("work");
+        switchToolGroup("app", "files");
+      } else if (action === "visual") {
+        if (hasMockupHint) {
+          setSurfaceMode("work");
+          switchToolGroup("visual", "compare");
+          setCompareFlowStep("compare");
+          runCompareNow();
+        } else {
+          openVisualMockupFlow();
+        }
       } else if (action === "open-file" && btn.dataset.path) {
-        await openFile(btn.dataset.path, { switchToFiles: true, preferPreview: false });
+        await openFile(btn.dataset.path, {
+          switchToFiles: !/\.html?$/i.test(btn.dataset.path),
+          preferPreview: /\.html?$/i.test(btn.dataset.path),
+        });
       } else if (action === "prompt" && btn.dataset.prompt) {
         els.promptInput.value = btn.dataset.prompt;
         els.promptInput.focus();
@@ -6235,6 +6301,20 @@
     els.chatMessages.appendChild(el);
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
     return el;
+  }
+
+  async function suggestVisualIfMockupPresent() {
+    if (!state.current?.id || !visualEngineAvailable() || state.surfaceMode !== "work") return;
+    if ((els.compareMockupPath?.value || "").trim()) return;
+    try {
+      const files = state.files || [];
+      const mock = files.find((f) => /mockup/i.test(f.path || f.name || "") && /\.(png|jpe?g|webp)$/i.test(f.path || ""));
+      if (!mock) return;
+      if (els.compareMockupPath) els.compareMockupPath.value = mock.path;
+      showToast(`Mockup encontrado (${mock.path}). Abra Visual para comparar.`, "info", 5500);
+    } catch (_) {
+      /* ignore */
+    }
   }
 
   async function syncWorkspaceAfterRun(donePayload) {
@@ -6260,18 +6340,21 @@
     }
 
     if (donePayload?.status === "CANCELLED") {
-      switchTab("report");
+      switchToolGroup("agent", "report");
     } else if (hasDev || uiChanged || htmlChanged) {
-      switchTab("preview");
+      if (state.surfaceMode !== "work") setSurfaceMode("work");
+      switchToolGroup("app", "preview");
       updatePreview(htmlChanged || findPreviewPath());
     } else if (changed[0]) {
+      if (state.surfaceMode !== "work") setSurfaceMode("work");
       await openFile(changed[0], { switchToFiles: true, preferPreview: false });
     } else {
-      switchTab("report");
+      switchToolGroup("agent", "report");
       updatePreview();
     }
 
     addNextStepActions(changed, donePayload);
+    await suggestVisualIfMockupPresent();
   }
 
   // ── Dev server ──
@@ -6414,21 +6497,28 @@
     } else if (s.running) {
       const label = runtime === "uvicorn" ? "uvicorn" : s.script;
       els.devStatus.textContent = `Rodando :${s.port} (${label})`;
-      els.devErrorLog?.classList.add("hidden");
+      els.devErrorPanel?.classList.add("hidden");
     } else if (runtime === "uvicorn" && s.python_available === false) {
       els.devStatus.textContent = "Instale Python para rodar FastAPI";
+      els.devErrorPanel?.classList.add("hidden");
     } else if (runtime !== "uvicorn" && !s.npm_available) {
       els.devStatus.textContent = "Instale Node.js para dev server";
+      els.devErrorPanel?.classList.add("hidden");
     } else if (s.last_error) {
-      els.devStatus.textContent = "Último erro no preview";
-      if (els.devErrorLog) {
-        els.devErrorLog.textContent = s.last_error;
-        els.devErrorLog.classList.remove("hidden");
-      }
+      const firstLine = String(s.last_error).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "Falha no preview ao vivo";
+      els.devStatus.textContent = firstLine.slice(0, 90);
+      if (els.devErrorLog) els.devErrorLog.textContent = s.last_error;
+      if (els.devErrorSummary) els.devErrorSummary.textContent = firstLine.slice(0, 160);
+      els.devErrorPanel?.classList.remove("hidden");
     } else if (runtime === "uvicorn") {
       els.devStatus.textContent = "Pronto: uvicorn main:app";
+      els.devErrorPanel?.classList.add("hidden");
     } else {
       els.devStatus.textContent = `Pronto: npm run ${s.script}`;
+      els.devErrorPanel?.classList.add("hidden");
+    }
+    if (s.running || !s.last_error) {
+      if (!s.last_error) els.devErrorPanel?.classList.add("hidden");
     }
   }
 
@@ -6464,7 +6554,7 @@
       runtime === "uvicorn"
         ? "Iniciando uvicorn (pip install pode demorar)..."
         : "Iniciando (npm install pode demorar)...";
-    els.devErrorLog?.classList.add("hidden");
+    els.devErrorPanel?.classList.add("hidden");
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/start`, {
         method: "POST",
@@ -6476,13 +6566,14 @@
       renderDevControls();
       syncDevPolling();
       updatePreview();
-      switchTab("preview");
+      switchToolGroup("app", "preview");
     } catch (e) {
-      els.devStatus.textContent = e.message;
-      if (e.data?.stderr && els.devErrorLog) {
-        els.devErrorLog.textContent = e.data.stderr;
-        els.devErrorLog.classList.remove("hidden");
-      }
+      const errText = e.data?.stderr || e.message || "Falha ao iniciar preview";
+      const firstLine = String(errText).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "Falha ao iniciar preview";
+      els.devStatus.textContent = firstLine.slice(0, 90);
+      if (els.devErrorLog) els.devErrorLog.textContent = errText;
+      if (els.devErrorSummary) els.devErrorSummary.textContent = firstLine.slice(0, 160);
+      els.devErrorPanel?.classList.remove("hidden");
     } finally {
       els.btnDevStart.disabled = false;
     }
@@ -7233,10 +7324,13 @@
       else els.compareSuitePanel?.classList.add("hidden");
       renderCompareReport(data.report);
       await refreshComparePanel();
+      setCompareFlowStep("correct");
+      els.comparePrimaryCta?.classList.remove("hidden");
+      if (els.compareAdvanced) els.compareAdvanced.open = false;
       showToast(
         data.suite
-          ? "Suite concluída. Se precisar, use Corrigir auto."
-          : "Comparação pronta. Próximo: Corrigir auto (avançado) se a diferença for grande.",
+          ? "Suite concluída. Use “Corrigir para ficar parecido” se precisar."
+          : "Comparação pronta. Próximo: Corrigir para ficar parecido.",
         "ok",
         5500
       );
@@ -7633,6 +7727,20 @@
   els.btnPixelPerfect?.addEventListener("click", runPixelPerfect);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
   els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
+  els.btnCorrectPrimary?.addEventListener("click", () => {
+    if (els.compareAdvanced) els.compareAdvanced.open = true;
+    startCorrectionLoop();
+  });
+  els.btnDevErrorRestart?.addEventListener("click", () => startDevServer());
+  els.projectBadge?.addEventListener("click", () => {
+    setSurfaceMode(state.surfaceMode === "work" ? "chat" : "work");
+  });
+  els.healthStatus?.addEventListener("click", () => {
+    openModelsModal();
+    if (!state.ollamaOk) {
+      showToast("Configure o Ollama para voltar a gerar código.", "info", 4500);
+    }
+  });
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
   els.btnBaselineApprove?.addEventListener("click", approveBaseline);
   els.btnBaselineReject?.addEventListener("click", rejectBaseline);
