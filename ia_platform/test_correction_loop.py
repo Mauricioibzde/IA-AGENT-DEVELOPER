@@ -30,6 +30,24 @@ def test_plan_heuristic_patches_from_layout() -> None:
     assert any(p["selector"] == ".sidebar" for p in patches)
 
 
+def test_plan_heuristic_meaningful_only_skips_marker_and_soft_regions() -> None:
+    report = {
+        "similarity": 0.9,
+        "layoutChanges": [],
+        "regions": [
+            {
+                "id": "region-1",
+                "category": "layout",
+                "probableElement": {"selector": ".hero", "confidence": "high"},
+            }
+        ],
+    }
+    soft = plan_heuristic_patches(report, allow_marker=False, meaningful_only=True)
+    assert soft == []
+    with_marker = plan_heuristic_patches(report, allow_marker=True, meaningful_only=False)
+    assert any(p["selector"] == ":root" or p["selector"] == ".hero" for p in with_marker)
+
+
 def test_apply_and_rollback_patches(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text(
         "<!DOCTYPE html><html><head></head><body><div class='x'></div></body></html>",

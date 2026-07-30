@@ -254,9 +254,11 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_hardware(qs)
         if path == "/api/settings":
             return self._handle_get_settings()
-        if path in {"/api/models/recommendations", "/api/models/recommend"}:
+        if path in {"/api/models/recommendations", "/api/models/recommend", "/api/models"}:
             return self._handle_model_recommendations(qs)
         if path == "/api/models/installed":
+            return self._handle_models_installed()
+        if path in {"/api/ollama/models", "/api/ollama/tags"}:
             return self._handle_models_installed()
         if path == "/api/projects":
             return self._handle_list_projects(qs)

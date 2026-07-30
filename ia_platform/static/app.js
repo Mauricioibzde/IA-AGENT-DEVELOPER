@@ -150,10 +150,19 @@
     btnPixelPerfect: $("btnPixelPerfect"),
     btnCapturePreview: $("btnCapturePreview"),
     btnCorrectAuto: $("btnCorrectAuto"),
+    btnMockupToCode: $("btnMockupToCode"),
+    correctionStrategy: $("correctionStrategy"),
+    useVision: $("useVision"),
+    visionModel: $("visionModel"),
     btnCorrectCancel: $("btnCorrectCancel"),
     compareCorrection: $("compareCorrection"),
     compareCorrectionMeta: $("compareCorrectionMeta"),
     compareCorrectionAttempts: $("compareCorrectionAttempts"),
+    compareCorrectionFill: $("compareCorrectionFill"),
+    compareCorrectionProgressLabel: $("compareCorrectionProgressLabel"),
+    compareCorrectionLive: $("compareCorrectionLive"),
+    compareVisionSpec: $("compareVisionSpec"),
+    compareVisionSpecBody: $("compareVisionSpecBody"),
     btnUploadMockup: $("btnUploadMockup"),
     compareMockupFile: $("compareMockupFile"),
     compareStatus: $("compareStatus"),
@@ -6728,7 +6737,17 @@
       });
       if (els.compareMockupPath) els.compareMockupPath.value = data.path;
       showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
-      if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
+      if (els.compareStatus) {
+        els.compareStatus.textContent = `Mockup pronto: ${data.path} · clique em “Mockup → Código” para iniciar o loop`;
+      }
+      // Jump user to the visual correction controls.
+      try {
+        switchToolGroup("visual", "compare");
+        document.getElementById("compareAdvanced")?.setAttribute("open", "");
+        els.btnMockupToCode?.focus?.();
+      } catch (_) {
+        /* ignore */
+      }
     } catch (e) {
       const msg = visualApiMissingMessage(e);
       showToast(msg, "err");
@@ -6746,6 +6765,7 @@
       els.btnCapturePreview,
       els.btnPixelPerfect,
       els.btnCorrectAuto,
+      els.btnMockupToCode,
       els.btnUploadMockup,
       els.btnBaselineApprove,
       els.btnBaselineReject,
@@ -6933,6 +6953,81 @@
     }
   }
 
+  function latestVisionSpecPreview(job) {
+    const events = Array.isArray(job?.events) ? job.events : [];
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const ev = events[i];
+      if (!ev || !ev.type) continue;
+      if (
+        (ev.type === "vision.diff_completed" ||
+          ev.type === "vision.completed" ||
+          ev.type === "vision.cached") &&
+        typeof ev.preview === "string" &&
+        ev.preview.trim()
+      ) {
+        return ev.preview.trim();
+      }
+    }
+    return "";
+  }
+
+  function latestCorrectionLiveMessage(job) {
+    const events = Array.isArray(job?.events) ? job.events : [];
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const ev = events[i];
+      if (!ev || !ev.type) continue;
+      if (ev.type === "vision.started") {
+        return `Modelo de visão analisando mockup (${ev.model || "vision"})…`;
+      }
+      if (ev.type === "vision.completed") {
+        return `Especificação visual pronta (${ev.model || "vision"} · ${ev.chars || "?"} chars)`;
+      }
+      if (ev.type === "vision.cached") {
+        return `Usando especificação visual em cache (${ev.model || "vision"})`;
+      }
+      if (ev.type === "vision.refresh") {
+        return `Reanalisando mockup com visão (tentativa ${ev.attempt || "?"})…`;
+      }
+      if (ev.type === "vision.diff_started") {
+        return `Visão comparando mockup × preview (${ev.model || "vision"})…`;
+      }
+      if (ev.type === "vision.diff_completed") {
+        return `Diagnóstico visual pronto (${ev.fixes || "?"} correções · ${ev.chars || "?"} chars)`;
+      }
+      if (ev.type === "vision.palette") {
+        return `Paleta do mockup amostrada (${ev.colors || "?"} cores)`;
+      }
+      if (ev.type === "vision.diff_skipped" || ev.type === "vision.palette_skipped") {
+        return `Visão auxiliar ignorada (${ev.reason || "fallback"})`;
+      }
+      if (ev.type === "vision.skipped" || ev.type === "vision.failed" || ev.type === "vision.diff_failed") {
+        return `Visão indisponível — seguindo com Visual Engine (${ev.reason || ev.error || "fallback"})`;
+      }
+      if (ev.type === "correction.agent_starting") {
+        return `Agente trabalhando (${ev.mode || "refine"})…`;
+      }
+      if (ev.type === "correction.agent_finished") {
+        return `Agente finalizou (${ev.status || "ok"}) · ${ev.summary || "aplicando mudanças"}`;
+      }
+      if (ev.type === "correction.preview_settled") {
+        return "Aguardando preview estabilizar para nova comparação…";
+      }
+      if (ev.type === "correction.planning") return "Planejando próxima correção…";
+      if (ev.type === "correction.retesting") return "Comparando preview × mockup…";
+      if (ev.type === "correction.improved") {
+        const sim = ev.similarity == null ? null : `${(Number(ev.similarity) * 100).toFixed(1)}%`;
+        return sim ? `Melhoria detectada · similaridade ${sim}` : "Melhoria detectada";
+      }
+      if (ev.type === "correction.rolled_back") return "Regressão detectada · rollback aplicado";
+      if (ev.type === "correction.completed") return `Loop concluído (${ev.reason || "done"})`;
+      if (ev.type === "comparison.completed" && ev.phase === "baseline") {
+        const sim = ev.similarity == null ? null : `${(Number(ev.similarity) * 100).toFixed(1)}%`;
+        return sim ? `Baseline: ${sim}` : "Baseline comparado";
+      }
+    }
+    return job?.status === "running" ? "Correction loop em execução…" : "Aguardando eventos…";
+  }
+
   function renderCorrectionJob(job) {
     if (!job) {
       els.compareCorrection?.classList.add("hidden");
@@ -6940,11 +7035,37 @@
       return;
     }
     els.compareCorrection?.classList.remove("hidden");
+    const target = Number(job.config?.target_similarity || 0.95);
+    const bestRaw = job.best_similarity == null ? job.baseline_similarity : job.best_similarity;
+    const progress = bestRaw == null ? 0 : Math.max(0, Math.min(1, Number(bestRaw) / Math.max(target, 0.01)));
+    if (els.compareCorrectionFill) els.compareCorrectionFill.style.width = `${Math.round(progress * 100)}%`;
+    if (els.compareCorrectionProgressLabel) {
+      const bestPct = bestRaw == null ? "—" : `${(Number(bestRaw) * 100).toFixed(1)}%`;
+      els.compareCorrectionProgressLabel.textContent = `${bestPct} / ${(target * 100).toFixed(0)}%`;
+    }
     const base = job.baseline_similarity == null ? "—" : `${(job.baseline_similarity * 100).toFixed(1)}%`;
     const best = job.best_similarity == null ? "—" : `${(job.best_similarity * 100).toFixed(1)}%`;
     const imp = job.improvement == null ? "—" : `${(job.improvement * 100).toFixed(1)} pp`;
     if (els.compareCorrectionMeta) {
-      els.compareCorrectionMeta.textContent = `${job.status} · base ${base} → melhor ${best} · Δ ${imp}`;
+      const strategy = job.meta?.strategy || "css";
+      els.compareCorrectionMeta.textContent =
+        `${job.status} · ${strategy} · base ${base} → melhor ${best} · Δ ${imp}`;
+    }
+    if (els.compareCorrectionLive) {
+      els.compareCorrectionLive.textContent = latestCorrectionLiveMessage(job);
+    }
+    const visionPreview = latestVisionSpecPreview(job);
+    if (els.compareVisionSpec && els.compareVisionSpecBody) {
+      if (visionPreview) {
+        els.compareVisionSpec.classList.remove("hidden");
+        els.compareVisionSpecBody.textContent = visionPreview;
+      } else {
+        els.compareVisionSpec.classList.add("hidden");
+        els.compareVisionSpecBody.textContent = "";
+      }
+    }
+    if (els.compareStatus && (job.status === "queued" || job.status === "running")) {
+      els.compareStatus.textContent = latestCorrectionLiveMessage(job);
     }
     if (els.compareCorrectionAttempts) {
       const attempts = job.attempts || [];
@@ -6960,6 +7081,7 @@
     const running = job.status === "queued" || job.status === "running";
     els.btnCorrectCancel?.classList.toggle("hidden", !running);
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = running);
+    els.btnMockupToCode && (els.btnMockupToCode.disabled = running);
   }
 
   function stopCorrectionPolling() {
@@ -6994,36 +7116,62 @@
     }
   }
 
-  async function startCorrectionLoop() {
+  async function startCorrectionLoop(strategyOverride) {
     if (!state.current?.id) return;
     const mockup = (els.compareMockupPath?.value || "").trim();
     if (!mockup) {
       showToast("Envie ou informe um mockup antes de corrigir.", "info");
       return;
     }
+    const strategy = strategyOverride || els.correctionStrategy?.value || "hybrid";
     stopCorrectionPolling();
-    if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
+    try {
+      switchToolGroup("visual", "compare");
+    } catch (_) {
+      /* ignore */
+    }
+    if (els.compareStatus) {
+      els.compareStatus.textContent =
+        strategy === "css"
+          ? "Iniciando correction loop (CSS)…"
+          : strategy === "hybrid"
+            ? "Iniciando mockup → código (híbrido)…"
+            : "Iniciando mockup → código → comparar → corrigir…";
+    }
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
+    els.btnMockupToCode && (els.btnMockupToCode.disabled = true);
     try {
       const suite = selectedCompareSuite();
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/start`, {
         method: "POST",
         body: JSON.stringify({
           mockup,
+          strategy,
           preview_mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
           target_similarity: 0.95,
-          max_attempts: 5,
+          max_attempts: strategy === "css" ? 5 : 4,
+          max_agent_steps: 10,
+          settle_seconds: 1.5,
+          use_vision: strategy === "css" ? false : Boolean(els.useVision?.checked ?? true),
+          vision_model: els.visionModel?.value || undefined,
         }),
       });
       state.correctionJob = data.correction;
       renderCorrectionJob(data.correction);
-      state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), 1500);
-      showToast("Correction loop em execução…", "info");
+      const pollMs = strategy === "css" ? 1500 : 1000;
+      state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), pollMs);
+      showToast(
+        strategy === "css"
+          ? "Correction CSS em execução…"
+          : "Mockup → Código em execução (visão/compare podem levar 1–2 min)…",
+        "info"
+      );
     } catch (e) {
       els.btnCorrectAuto && (els.btnCorrectAuto.disabled = false);
+      els.btnMockupToCode && (els.btnMockupToCode.disabled = false);
       showToast(e.message || "Não foi possível iniciar a correção", "err");
     }
   }
@@ -7457,7 +7605,11 @@
   els.btnCompareNow?.addEventListener("click", runCompareNow);
   els.btnPixelPerfect?.addEventListener("click", runPixelPerfect);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
-  els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
+  els.btnCorrectAuto?.addEventListener("click", () => startCorrectionLoop("css"));
+  els.btnMockupToCode?.addEventListener("click", () => {
+    const strategy = els.correctionStrategy?.value || "hybrid";
+    startCorrectionLoop(strategy === "css" ? "hybrid" : strategy);
+  });
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
   els.btnBaselineApprove?.addEventListener("click", approveBaseline);
   els.btnBaselineReject?.addEventListener("click", rejectBaseline);

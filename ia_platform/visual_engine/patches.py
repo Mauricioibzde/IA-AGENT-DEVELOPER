@@ -10,7 +10,13 @@ from local_agent.checkpoint import RunCheckpoint
 from local_agent.security import resolve_in_workspace
 
 
-def plan_heuristic_patches(report: Dict[str, Any], *, max_patches: int = 8) -> List[Dict[str, Any]]:
+def plan_heuristic_patches(
+    report: Dict[str, Any],
+    *,
+    max_patches: int = 8,
+    allow_marker: bool = True,
+    meaningful_only: bool = False,
+) -> List[Dict[str, Any]]:
     """Derive safe CSS-oriented patches from a visual report.
 
     These are best-effort nudges (layout/style), not full redesigns.
@@ -71,6 +77,9 @@ def plan_heuristic_patches(report: Dict[str, Any], *, max_patches: int = 8) -> L
             continue
         category = str(region.get("category") or "layout")
         decls = []
+        if meaningful_only:
+            # Region categories alone are too weak for fidelity — skip soft nudges.
+            continue
         if category in {"spacing", "layout"}:
             decls.append("box-sizing: border-box")
             decls.append("max-width: 100%")
@@ -88,7 +97,7 @@ def plan_heuristic_patches(report: Dict[str, Any], *, max_patches: int = 8) -> L
         )
 
     # Always ensure a visible correction trail file exists when we have any signal.
-    if not patches and (report.get("similarity") or 0) < 0.999:
+    if allow_marker and not patches and (report.get("similarity") or 0) < 0.999:
         patches.append(
             {
                 "kind": "css_rule",

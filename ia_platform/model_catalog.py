@@ -135,6 +135,54 @@ MODEL_CATALOG: List[ModelEntry] = [
         description="Modelo geral leve quando o foco não é só código.",
         tier="low",
     ),
+    ModelEntry(
+        id="llava-7b",
+        name="LLaVA 7B",
+        ollama_name="llava:7b",
+        params_b=7,
+        ram_gb=10,
+        vram_gb=8,
+        size_gb=4.5,
+        tags=("vision", "recommended"),
+        description="Visão multimodal para descrever mockups (Mockup → Código).",
+        tier="medium",
+    ),
+    ModelEntry(
+        id="qwen2.5-vl-7b",
+        name="Qwen2.5 VL 7B",
+        ollama_name="qwen2.5-vl:7b",
+        params_b=7,
+        ram_gb=12,
+        vram_gb=10,
+        size_gb=5.5,
+        tags=("vision", "quality"),
+        description="Visão de alta qualidade para especificação UI a partir de PNG.",
+        tier="medium",
+    ),
+    ModelEntry(
+        id="llama3.2-vision-11b",
+        name="Llama 3.2 Vision 11B",
+        ollama_name="llama3.2-vision:11b",
+        params_b=11,
+        ram_gb=16,
+        vram_gb=12,
+        size_gb=7.8,
+        tags=("vision", "quality"),
+        description="Visão Meta para leitura detalhada de mockups.",
+        tier="high",
+    ),
+    ModelEntry(
+        id="moondream",
+        name="Moondream",
+        ollama_name="moondream",
+        params_b=1.8,
+        ram_gb=4,
+        vram_gb=3,
+        size_gb=1.7,
+        tags=("vision", "fast", "low-end"),
+        description="Visão leve para PCs fracos (descrição de mockup).",
+        tier="minimal",
+    ),
 ]
 
 TIER_ORDER = {"minimal": 0, "low": 1, "medium": 2, "high": 3, "ultra": 4}
@@ -537,9 +585,12 @@ def recommend_models(
 ) -> Dict[str, Any]:
     ranked = sorted(MODEL_CATALOG, key=lambda e: _score(e, hardware), reverse=True)
     fitting = [e for e in ranked if _score(e, hardware) >= 0]
+    # Primary/alternatives are for coding runs — keep vision models in catalog only.
+    coding_fit = [e for e in fitting if "vision" not in e.tags or "coder" in e.tags]
+    pool = coding_fit or fitting
 
-    primary = fitting[0] if fitting else MODEL_CATALOG[0]
-    alternatives = [e for e in fitting[1:4]]
+    primary = pool[0] if pool else MODEL_CATALOG[0]
+    alternatives = [e for e in pool[1:4]]
 
     catalog: List[Dict[str, Any]] = []
     for entry in MODEL_CATALOG:

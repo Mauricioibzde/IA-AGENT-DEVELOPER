@@ -49,7 +49,8 @@ try {
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "sandbox") | Out-Null
-Write-Host "Starting Forge Platform v2 at http://127.0.0.1:$Port" -ForegroundColor Green
+Write-Host "Starting Forge Platform v3 at http://127.0.0.1:$Port" -ForegroundColor Green
 Write-Host "Verify setup API: http://127.0.0.1:$Port/api/health -> full_setup_stream: true" -ForegroundColor DarkGray
+Write-Host "Browser: abra http://127.0.0.1:$Port neste Windows (nao no Cloud Agent)." -ForegroundColor Yellow
 $env:PYTHONPATH = $Root
 python "$Root\ia_platform\server.py" --host 127.0.0.1 --port $Port

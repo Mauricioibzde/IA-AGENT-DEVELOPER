@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -438,12 +439,17 @@ def handle_correction_start(
         return 404, {"error": f"mockup not found: {mockup}"}
 
     cfg_raw = data.get("config") if isinstance(data.get("config"), dict) else {}
+    strategy_early = str(data.get("strategy") or data.get("correction_strategy") or "css").strip().lower()
+    if strategy_early in {"mockup", "mockup-to-code", "image-to-code", "i2c"}:
+        strategy_early = "agent"
+    default_timeout = 1800 if strategy_early in {"agent", "hybrid"} else 600
+    default_attempts = 4 if strategy_early in {"agent", "hybrid"} else 5
     config = CorrectionConfig(
         target_similarity=float(cfg_raw.get("target_similarity") or data.get("target_similarity") or 0.95),
-        max_attempts=int(cfg_raw.get("max_attempts") or data.get("max_attempts") or 5),
+        max_attempts=int(cfg_raw.get("max_attempts") or data.get("max_attempts") or default_attempts),
         min_improvement=float(cfg_raw.get("min_improvement") or data.get("min_improvement") or 0.005),
         stagnation_limit=int(cfg_raw.get("stagnation_limit") or data.get("stagnation_limit") or 2),
-        timeout_sec=float(cfg_raw.get("timeout_sec") or data.get("timeout_sec") or 600),
+        timeout_sec=float(cfg_raw.get("timeout_sec") or data.get("timeout_sec") or default_timeout),
     )
     viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else {"width": 1366, "height": 768}
     suite = str(data.get("suite") or "").strip() or None
@@ -460,6 +466,25 @@ def handle_correction_start(
     if preview_mode in {"pixel_perfect", "pixel-perfect"}:
         preview_mode = "auto"
     file_path = str(data.get("path") or "index.html")
+    strategy = str(data.get("strategy") or data.get("correction_strategy") or "css").strip().lower()
+    if strategy in {"mockup", "mockup-to-code", "image-to-code", "i2c"}:
+        strategy = "agent"
+    if strategy not in {"css", "agent", "hybrid"}:
+        strategy = "css"
+    max_agent_steps = int(data.get("max_agent_steps") or data.get("agent_max_steps") or 12)
+    stack_hint = str(data.get("stack") or data.get("stack_hint") or "").strip()
+    settle_seconds = float(data.get("settle_seconds") or data.get("preview_settle_seconds") or 1.6)
+    use_vision_raw = data.get("use_vision")
+    if use_vision_raw is None:
+        use_vision_raw = data.get("vision")
+    use_vision = True if use_vision_raw is None else bool(use_vision_raw)
+    vision_model = str(data.get("vision_model") or data.get("visionModel") or "").strip() or None
+    try:
+        from local_agent.config import AgentConfig
+
+        ollama_host = AgentConfig.from_args(engine.project_dir, no_memory=True).ollama_host
+    except Exception:  # noqa: BLE001
+        ollama_host = "http://127.0.0.1:11434"
 
     def compare_fn() -> Dict[str, Any]:
         preview_url = engine.resolve_preview_url(
@@ -485,17 +510,32 @@ def handle_correction_start(
                 suite=suite,
                 viewports=viewports,
                 target_similarity=config.target_similarity,
-                include_reports=False,
+                include_reports=True,
             )
-            # Drive the loop by the worst viewport score.
+            # Drive the loop by the worst viewport score, keeping its actionable diffs.
+            worst_report: Dict[str, Any] = {}
+            for vp in suite_report.viewports:
+                if vp.report and isinstance(vp.report, dict):
+                    if not worst_report:
+                        worst_report = dict(vp.report)
+                    sim = vp.similarity
+                    worst_sim = worst_report.get("similarity")
+                    if isinstance(sim, (int, float)) and (
+                        not isinstance(worst_sim, (int, float)) or float(sim) < float(worst_sim)
+                    ):
+                        worst_report = dict(vp.report)
             return {
                 "comparisonId": suite_report.primary_comparison_id,
                 "similarity": suite_report.min_similarity,
                 "status": suite_report.status,
                 "mode": "pixel_perfect",
                 "suite": suite_report.to_dict(),
-                "layoutChanges": [],
-                "regions": [],
+                "layoutChanges": worst_report.get("layoutChanges") or [],
+                "regions": worst_report.get("regions") or [],
+                "styleChanges": worst_report.get("styleChanges") or [],
+                "summary": worst_report.get("summary") or {},
+                "artifacts": worst_report.get("artifacts") or {},
+                "recommendations": worst_report.get("recommendations") or [],
             }
 
         report = engine.compare(
@@ -507,6 +547,43 @@ def handle_correction_start(
             )
         )
         return report.to_dict()
+
+    plan_fn = None
+    apply_fn = None
+    rollback_fn = None
+    job_holder: Dict[str, Any] = {"job": None}
+    if strategy in {"agent", "hybrid"}:
+        from .image_to_code import make_agent_strategy_fns
+
+        def cancel_check() -> bool:
+            job = job_holder.get("job")
+            return bool(job and getattr(job, "cancel_requested", False))
+
+        def on_agent_event(ev: Dict[str, Any]) -> None:
+            job = job_holder.get("job")
+            if not job:
+                return
+            payload = dict(ev or {})
+            payload.setdefault("ts", time.time())
+            job.events.append(payload)
+
+        fns = make_agent_strategy_fns(
+            engine.project_dir,
+            mockup=mockup,
+            strategy=strategy,
+            target_similarity=config.target_similarity,
+            max_agent_steps=max_agent_steps,
+            stack_hint=stack_hint,
+            settle_seconds=settle_seconds,
+            use_vision=use_vision,
+            vision_model=vision_model,
+            ollama_host=ollama_host,
+            cancel_check=cancel_check,
+            on_event=on_agent_event,
+        )
+        plan_fn = fns["plan_fn"]
+        apply_fn = fns["apply_fn"]
+        rollback_fn = fns["rollback_fn"]
 
     try:
         job = correction_manager.start_background(
@@ -520,9 +597,19 @@ def handle_correction_start(
                 "path": file_path,
                 "viewport": viewport,
                 "suite": suite,
+                "strategy": strategy,
+                "max_agent_steps": max_agent_steps,
+                "stack": stack_hint or None,
+                "settle_seconds": settle_seconds,
+                "use_vision": use_vision,
+                "vision_model": vision_model,
             },
             persist_dir=engine.artifacts_root / "corrections",
+            plan_fn=plan_fn,
+            apply_fn=apply_fn,
+            rollback_fn=rollback_fn,
         )
+        job_holder["job"] = job
     except RuntimeError as exc:
         return 409, {"error": str(exc)}
     except Exception as exc:  # noqa: BLE001

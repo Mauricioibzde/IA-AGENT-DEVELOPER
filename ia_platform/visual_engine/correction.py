@@ -115,8 +115,18 @@ class CorrectionLoop:
         self._emit(job, "correction.started", job_id=job.id)
 
         try:
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.finished_at = time.time()
+                self._emit(job, "correction.cancelled")
+                return job
             self._emit(job, "comparison.processing", phase="baseline")
             baseline = self.compare_fn()
+            if job.cancel_requested:
+                job.status = "cancelled"
+                job.finished_at = time.time()
+                self._emit(job, "correction.cancelled")
+                return job
             base_sim = _sim(baseline)
             job.baseline_similarity = base_sim
             job.best_similarity = base_sim
@@ -160,17 +170,66 @@ class CorrectionLoop:
 
                 checkpoint_id = f"corr-{job.id}-{attempt_no}"
                 self._emit(job, "correction.patch_created", attempt=attempt_no, patches=len(patches))
-                apply_result = self.apply_fn(patches, checkpoint_id)
+                try:
+                    apply_result = self.apply_fn(patches, checkpoint_id)
+                except Exception as apply_exc:  # noqa: BLE001
+                    attempt = CorrectionAttempt(
+                        attempt=attempt_no,
+                        similarity=prev_sim,
+                        previous_similarity=prev_sim,
+                        status="failed",
+                        patches=len(patches),
+                        checkpoint_id=checkpoint_id,
+                        notes=f"apply failed: {apply_exc}",
+                    )
+                    job.attempts.append(asdict(attempt))
+                    self._emit(job, "comparison.failed", error=str(apply_exc), attempt=attempt_no)
+                    job.status = "failed"
+                    job.error = str(apply_exc)
+                    break
+                if isinstance(apply_result, dict) and apply_result.get("ok") is False:
+                    err = str(apply_result.get("error") or "apply returned ok=false")
+                    attempt = CorrectionAttempt(
+                        attempt=attempt_no,
+                        similarity=prev_sim,
+                        previous_similarity=prev_sim,
+                        status="failed",
+                        patches=len(patches),
+                        checkpoint_id=checkpoint_id,
+                        notes=err,
+                    )
+                    job.attempts.append(asdict(attempt))
+                    self._emit(job, "comparison.failed", error=err, attempt=attempt_no)
+                    # Soft-continue for transient busy; hard-fail otherwise.
+                    if "busy" in err.lower():
+                        stagnant += 1
+                        if stagnant >= cfg.stagnation_limit:
+                            job.status = "completed"
+                            self._emit(job, "correction.completed", reason="stagnation_apply_busy")
+                            break
+                        continue
+                    job.status = "failed"
+                    job.error = err
+                    break
                 self._emit(
                     job,
                     "correction.applied",
                     attempt=attempt_no,
                     written=apply_result.get("written") or [],
+                    kind=(apply_result.get("kind") if isinstance(apply_result, dict) else None),
                 )
 
                 t0 = time.time()
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                    self._emit(job, "correction.cancelled")
+                    break
                 self._emit(job, "correction.retesting", attempt=attempt_no)
                 report = self.compare_fn()
+                if job.cancel_requested:
+                    job.status = "cancelled"
+                    self._emit(job, "correction.cancelled")
+                    break
                 new_sim = _sim(report)
                 duration_ms = int((time.time() - t0) * 1000)
                 job.current_similarity = new_sim
@@ -308,11 +367,12 @@ class CorrectionManager:
             if not job:
                 return None
             job.cancel_requested = True
-            if job.status in {"queued", "running"}:
-                # Soft cancel — loop observes flag; mark if not started.
-                if job.status == "queued":
-                    job.status = "cancelled"
-                    job.finished_at = time.time()
+            if job.status == "queued":
+                job.status = "cancelled"
+                job.finished_at = time.time()
+            # Unlock project immediately so another correction can start.
+            if self._project_active.get(job.project_id) == job.id:
+                self._project_active.pop(job.project_id, None)
             return job
 
     def start_background(
@@ -324,13 +384,18 @@ class CorrectionManager:
         config: Optional[CorrectionConfig] = None,
         meta: Optional[Dict[str, Any]] = None,
         persist_dir: Optional[Path] = None,
+        plan_fn: Optional[PatchPlanFn] = None,
+        apply_fn: Optional[Callable[[List[Dict[str, Any]], str], Dict[str, Any]]] = None,
+        rollback_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
+        on_event: Optional[EventFn] = None,
     ) -> CorrectionJob:
         with self._lock:
             existing_id = self._project_active.get(project_id)
             if existing_id:
                 existing = self._jobs.get(existing_id)
-                if existing and existing.status in {"queued", "running"}:
+                if existing and existing.status in {"queued", "running"} and not existing.cancel_requested:
                     raise RuntimeError("correction already running for this project")
+                self._project_active.pop(project_id, None)
             job = CorrectionJob(
                 id=uuid.uuid4().hex[:12],
                 project_id=project_id,
@@ -341,19 +406,30 @@ class CorrectionManager:
             self._project_active[project_id] = job.id
 
         def _worker() -> None:
-            loop = CorrectionLoop(workspace, compare_fn=compare_fn, config=job.config)
+            def _forward(ev: Dict[str, Any]) -> None:
+                if on_event:
+                    try:
+                        on_event(ev)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            loop = CorrectionLoop(
+                workspace,
+                compare_fn=compare_fn,
+                plan_fn=plan_fn,
+                apply_fn=apply_fn,
+                rollback_fn=rollback_fn,
+                on_event=_forward,
+                config=job.config,
+            )
             try:
                 loop.run(job)
             finally:
                 if persist_dir:
                     _persist_job(persist_dir, job)
                 with self._lock:
-                    if self._project_active.get(project_id) == job.id and job.status not in {
-                        "queued",
-                        "running",
-                    }:
-                        # keep mapping for status lookup; clear only when cancelled/done after grace
-                        pass
+                    if self._project_active.get(project_id) == job.id:
+                        self._project_active.pop(project_id, None)
 
         threading.Thread(target=_worker, name=f"correction-{job.id}", daemon=True).start()
         return job
