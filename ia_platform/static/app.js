@@ -98,8 +98,15 @@
     emptyTitle: $("emptyTitle"),
     emptySub: $("emptySub"),
     workHomeActions: $("workHomeActions"),
+    emptyChatActions: $("emptyChatActions"),
+    btnEmptyGoWork: $("btnEmptyGoWork"),
     btnChooseProjectEmpty: $("btnChooseProjectEmpty"),
     btnNewProjectEmpty: $("btnNewProjectEmpty"),
+    btnQuickMockup: $("btnQuickMockup"),
+    btnPreviewOpenFiles: $("btnPreviewOpenFiles"),
+    btnPreviewGoVisual: $("btnPreviewGoVisual"),
+    compareFlow: $("compareFlow"),
+    projectBadge: $("projectBadge"),
     heroKicker: $("heroKicker"),
     heroTitle: $("heroTitle"),
     heroSub: $("heroSub"),
@@ -1551,10 +1558,12 @@
         });
       }
       updateOllamaOfflineUI();
+      syncWorkbenchForSurface();
     } catch {
       state.ollamaOk = false;
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
       updateOllamaOfflineUI();
+      syncWorkbenchForSurface();
     } finally {
       state.healthInFlight = false;
     }
@@ -2207,6 +2216,61 @@
     return new Date(ts * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
   }
 
+  function visualEngineAvailable() {
+    if (state.serverFeatures && state.serverFeatures.visual_engine === false) return false;
+    return state.visualApiOk !== false;
+  }
+
+  function setCompareFlowStep(step) {
+    if (!els.compareFlow) return;
+    const order = ["mockup", "compare", "correct"];
+    const idx = order.indexOf(step);
+    els.compareFlow.querySelectorAll(".compare-flow-step").forEach((el) => {
+      const key = el.dataset.flow;
+      const at = order.indexOf(key);
+      el.classList.toggle("is-current", key === step);
+      el.classList.toggle("is-done", idx >= 0 && at >= 0 && at < idx);
+    });
+  }
+
+  function openVisualMockupFlow() {
+    if (!state.current) {
+      showToast("Escolha um projeto para enviar mockup.", "info", 4000);
+      openNewProjectModal(state.selectedTemplate || "blank");
+      return;
+    }
+    setSurfaceMode("work");
+    showWorkspace();
+    switchToolGroup("visual", "compare");
+    setCompareFlowStep("mockup");
+    requestAnimationFrame(() => els.compareMockupFile?.click());
+  }
+
+  function syncWorkbenchForSurface() {
+    const work = state.surfaceMode === "work";
+    const visualOk = visualEngineAvailable();
+
+    els.templateGrid?.classList.toggle("hidden", !work);
+    els.workHomeActions?.classList.toggle("hidden", !work);
+    els.emptyChatActions?.classList.toggle("hidden", work);
+
+    if (els.projectBadge) {
+      els.projectBadge.textContent = work ? "Work" : "Chat";
+      els.projectBadge.dataset.surface = state.surfaceMode;
+    }
+
+    document.querySelectorAll('.tools-group[data-group="visual"]').forEach((btn) => {
+      btn.classList.toggle("hidden", !work || !visualOk);
+      btn.disabled = !work || !visualOk;
+    });
+    $("mobileTabVisual")?.classList.toggle("hidden", !work || !visualOk);
+
+    // Chat stays on App evidence; Visual is a Work-stage tool.
+    if (!work && state.activeToolGroup === "visual") {
+      switchToolGroup("app", "preview");
+    }
+  }
+
   function setSurfaceMode(mode) {
     state.surfaceMode = mode === "work" ? "work" : "chat";
     document.body.classList.toggle("surface-work", state.surfaceMode === "work");
@@ -2233,8 +2297,8 @@
     if (els.emptySub) {
       els.emptySub.textContent =
         state.surfaceMode === "work"
-          ? "Escolha um projeto ou template. No Work o agente edita código e o preview atualiza."
-          : "Chat livre: qualquer assunto. Quando for construir, mude para Work — o contexto segue junto.";
+          ? "Escolha um template ou projeto. Fluxo: pedir → preview → arquivos → visual (mockup)."
+          : "Chat livre para ideias e dúvidas. Quando for construir, vá para Work.";
     }
     if (els.promptInput) {
       els.promptInput.placeholder =
@@ -2247,8 +2311,8 @@
     if (els.heroSub) {
       els.heroSub.textContent =
         state.surfaceMode === "work"
-          ? "Peça mudanças no código — o histórico do Chat vira contexto para implementar."
-          : "Converse sobre qualquer assunto. Para criar/editar o app, use Work / Executar.";
+          ? "Peça mudanças no código. Use Preview, Arquivos ou Visual (mockup) à direita."
+          : "Converse sobre qualquer assunto. Para criar/editar o app, use Work.";
     }
     document.querySelectorAll(".quick-card--chat").forEach((el) => {
       el.classList.toggle("hidden", state.surfaceMode === "work");
@@ -2257,6 +2321,7 @@
       el.classList.toggle("hidden", state.surfaceMode === "chat");
     });
     syncSidebarNavState();
+    syncWorkbenchForSurface();
     syncComposerProjectLabel();
     restoreLayoutSizes();
     try {
@@ -3704,8 +3769,11 @@
 
   function syncMobileTabs(name, group) {
     const g = group || TAB_TO_GROUP[name] || state.activeToolGroup || "app";
+    const tabName = name || state.lastToolTab?.[g] || TOOL_GROUP_DEFAULT[g];
     document.querySelectorAll(".mobile-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.group === g);
+      const sameGroup = tab.dataset.group === g;
+      const sameTab = !tab.dataset.tab || tab.dataset.tab === tabName;
+      tab.classList.toggle("active", sameGroup && sameTab);
     });
   }
 
@@ -4827,8 +4895,13 @@
         </div>
       </div>`;
     el.querySelector(".handoff-execute")?.addEventListener("click", () => {
+      setSurfaceMode("work");
       if (els.modeSelect) els.modeSelect.value = "execute";
       syncModeControls();
+      if (state.current) {
+        showWorkspace();
+        switchToolGroup("app", "preview");
+      }
       els.promptInput.value = prompt;
       removeMessage(el);
       sendPrompt();
@@ -6677,6 +6750,7 @@
     }
     renderCompareRegions(report);
     setCompareView(state.compareView || "side");
+    setCompareFlowStep("correct");
     renderWorkspaceDock();
   }
 
@@ -6757,8 +6831,11 @@
         }),
       });
       if (els.compareMockupPath) els.compareMockupPath.value = data.path;
-      showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
-      if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
+      setCompareFlowStep("compare");
+      showToast(`Mockup salvo. Próximo passo: Comparar com o preview.`, "ok", 5500);
+      if (els.compareStatus) {
+        els.compareStatus.textContent = `Mockup pronto: ${data.path}. Clique em Comparar.`;
+      }
     } catch (e) {
       const msg = visualApiMissingMessage(e);
       showToast(msg, "err");
@@ -7032,6 +7109,7 @@
       return;
     }
     stopCorrectionPolling();
+    setCompareFlowStep("correct");
     if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
     try {
@@ -7106,6 +7184,7 @@
       return;
     }
     if (els.compareStatus) els.compareStatus.textContent = "Comparando…";
+    setCompareFlowStep("compare");
     els.btnCompareNow && (els.btnCompareNow.disabled = true);
     try {
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {
@@ -7116,7 +7195,13 @@
       else els.compareSuitePanel?.classList.add("hidden");
       renderCompareReport(data.report);
       await refreshComparePanel();
-      showToast(data.suite ? "Suite Pixel Perfect concluída." : "Comparação concluída.", "ok");
+      showToast(
+        data.suite
+          ? "Suite concluída. Se precisar, use Corrigir auto."
+          : "Comparação pronta. Próximo: Corrigir auto (avançado) se a diferença for grande.",
+        "ok",
+        5500
+      );
     } catch (e) {
       if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha na comparação";
       showToast(e.message || "Falha na comparação", "err");
@@ -7355,6 +7440,7 @@
   });
   els.btnSurfaceChat?.addEventListener("click", () => setSurfaceMode("chat"));
   els.btnSurfaceWork?.addEventListener("click", () => setSurfaceMode("work"));
+  els.btnEmptyGoWork?.addEventListener("click", () => setSurfaceMode("work"));
   els.btnChooseProjectEmpty?.addEventListener("click", () => {
     setSurfaceMode("work");
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
@@ -7362,6 +7448,18 @@
     els.projectSearch?.focus();
   });
   els.btnNewProjectEmpty?.addEventListener("click", () => openNewProjectModal("blank"));
+  els.btnQuickMockup?.addEventListener("click", (e) => {
+    e.preventDefault();
+    openVisualMockupFlow();
+  });
+  els.btnPreviewOpenFiles?.addEventListener("click", () => {
+    if (!state.current) {
+      showToast("Escolha um projeto primeiro.", "info");
+      return;
+    }
+    switchToolGroup("app", "files");
+  });
+  els.btnPreviewGoVisual?.addEventListener("click", () => openVisualMockupFlow());
   els.btnPickProject?.addEventListener("click", () => {
     setSurfaceMode("work");
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
@@ -7611,6 +7709,7 @@
 
   document.querySelectorAll(".quick-card").forEach((card) => {
     card.addEventListener("click", () => {
+      if (card.id === "btnQuickMockup") return;
       const prompt = card.dataset.prompt;
       if (!prompt || !state.current || state.running) return;
       els.promptInput.value = prompt;

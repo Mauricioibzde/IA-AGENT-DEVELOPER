@@ -7343,3 +7343,83 @@ button.active-model-badge:hover {
 .app-explorer-git {
   display: none !important;
 }
+
+/* ── Lovable shell slice 2: empty + workbench flows ── */
+.empty-chat-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  margin: 18px auto 8px;
+  max-width: 420px;
+}
+
+.empty-chat-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.project-badge[data-surface="chat"] {
+  opacity: 0.92;
+}
+
+.compare-flow {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.compare-flow-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  opacity: 0.55;
+  font-size: 0.72rem;
+}
+
+.compare-flow-step span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-weight: 700;
+}
+
+.compare-flow-step b {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compare-flow-step.is-current {
+  opacity: 1;
+  border-color: color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.compare-flow-step.is-done {
+  opacity: 0.8;
+}
+
+.preview-empty-actions {
+  flex-wrap: wrap;
+}
+
+.tools-group.hidden,
+.mobile-tab.hidden {
+  display: none !important;
+}
+
+body.surface-chat .quick-card--mockup {
+  display: none !important;
+}

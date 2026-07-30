@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=55" />
+  <link rel="stylesheet" href="/static/app.css?v=56" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -158,7 +158,11 @@
         <div class="empty-brand">Forge</div>
         <h3 id="emptyTitle">No que você está pensando hoje?</h3>
         <p id="emptySub">Converse no Chat ou mude para Work para criar e editar apps no projeto.</p>
-        <div class="template-grid" id="templateGrid">
+        <div class="empty-chat-actions" id="emptyChatActions">
+          <button type="button" class="btn btn-primary btn-gradient" id="btnEmptyGoWork">Começar a construir (Work)</button>
+          <p class="empty-chat-hint muted">No Chat você explora ideias. No Work o agente edita o projeto e o preview atualiza.</p>
+        </div>
+        <div class="template-grid hidden" id="templateGrid">
           <button type="button" class="template-card" data-template="landing">
             <h4>Landing Page</h4>
             <p>Site de apresentação HTML/CSS</p>
@@ -204,7 +208,7 @@
             </button>
             <div class="project-heading">
               <h2 id="projectTitle">Projeto</h2>
-              <span class="project-badge" id="projectBadge">Projeto ativo</span>
+              <span class="project-badge" id="projectBadge" data-surface="work">Work</span>
             </div>
           </div>
           <div class="topbar-controls">
@@ -304,6 +308,10 @@
                 <button type="button" class="quick-card quick-card--work" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia.">
                   <span class="quick-icon">UI</span>
                   <span class="quick-label">Melhorar visual</span>
+                </button>
+                <button type="button" class="quick-card quick-card--work quick-card--mockup" id="btnQuickMockup" data-prompt="">
+                  <span class="quick-icon">Mock</span>
+                  <span class="quick-label">Enviar mockup</span>
                 </button>
                 <button type="button" class="quick-card quick-card--work" data-prompt="Adicione uma seção de funcionalidades com cards e ícones simples em CSS.">
                   <span class="quick-icon">+</span>
@@ -446,12 +454,14 @@
                   <div class="preview-viewport device-desktop" id="previewViewport">
                     <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
                     <div class="preview-empty" id="previewEmpty">
-                      <div class="preview-empty-title">Preview ao vivo</div>
-                      <p class="preview-empty-copy">Quando o agente criar HTML ou um app, a prévia aparece aqui.</p>
+                      <div class="preview-empty-title">Preview do app</div>
+                      <p class="preview-empty-copy">Peça no Work para criar a UI, ou envie um mockup para comparar no Visual.</p>
                       <div class="preview-empty-actions">
                         <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
                         <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section.">Criar landing</button>
                         <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um app React + Vite simples com página inicial e estilos.">Criar React</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btnPreviewOpenFiles">Abrir arquivos</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btnPreviewGoVisual">Enviar mockup</button>
                       </div>
                     </div>
                   </div>
@@ -482,6 +492,11 @@
               </div>
             </div>
             <div class="panel-content hidden" id="panelCompare">
+              <ol class="compare-flow" id="compareFlow" aria-label="Fluxo visual">
+                <li class="compare-flow-step is-current" data-flow="mockup"><span>1</span><b>Mockup</b></li>
+                <li class="compare-flow-step" data-flow="compare"><span>2</span><b>Comparar</b></li>
+                <li class="compare-flow-step" data-flow="correct"><span>3</span><b>Corrigir</b></li>
+              </ol>
               <div class="compare-toolbar">
                 <select id="compareViewport" class="control-select" title="Viewport">
                   <option value="1366x768">Desktop 1366</option>
@@ -493,7 +508,7 @@
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnCorrectCancel">Interromper</button>
               </div>
-              <p class="compare-status" id="compareStatus">Compare o preview com uma URL ou mockup.</p>
+              <p class="compare-status" id="compareStatus">Envie um mockup, compare com o preview e corrija no Work.</p>
               <label class="compare-label" for="compareMockupPath">Mockup no projeto</label>
               <div class="compare-mockup-row">
                 <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input compare-input-inline" />
@@ -605,9 +620,10 @@
           <b id="dockMetricSuccess" hidden>0</b>
         </section>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
-          <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">App</button>
+          <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">Preview</button>
+          <button type="button" class="mobile-tab" data-group="app" data-tab="files">Arquivos</button>
           <button type="button" class="mobile-tab" data-group="agent" data-tab="live">Agente</button>
-          <button type="button" class="mobile-tab" data-group="visual" data-tab="compare">Visual</button>
+          <button type="button" class="mobile-tab" data-group="visual" data-tab="compare" id="mobileTabVisual">Visual</button>
         </nav>
         <div class="mobile-backdrop hidden" id="mobileBackdrop"></div>
       </section>
@@ -830,6 +846,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=43"></script>
+  <script src="/static/app.js?v=44"></script>
 </body>
 </html>
