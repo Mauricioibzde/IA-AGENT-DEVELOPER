@@ -16,6 +16,10 @@ export {
   resolveUnderRoot,
 } from './artifacts.js';
 export { stabilizePage, STABILIZE_CSS } from './stabilize.js';
+export { getDomDiffSummary } from './dom/domDiff.js';
+export { findDiffRegions } from './regions.js';
+export { collectLayoutSnapshot, diffLayouts } from './layout.js';
+export { correlateRegions } from './correlate.js';
 
 import fs from 'node:fs';
 import path from 'node:path';
@@ -24,9 +28,13 @@ import { captureScreenshot } from './capture.js';
 import { compareImages } from './compareImages.js';
 import { createComparisonDir, writePng, writeJson } from './artifacts.js';
 import { resolveViewport } from './viewports.js';
+import { getDomDiffSummary } from './dom/domDiff.js';
+import { findDiffRegions } from './regions.js';
+import { diffLayouts } from './layout.js';
+import { correlateRegions } from './correlate.js';
 
 /**
- * Unified compare entry (Phase 1: url-url and image-image).
+ * Unified compare entry (URL/image/mockup) with pixel + DOM/layout analysis.
  * @param {object} request
  */
 export async function compare(request) {
@@ -37,11 +45,15 @@ export async function compare(request) {
   const viewport = resolveViewport(request.viewport);
   const artifactsRoot = request.artifactsRoot || path.join(process.cwd(), 'artifacts');
   const { id, dir } = createComparisonDir(artifactsRoot, request.comparisonId);
+  const wantDom = options.includeDomDiff !== false;
+  const wantLayout = options.includeLayout !== false;
 
   let referenceBuf;
   let actualBuf;
   let htmlA = '';
   let htmlB = '';
+  let layoutA = [];
+  let layoutB = [];
   const warnings = [];
   let mode = 'unknown';
 
@@ -53,7 +65,6 @@ export async function compare(request) {
     mode = 'url-vs-url';
     const browser = await createBrowser(options.browser || {});
     try {
-      // Separate pages — never share one page across parallel viewports.
       const pageA = await browser.newPage();
       const pageB = await browser.newPage();
       const [capA, capB] = await Promise.all([
@@ -64,6 +75,8 @@ export async function compare(request) {
       actualBuf = capB.png;
       htmlA = capA.html;
       htmlB = capB.html;
+      layoutA = capA.layout || [];
+      layoutB = capB.layout || [];
       warnings.push(...(capA.consoleErrors || []).map((e) => `source console: ${e}`));
       warnings.push(...(capB.consoleErrors || []).map((e) => `target console: ${e}`));
       await pageA.close().catch(() => {});
@@ -80,6 +93,7 @@ export async function compare(request) {
       const cap = await captureScreenshot(page, target.value, viewport, options);
       actualBuf = cap.png;
       htmlB = cap.html;
+      layoutB = cap.layout || [];
       warnings.push(...(cap.consoleErrors || []).map((e) => `target console: ${e}`));
       await page.close().catch(() => {});
     } finally {
@@ -94,6 +108,7 @@ export async function compare(request) {
       const cap = await captureScreenshot(page, source.value, viewport, options);
       referenceBuf = cap.png;
       htmlA = cap.html;
+      layoutA = cap.layout || [];
       await page.close().catch(() => {});
     } finally {
       await closeBrowser(browser);
@@ -117,13 +132,55 @@ export async function compare(request) {
   const overlayPath = path.join(dir, 'overlay.png');
   const normRefPath = path.join(dir, 'reference-normalized.png');
   const normActPath = path.join(dir, 'actual-normalized.png');
-  // Keep originals always.
   writePng(referenceBuf, refPath);
   writePng(actualBuf, actPath);
   if (metrics.normalizedA) writePng(metrics.normalizedA, normRefPath);
   if (metrics.normalizedB) writePng(metrics.normalizedB, normActPath);
   if (metrics.diffPngBuffer) writePng(metrics.diffPngBuffer, diffPath);
   if (metrics.overlayPngBuffer) writePng(metrics.overlayPngBuffer, overlayPath);
+
+  // Pixel regions → correlate with actual-page layout when available.
+  let regions = [];
+  if (metrics.diffPngBuffer && options.includeRegions !== false) {
+    regions = findDiffRegions(metrics.diffPngBuffer, {
+      cellSize: options.regionCellSize || 4,
+      maxRegions: options.maxRegions || 40,
+    });
+    const correlateAgainst = layoutB.length ? layoutB : layoutA;
+    if (correlateAgainst.length) {
+      regions = correlateRegions(regions, correlateAgainst);
+    }
+  }
+
+  let domChanges = { kind: 'dom', total: 0, items: [] };
+  if (wantDom && htmlA && htmlB) {
+    domChanges = getDomDiffSummary(htmlA, htmlB, {
+      ignoredSelectors: options.ignoredSelectors || [],
+    });
+    writeJson(domChanges, path.join(dir, 'dom-diff.json'));
+  } else if (wantDom && mode === 'image-vs-image') {
+    domChanges = {
+      kind: 'dom',
+      total: 0,
+      items: [],
+      note: 'DOM diff requires HTML from URL captures.',
+    };
+  }
+
+  let layoutDiff = { kind: 'layout', counts: {}, layoutChanges: [], styleChanges: [], added: [], removed: [] };
+  if (wantLayout && (layoutA.length || layoutB.length)) {
+    layoutDiff = diffLayouts(layoutA, layoutB);
+    writeJson(layoutDiff, path.join(dir, 'layout-diff.json'));
+  }
+
+  const criticalRegions = regions.filter((r) => r.severity === 'high').length;
+  const recommendations = [];
+  if (warnings.length) recommendations.push('Review warnings before trusting the similarity score.');
+  if (criticalRegions) recommendations.push(`${criticalRegions} critical visual region(s) need attention.`);
+  if (domChanges.total > 20) recommendations.push('Large DOM delta — inspect structural changes before pixel tuning.');
+  if (layoutDiff.counts?.layout > 0) {
+    recommendations.push(`${layoutDiff.counts.layout} element(s) moved or resized.`);
+  }
 
   const report = {
     comparisonId: id,
@@ -135,8 +192,11 @@ export async function compare(request) {
       differentPixels: metrics.diffPixels,
       totalPixels: metrics.totalPixels,
       diffPercent: metrics.diffPercent,
-      regions: null,
-      criticalRegions: null,
+      regions: regions.length,
+      criticalRegions,
+      domChanges: domChanges.total || 0,
+      layoutChanges: layoutDiff.counts?.layout || 0,
+      styleChanges: layoutDiff.counts?.style || 0,
     },
     artifacts: {
       reference: refPath,
@@ -145,21 +205,30 @@ export async function compare(request) {
       overlay: metrics.overlayPngBuffer ? overlayPath : null,
       referenceNormalized: metrics.normalizedA ? normRefPath : null,
       actualNormalized: metrics.normalizedB ? normActPath : null,
+      domDiff: htmlA && htmlB ? path.join(dir, 'dom-diff.json') : null,
+      layoutDiff: layoutA.length || layoutB.length ? path.join(dir, 'layout-diff.json') : null,
       directory: dir,
     },
+    regions,
     normalization: metrics.normalization,
     warnings,
-    domChanges: options.includeDomDiff ? { note: 'DOM diff wired in Phase 4', htmlLengths: { a: htmlA.length, b: htmlB.length } } : [],
-    styleChanges: [],
+    domChanges,
+    styleChanges: layoutDiff.styleChanges || [],
+    layoutChanges: layoutDiff.layoutChanges || [],
+    layoutDiff,
+    analyses: {
+      pixel: { kind: 'pixel', similarity: metrics.similarity, diffPercent: metrics.diffPercent },
+      dom: { kind: 'dom', total: domChanges.total || 0 },
+      layout: { kind: 'layout', ...(layoutDiff.counts || {}) },
+      style: { kind: 'style', total: layoutDiff.counts?.style || 0 },
+    },
     performance: { durationMs: Date.now() - started },
-    recommendations: warnings.length
-      ? ['Review warnings before trusting the similarity score.']
-      : [],
+    recommendations,
   };
 
   writeJson(report, path.join(dir, 'report.json'));
   writeJson(
-    { comparisonId: id, mode, createdAt: new Date().toISOString(), viewport },
+    { comparisonId: id, mode, createdAt: new Date().toISOString(), viewport, summary: report.summary },
     path.join(dir, 'metadata.json')
   );
   return report;

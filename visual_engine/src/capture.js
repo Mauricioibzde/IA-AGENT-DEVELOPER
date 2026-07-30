@@ -4,6 +4,7 @@
 
 import { stabilizePage } from './stabilize.js';
 import { resolveViewport } from './viewports.js';
+import { collectLayoutSnapshot } from './layout.js';
 
 const DEFAULT_TIMEOUT = 60_000;
 const DEFAULT_WAIT_MS = 1500;
@@ -76,6 +77,12 @@ export async function captureScreenshot(page, url, viewport, options = {}) {
       .catch(() => {});
   }
 
+  let layout = [];
+  if (options.includeLayout !== false) {
+    layout = await collectLayoutSnapshot(page, { limit: options.layoutLimit || 350 });
+    if (!Array.isArray(layout)) layout = layout.elements || [];
+  }
+
   const png = await page.screenshot({ fullPage, type: 'png' });
   const html = options.includeHtml === false ? '' : await page.content();
 
@@ -85,6 +92,7 @@ export async function captureScreenshot(page, url, viewport, options = {}) {
   return {
     png,
     html,
+    layout,
     viewport: vp,
     consoleErrors: consoleErrors.slice(0, 40),
     networkFailures: networkFailures.slice(0, 40),

@@ -1,6 +1,6 @@
 # Migração: Puppeteer Compare → Visual Engine (Forge)
 
-**Status:** Fase 0–3 concluídas · Fase 4 (DOM/layout) a seguir  
+**Status:** Fase 0–4 concluídas · Fase 5 (correction loop) a seguir  
 
 **Branch:** `feature/visual-engine-integration`  
 **Fonte:** https://github.com/Mauricioibzde/puppeteer-compare (branch `master`)  
@@ -96,6 +96,7 @@ pedido → plano → código → executar → capturar → comparar → diagnost
 - Scripts PowerShell de tradução de commits
 - Showcase de ícones / date picker / tips UX do app antigo
 - Bloqueio absoluto de localhost (incompatível com preview local)
+- **`diff-dom` v5** — retornou diffs vazios com JSDOM; substituído por walker próprio + `jsdom`
 
 ### E. Ausente — criar no Forge
 

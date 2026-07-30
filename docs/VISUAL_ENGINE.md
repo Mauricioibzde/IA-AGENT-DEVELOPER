@@ -111,6 +111,18 @@ Artefatos extras: `overlay.png`, `reference-normalized.png`, `actual-normalized.
 
 UI: upload de mockup (converte para PNG no browser), views lado a lado / diff / overlay / slider.
 
+### Análises separadas (Fase 4)
+
+| Análise | Artefato / campo | Conteúdo |
+|---------|------------------|----------|
+| Pixel Diff | `diff.png`, `similarity` | pixelmatch |
+| DOM Diff | `dom-diff.json`, `domChanges` | nós add/remove/texto/atributos |
+| Layout Diff | `layout-diff.json`, `layoutChanges` | retângulos / posição / tamanho |
+| Style Diff | `styleChanges` | color, background, fontSize, … |
+| Regiões | `regions[]` | bbox + severidade + elemento provável (`confidence`) |
+
+Correlação região↔elemento usa IoU/overlap e **nunca** afirma match exato sem `confidence`.
+
 Atalhos no body de `compare`:
 
 - `{ "url1", "url2" }` — legado puppeteer-compare

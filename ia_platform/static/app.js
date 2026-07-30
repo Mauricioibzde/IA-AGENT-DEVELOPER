@@ -159,6 +159,8 @@
     compareSliderBack: $("compareSliderBack"),
     compareSliderFront: $("compareSliderFront"),
     compareHistoryList: $("compareHistoryList"),
+    compareRegionsMeta: $("compareRegionsMeta"),
+    compareRegionsList: $("compareRegionsList"),
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
@@ -5617,7 +5619,37 @@
       const warns = (report.warnings || []).slice(0, 2).join(" · ");
       els.compareStatus.textContent = warns || `Comparação ${id} pronta.`;
     }
+    renderCompareRegions(report);
     setCompareView(state.compareView || "side");
+  }
+
+  function renderCompareRegions(report) {
+    const regions = report.regions || [];
+    const summary = report.summary || {};
+    const domTotal = summary.domChanges ?? report.domChanges?.total ?? 0;
+    const layoutTotal = summary.layoutChanges ?? report.layoutDiff?.counts?.layout ?? 0;
+    if (els.compareRegionsMeta) {
+      els.compareRegionsMeta.textContent = `${regions.length} região(ões) · DOM ${domTotal} · layout ${layoutTotal} · style ${summary.styleChanges ?? 0}`;
+    }
+    if (!els.compareRegionsList) return;
+    if (!regions.length) {
+      els.compareRegionsList.innerHTML = "<li class='muted'>Nenhuma região agrupada (imagens iguais ou só pixel).</li>";
+      return;
+    }
+    els.compareRegionsList.innerHTML = regions
+      .slice(0, 16)
+      .map((r) => {
+        const el = r.probableElement;
+        const conf = el?.confidence ? ` · ${el.confidence}` : "";
+        const sel = el?.selector ? escapeHtml(el.selector) : "sem elemento provável";
+        return `<li class="compare-region-item severity-${escapeHtml(r.severity || "low")}">
+          <div><strong>${escapeHtml(r.id)}</strong> ${escapeHtml(r.category || "diff")} · ${escapeHtml(r.severity || "")}</div>
+          <div class="muted">${r.width}×${r.height} @ ${r.x},${r.y}</div>
+          <div>${sel}${escapeHtml(conf)}</div>
+          <div class="muted">${escapeHtml(r.diagnosis || "")}</div>
+        </li>`;
+      })
+      .join("");
   }
 
   function fileToPngBase64(file) {
@@ -5745,14 +5777,14 @@
           mockup,
           mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
-          options: { threshold: 0.1, fit },
+          options: { threshold: 0.1, fit, includeDomDiff: true, includeLayout: true },
         };
       } else {
         body = {
           preview_vs_url: targetUrl,
           mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
-          options: { threshold: 0.1, fit },
+          options: { threshold: 0.1, fit, includeDomDiff: true, includeLayout: true },
         };
       }
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {

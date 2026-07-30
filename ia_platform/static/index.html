@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=21" />
+  <link rel="stylesheet" href="/static/app.css?v=22" />
 </head>
 <body>
   <div class="app">
@@ -390,6 +390,11 @@
                   <input type="range" id="compareSliderRange" min="0" max="100" value="50" aria-label="Slider comparação" />
                 </div>
               </div>
+              <div class="compare-regions" id="compareRegions">
+                <h4>Regiões / DOM</h4>
+                <p class="compare-regions-meta" id="compareRegionsMeta"></p>
+                <ul class="compare-regions-list" id="compareRegionsList"></ul>
+              </div>
               <div class="compare-history">
                 <h4>Histórico visual</h4>
                 <ul class="compare-history-list" id="compareHistoryList"></ul>
@@ -632,6 +637,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=21"></script>
+  <script src="/static/app.js?v=22"></script>
 </body>
 </html>

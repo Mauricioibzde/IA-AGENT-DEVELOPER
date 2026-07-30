@@ -3562,3 +3562,31 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
   margin: 0 4%;
   accent-color: #82bcff;
 }
+.compare-regions {
+  padding: 0.35rem 0.85rem 0.75rem;
+  border-top: 1px solid var(--border);
+}
+.compare-regions h4 { font-size: 0.85rem; margin-bottom: 0.25rem; }
+.compare-regions-meta {
+  font-size: 0.75rem;
+  color: var(--muted);
+  margin-bottom: 0.45rem;
+}
+.compare-regions-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.4rem;
+  max-height: 220px;
+  overflow: auto;
+}
+.compare-region-item {
+  border: 1px solid var(--border);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  font-size: 0.75rem;
+  background: var(--surface);
+}
+.compare-region-item.severity-high { border-color: rgba(194, 65, 12, 0.45); }
+.compare-region-item.severity-medium { border-color: rgba(180, 83, 9, 0.4); }
+.compare-region-item .muted { color: var(--muted); }
