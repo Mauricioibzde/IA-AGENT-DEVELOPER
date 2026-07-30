@@ -18,6 +18,10 @@ def test_detect_hardware_returns_profile() -> None:
     assert hw["detected_at"] > 0
     assert hw["scope"] == "server"
     assert hw["source"] in {"native", "wsl", "container"}
+    assert hw.get("cpu_percent") is None or 0 <= float(hw["cpu_percent"]) <= 100
+    assert hw.get("ram_percent") is None or 0 <= float(hw["ram_percent"]) <= 100
+    assert "ram_used_gb" in hw
+    assert hw["ram_used_gb"] >= 0
 
 
 def test_compute_tier_ultra() -> None:
@@ -177,12 +181,32 @@ def test_detect_windows_gpus_from_wmi(monkeypatch) -> None:
     assert gpus[0]["name"].startswith("NVIDIA")
 
 
-def test_guess_vendor_from_name() -> None:
+def test_detect_cpu_percent_from_proc_stat(monkeypatch) -> None:
     import ia_platform.hardware as hwmod
 
-    assert hwmod._guess_vendor_from_name("AMD Radeon RX 6800") == "amd"
-    assert hwmod._guess_vendor_from_name("Intel Iris Xe") == "intel"
-    assert hwmod._guess_vendor_from_name("GeForce RTX 4070") == "nvidia"
+    samples = iter([(100, 200), (120, 300)])  # idle +20 / total +100 → 80% used
+
+    monkeypatch.setattr(hwmod, "_read_linux_cpu_times", lambda: next(samples))
+    monkeypatch.setattr(hwmod.time, "sleep", lambda _s: None)
+    pct = hwmod._detect_cpu_percent(sample_seconds=0.01)
+    assert pct == 80.0
+
+
+def test_nvidia_smi_parses_utilization(monkeypatch) -> None:
+    import ia_platform.hardware as hwmod
+
+    monkeypatch.setattr(hwmod.shutil, "which", lambda _cmd: "/usr/bin/nvidia-smi")
+
+    def fake_check_output(cmd, text=True, timeout=5, stderr=None):
+        assert any("utilization.gpu" in str(part) for part in cmd)
+        return "NVIDIA GeForce RTX 3060, 12288, 4096, 37, 535.00\n"
+
+    monkeypatch.setattr(hwmod.subprocess, "check_output", fake_check_output)
+    gpus = hwmod._detect_nvidia_gpus()
+    assert len(gpus) == 1
+    assert gpus[0]["utilization_percent"] == 37.0
+    assert gpus[0]["vram_total_gb"] == 12.0
+    assert gpus[0]["vram_free_gb"] == 4.0
 
 
 def test_memory_reader_prefers_windows_on_windows(monkeypatch) -> None:

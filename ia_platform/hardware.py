@@ -116,6 +116,47 @@ def _detect_memory() -> tuple[float, float]:
     return 8.0, 4.0
 
 
+def _read_linux_cpu_times() -> Optional[tuple[int, int]]:
+    """Return (idle_plus_iowait, total) jiffies from /proc/stat."""
+    try:
+        with open("/proc/stat", encoding="utf-8") as handle:
+            line = handle.readline()
+    except OSError:
+        return None
+    if not line.startswith("cpu "):
+        return None
+    try:
+        parts = [int(x) for x in line.split()[1:]]
+    except ValueError:
+        return None
+    if len(parts) < 4:
+        return None
+    idle = parts[3] + (parts[4] if len(parts) > 4 else 0)
+    total = sum(parts)
+    return idle, total
+
+
+def _detect_cpu_percent(*, sample_seconds: float = 0.12) -> Optional[float]:
+    """Sample CPU utilization (0–100). Prefer /proc/stat; fall back to load average."""
+    times_a = _read_linux_cpu_times()
+    if times_a:
+        time.sleep(max(0.05, sample_seconds))
+        times_b = _read_linux_cpu_times()
+        if times_b:
+            idle_d = times_b[0] - times_a[0]
+            total_d = times_b[1] - times_a[1]
+            if total_d > 0:
+                used = 100.0 * (1.0 - (idle_d / total_d))
+                return round(max(0.0, min(100.0, used)), 1)
+
+    try:
+        load1 = os.getloadavg()[0]
+        cores = max(1, os.cpu_count() or 1)
+        return round(max(0.0, min(100.0, (load1 / cores) * 100.0)), 1)
+    except (OSError, AttributeError):
+        return None
+
+
 def _detect_nvidia_gpus() -> List[Dict[str, Any]]:
     if not shutil.which("nvidia-smi"):
         return []
@@ -123,7 +164,7 @@ def _detect_nvidia_gpus() -> List[Dict[str, Any]]:
         output = subprocess.check_output(
             [
                 "nvidia-smi",
-                "--query-gpu=name,memory.total,memory.free,driver_version",
+                "--query-gpu=name,memory.total,memory.free,utilization.gpu,driver_version",
                 "--format=csv,noheader,nounits",
             ],
             text=True,
@@ -143,13 +184,20 @@ def _detect_nvidia_gpus() -> List[Dict[str, Any]]:
             free_mb = float(parts[2])
         except ValueError:
             continue
+        util = None
+        if len(parts) >= 4:
+            try:
+                util = float(parts[3])
+            except ValueError:
+                util = None
         gpus.append(
             {
                 "vendor": "nvidia",
                 "name": parts[0],
                 "vram_total_gb": round(total_mb / 1024, 1),
                 "vram_free_gb": round(free_mb / 1024, 1),
-                "driver": parts[3] if len(parts) > 3 else "",
+                "utilization_percent": util,
+                "driver": parts[4] if len(parts) > 4 else "",
             }
         )
     return gpus
@@ -416,6 +464,7 @@ def detect_hardware() -> Dict[str, Any]:
     """Return a JSON-serializable hardware profile for the machine running Forge."""
     ram_total_gb, ram_available_gb = _detect_memory()
     cpu_cores = os.cpu_count() or 4
+    cpu_percent = _detect_cpu_percent()
     gpus = _merge_gpu_lists(
         _detect_nvidia_gpus(),
         _detect_linux_drm_gpus(),
@@ -428,12 +477,25 @@ def detect_hardware() -> Dict[str, Any]:
 
     vram_total = max((g.get("vram_total_gb") or 0) for g in gpus) if gpus else 0.0
     vram_free = max((g.get("vram_free_gb") or 0) for g in gpus) if gpus else 0.0
+    gpu_util_values = [
+        float(g["utilization_percent"])
+        for g in gpus
+        if g.get("utilization_percent") is not None
+    ]
+    gpu_utilization_percent = round(max(gpu_util_values), 1) if gpu_util_values else None
 
     # Prefer nvidia-smi VRAM when WMI also listed the same NVIDIA card with bad AdapterRAM.
     nvidia = [g for g in gpus if g.get("vendor") == "nvidia" and g.get("source") != "wmi"]
     if nvidia:
         vram_total = max(g.get("vram_total_gb") or 0 for g in nvidia)
         vram_free = max(g.get("vram_free_gb") or 0 for g in nvidia)
+        nvidia_util = [
+            float(g["utilization_percent"])
+            for g in nvidia
+            if g.get("utilization_percent") is not None
+        ]
+        if nvidia_util:
+            gpu_utilization_percent = round(max(nvidia_util), 1)
 
     # Apple Silicon uses unified memory — treat shared RAM as effective VRAM when VRAM is unknown.
     apple_silicon = platform.system() == "Darwin" and platform.machine().lower() in {"arm64", "aarch64"}
@@ -458,6 +520,18 @@ def detect_hardware() -> Dict[str, Any]:
                 gpu["shared_memory"] = True
 
     has_gpu = bool(gpus) and (vram_total > 0 or apple_silicon)
+    ram_used_gb = round(max(0.0, ram_total_gb - ram_available_gb), 1)
+    ram_percent = (
+        round(min(100.0, max(0.0, (ram_used_gb / ram_total_gb) * 100.0)), 1)
+        if ram_total_gb > 0
+        else None
+    )
+    vram_used_gb = round(max(0.0, vram_total - vram_free), 1) if vram_total else 0.0
+    vram_percent = (
+        round(min(100.0, max(0.0, (vram_used_gb / vram_total) * 100.0)), 1)
+        if vram_total > 0
+        else None
+    )
     tier = _compute_tier(ram_available_gb, vram_total, cpu_cores)
     runtime = _runtime_context()
     os_name = platform.system()
@@ -471,12 +545,18 @@ def detect_hardware() -> Dict[str, Any]:
         "os_release": platform.release(),
         "machine": machine,
         "cpu_cores": cpu_cores,
+        "cpu_percent": cpu_percent,
         "ram_total_gb": ram_total_gb,
         "ram_available_gb": ram_available_gb,
+        "ram_used_gb": ram_used_gb,
+        "ram_percent": ram_percent,
         "has_gpu": has_gpu,
         "gpus": gpus,
         "vram_total_gb": vram_total,
         "vram_free_gb": vram_free,
+        "vram_used_gb": vram_used_gb,
+        "vram_percent": vram_percent,
+        "gpu_utilization_percent": gpu_utilization_percent,
         "tier": tier,
         "effective_memory_gb": round(max(ram_available_gb * 0.65, vram_free * 0.85), 1),
         "hostname": runtime["hostname"],
