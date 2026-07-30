@@ -82,6 +82,7 @@
     sidebarBackdrop: $("sidebarBackdrop"),
     btnToggleSidebar: $("btnToggleSidebar"),
     btnCollapseSidebar: $("btnCollapseSidebar"),
+    btnMinimizePanels: $("btnMinimizePanels"),
     btnSidebarSearch: $("btnSidebarSearch"),
     fileSearchInput: $("fileSearchInput"),
     runHistoryList: $("runHistoryList"),
@@ -2229,6 +2230,7 @@
     document.querySelectorAll(".quick-card--work").forEach((el) => {
       el.classList.toggle("hidden", state.surfaceMode === "chat");
     });
+    syncSidebarNavState();
     syncComposerProjectLabel();
     restoreLayoutSizes();
     try {
@@ -3413,6 +3415,12 @@
     const mobile = isMobileLayout();
     els.btnToggleSidebar?.classList.toggle("hidden", !mobile);
     if (!mobile) closeSidebar();
+  }
+
+  function syncSidebarNavState() {
+    const workActive = state.surfaceMode === "work";
+    els.btnNewProject?.classList.toggle("is-active", workActive);
+    els.btnNewChat?.classList.toggle("is-active", !workActive);
   }
 
   function runStatusClass(status) {
@@ -6516,15 +6524,16 @@
     document.querySelectorAll(".panel-tab").forEach((el) => {
       el.classList.toggle("active", el.dataset.tab === tab);
     });
+    const isAppPreview = group === "app" && tab === "preview";
     $("panelLive")?.classList.toggle("hidden", tab !== "live");
-    $("panelFiles").classList.toggle("hidden", tab !== "files");
-    $("panelPreview").classList.toggle("hidden", tab !== "preview");
+    $("panelFiles").classList.toggle("hidden", !isAppPreview && tab !== "files");
+    $("panelPreview").classList.toggle("hidden", tab !== "preview" && tab !== "files");
     $("panelCompare")?.classList.toggle("hidden", tab !== "compare");
     $("panelReport").classList.toggle("hidden", tab !== "report");
     syncMobileTabs(tab, group);
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
-    if (tab === "preview") updatePreview();
+    if (tab === "preview" || tab === "files") updatePreview();
     else stopPreviewPolling();
     if (tab === "compare") refreshComparePanel();
   }
@@ -7203,6 +7212,15 @@
   els.btnCollapseSidebar?.addEventListener("click", () => {
     if (isMobileLayout()) closeSidebar();
     else toggleSidebarCollapsed();
+  });
+  els.btnMinimizePanels?.addEventListener("click", () => {
+    if (!isMobileLayout()) {
+      setSidebarCollapsed(true);
+      setPanelCollapsed(true);
+      return;
+    }
+    closeSidebar();
+    closeMobilePanel();
   });
   els.sidebar?.querySelector(".logo")?.addEventListener("click", () => {
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
