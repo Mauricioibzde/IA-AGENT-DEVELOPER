@@ -6524,15 +6524,16 @@
     document.querySelectorAll(".panel-tab").forEach((el) => {
       el.classList.toggle("active", el.dataset.tab === tab);
     });
+    const isAppPreview = group === "app" && tab === "preview";
     $("panelLive")?.classList.toggle("hidden", tab !== "live");
-    $("panelFiles").classList.toggle("hidden", tab !== "files");
-    $("panelPreview").classList.toggle("hidden", tab !== "preview");
+    $("panelFiles").classList.toggle("hidden", !isAppPreview && tab !== "files");
+    $("panelPreview").classList.toggle("hidden", tab !== "preview" && tab !== "files");
     $("panelCompare")?.classList.toggle("hidden", tab !== "compare");
     $("panelReport").classList.toggle("hidden", tab !== "report");
     syncMobileTabs(tab, group);
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
-    if (tab === "preview") updatePreview();
+    if (tab === "preview" || tab === "files") updatePreview();
     else stopPreviewPolling();
     if (tab === "compare") refreshComparePanel();
   }

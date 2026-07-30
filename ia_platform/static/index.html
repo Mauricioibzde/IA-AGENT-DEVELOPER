@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=40" />
+  <link rel="stylesheet" href="/static/app.css?v=41" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -181,6 +181,19 @@
       </section>
 
       <section class="view-workspace hidden" id="workspaceView">
+        <div class="workspace-superbar" aria-label="Navegação do workspace">
+          <div class="workspace-superbar-left">
+            <button type="button" class="superbar-link is-active">Work</button>
+            <button type="button" class="superbar-link">Chat</button>
+            <button type="button" class="superbar-link">Arquivos</button>
+            <button type="button" class="superbar-link">Banco de Conhecimento</button>
+            <button type="button" class="superbar-link">Configurações</button>
+          </div>
+          <div class="workspace-superbar-right">
+            <span class="superbar-chip">Autosave 2m</span>
+            <span class="superbar-chip">Projeto ativo</span>
+          </div>
+        </div>
         <header class="topbar">
           <div class="topbar-left">
             <button type="button" class="btn btn-ghost btn-icon sidebar-toggle" id="btnToggleSidebar" title="Menu">
@@ -382,7 +395,10 @@
               <div class="tools-subtabs" id="toolsSubtabs">
                 <div class="tools-subrow" data-group-panel="app">
                   <button type="button" class="panel-tab tools-sub active" data-tab="preview" data-group="app">Preview</button>
-                  <button type="button" class="panel-tab tools-sub" data-tab="files" data-group="app">Arquivos</button>
+                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Console</button>
+                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Logs</button>
+                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Testes</button>
+                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Banco de Dados</button>
                 </div>
                 <div class="tools-subrow hidden" data-group-panel="agent">
                   <button type="button" class="panel-tab tools-sub" data-tab="live" data-group="agent">Ao vivo</button>
@@ -414,20 +430,6 @@
                 <ul class="live-code-timeline" id="liveCodeTimeline"></ul>
               </div>
             </div>
-            <div class="panel-content hidden" id="panelFiles">
-              <div class="file-search-row">
-                <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
-              </div>
-              <ul class="file-tree" id="fileTree"></ul>
-              <div class="file-editor-shell hidden" id="fileEditorShell">
-                <div class="file-editor-toolbar">
-                  <span class="file-editor-path" id="fileEditorPath"></span>
-                  <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas">•</span>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnFileSave" disabled>Salvar</button>
-                </div>
-                <textarea class="file-viewer" id="fileViewer" spellcheck="false" aria-label="Editor de arquivo"></textarea>
-              </div>
-            </div>
             <div class="panel-content" id="panelPreview">
               <div class="preview-toolbar">
                 <select id="previewMode" title="Modo de preview" class="control-select">
@@ -441,23 +443,44 @@
                 <span class="dev-status" id="devStatus"></span>
               </div>
               <pre class="dev-error-log hidden" id="devErrorLog"></pre>
-              <div class="preview-viewport device-desktop" id="previewViewport">
-                <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
-                <div class="preview-empty" id="previewEmpty">
-                  <div class="preview-empty-title">Preview ao vivo</div>
-                  <p class="preview-empty-copy">Quando o agente criar HTML ou um app, a prévia aparece aqui.</p>
-                  <div class="preview-empty-actions">
-                    <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
-                    <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section.">Criar landing</button>
-                    <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um app React + Vite simples com página inicial e estilos.">Criar React</button>
+              <div class="app-workbench" id="appWorkbench">
+                <div class="app-preview-col">
+                  <div class="preview-viewport device-desktop" id="previewViewport">
+                    <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
+                    <div class="preview-empty" id="previewEmpty">
+                      <div class="preview-empty-title">Preview ao vivo</div>
+                      <p class="preview-empty-copy">Quando o agente criar HTML ou um app, a prévia aparece aqui.</p>
+                      <div class="preview-empty-actions">
+                        <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
+                        <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section.">Criar landing</button>
+                        <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um app React + Vite simples com página inicial e estilos.">Criar React</button>
+                      </div>
+                    </div>
+                  </div>
+                  <p class="preview-hint hidden" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
+                  <div class="device-switcher" id="deviceSwitcher">
+                    <button type="button" class="device-btn active" data-device="desktop" title="Desktop">Desk</button>
+                    <button type="button" class="device-btn" data-device="tablet" title="Tablet">Tab</button>
+                    <button type="button" class="device-btn" data-device="mobile" title="Mobile">Mob</button>
                   </div>
                 </div>
-              </div>
-              <p class="preview-hint hidden" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
-              <div class="device-switcher" id="deviceSwitcher">
-                <button type="button" class="device-btn active" data-device="desktop" title="Desktop">Desk</button>
-                <button type="button" class="device-btn" data-device="tablet" title="Tablet">Tab</button>
-                <button type="button" class="device-btn" data-device="mobile" title="Mobile">Mob</button>
+                <div class="app-explorer-col" id="panelFiles">
+                  <div class="app-explorer-head">
+                    <strong>Arquivos do projeto</strong>
+                  </div>
+                  <div class="file-search-row">
+                    <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
+                  </div>
+                  <ul class="file-tree" id="fileTree"></ul>
+                  <div class="file-editor-shell hidden" id="fileEditorShell">
+                    <div class="file-editor-toolbar">
+                      <span class="file-editor-path" id="fileEditorPath"></span>
+                      <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas">•</span>
+                      <button type="button" class="btn btn-ghost btn-sm" id="btnFileSave" disabled>Salvar</button>
+                    </div>
+                    <textarea class="file-viewer" id="fileViewer" spellcheck="false" aria-label="Editor de arquivo"></textarea>
+                  </div>
+                </div>
               </div>
             </div>
             <div class="panel-content hidden" id="panelCompare">
