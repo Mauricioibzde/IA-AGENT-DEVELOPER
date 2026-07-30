@@ -2989,9 +2989,10 @@
     state.mobilePanelOpen = false;
   }
 
-  function syncMobileTabs(name) {
+  function syncMobileTabs(name, group) {
+    const g = group || TAB_TO_GROUP[name] || state.activeToolGroup || "app";
     document.querySelectorAll(".mobile-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.tab === name);
+      tab.classList.toggle("active", tab.dataset.group === g);
     });
   }
 
@@ -5547,23 +5548,62 @@
     }
   }
 
-  // ── Tabs ──
+  // ── Tabs / tool groups (App · Agente · Visual) ──
 
-  function switchTab(name) {
-    document.querySelectorAll(".panel-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.tab === name);
+  const TOOL_GROUP_DEFAULT = { app: "preview", agent: "live", visual: "compare" };
+  const TAB_TO_GROUP = {
+    preview: "app",
+    files: "app",
+    live: "agent",
+    report: "agent",
+    compare: "visual",
+  };
+
+  function switchToolGroup(group, preferredTab) {
+    const g = TOOL_GROUP_DEFAULT[group] ? group : "app";
+    const tab = preferredTab && TAB_TO_GROUP[preferredTab] === g
+      ? preferredTab
+      : (state.lastToolTab?.[g] || TOOL_GROUP_DEFAULT[g]);
+    document.querySelectorAll(".tools-group").forEach((btn) => {
+      const on = btn.dataset.group === g;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
     });
-    $("panelLive")?.classList.toggle("hidden", name !== "live");
-    $("panelFiles").classList.toggle("hidden", name !== "files");
-    $("panelPreview").classList.toggle("hidden", name !== "preview");
-    $("panelCompare")?.classList.toggle("hidden", name !== "compare");
-    $("panelReport").classList.toggle("hidden", name !== "report");
-    syncMobileTabs(name);
+    document.querySelectorAll(".tools-subrow").forEach((row) => {
+      row.classList.toggle("hidden", row.dataset.groupPanel !== g);
+    });
+    switchTab(tab, { group: g });
+  }
+
+  function switchTab(name, opts = {}) {
+    const tab = TAB_TO_GROUP[name] ? name : "preview";
+    const group = opts.group || TAB_TO_GROUP[tab] || "app";
+    if (!state.lastToolTab) state.lastToolTab = {};
+    state.lastToolTab[group] = tab;
+    state.activeToolGroup = group;
+
+    document.querySelectorAll(".tools-group").forEach((btn) => {
+      const on = btn.dataset.group === group;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-selected", on ? "true" : "false");
+    });
+    document.querySelectorAll(".tools-subrow").forEach((row) => {
+      row.classList.toggle("hidden", row.dataset.groupPanel !== group);
+    });
+    document.querySelectorAll(".panel-tab").forEach((el) => {
+      el.classList.toggle("active", el.dataset.tab === tab);
+    });
+    $("panelLive")?.classList.toggle("hidden", tab !== "live");
+    $("panelFiles").classList.toggle("hidden", tab !== "files");
+    $("panelPreview").classList.toggle("hidden", tab !== "preview");
+    $("panelCompare")?.classList.toggle("hidden", tab !== "compare");
+    $("panelReport").classList.toggle("hidden", tab !== "report");
+    syncMobileTabs(tab, group);
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
-    if (name === "preview") updatePreview();
+    if (tab === "preview") updatePreview();
     else stopPreviewPolling();
-    if (name === "compare") refreshComparePanel();
+    if (tab === "compare") refreshComparePanel();
   }
 
   function parseCompareViewport() {
@@ -6132,8 +6172,24 @@
   els.btnSend.addEventListener("click", sendPrompt);
   els.mobileTabs?.addEventListener("click", (e) => {
     const btn = e.target.closest(".mobile-tab");
-    if (!btn?.dataset.tab) return;
-    switchTab(btn.dataset.tab);
+    if (!btn) return;
+    if (btn.dataset.group) {
+      switchToolGroup(btn.dataset.group, btn.dataset.tab);
+      return;
+    }
+    if (btn.dataset.tab) switchTab(btn.dataset.tab);
+  });
+
+  document.getElementById("toolsGroups")?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".tools-group");
+    if (!btn?.dataset.group) return;
+    switchToolGroup(btn.dataset.group);
+  });
+
+  document.addEventListener("click", (e) => {
+    const more = document.getElementById("topbarMore");
+    if (!more?.open) return;
+    if (!more.contains(e.target)) more.open = false;
   });
   els.mobileBackdrop?.addEventListener("click", closeMobilePanel);
   window.addEventListener("resize", () => {
@@ -6503,7 +6559,10 @@
   bindPreviewFrameLoad();
 
   document.querySelectorAll(".panel-tab").forEach((tab) => {
-    tab.addEventListener("click", () => switchTab(tab.dataset.tab));
+    tab.addEventListener("click", () => {
+      if (tab.dataset.group) switchToolGroup(tab.dataset.group, tab.dataset.tab);
+      else switchTab(tab.dataset.tab);
+    });
   });
 
   document.querySelectorAll(".quick-card").forEach((card) => {

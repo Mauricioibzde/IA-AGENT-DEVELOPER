@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=25" />
+  <link rel="stylesheet" href="/static/app.css?v=26" />
 </head>
 <body>
   <div class="app">
@@ -83,8 +83,8 @@
 
       <div class="sidebar-bottom">
         <div class="sidebar-tip" id="sidebarTip">
-          <strong>Dica do dia</strong>
-          <p>Use o Chat para qualquer assunto e alinhar a ideia; no Work o agente transforma isso em app/código.</p>
+          <strong>Como navegar</strong>
+          <p><b>Chat</b> conversa · <b>Work</b> constrói. No painel: <b>App</b> (preview/arquivos), <b>Agente</b> (ao vivo/relatório), <b>Visual</b> (comparação).</p>
         </div>
         <div class="sidebar-user" title="Forge · plataforma local">
           <div class="user-avatar">F</div>
@@ -161,28 +161,36 @@
             </div>
           </div>
           <div class="topbar-controls">
-            <span class="mode-chip" id="modeChip" title="Modo atual">Chat</span>
-            <select id="modeSelect" title="Modo" class="control-select">
-              <option value="chat" selected>Chat (qualquer assunto)</option>
-              <option value="execute">Executar código</option>
-              <option value="plan">Só plano</option>
-              <option value="dry">Dry-run</option>
-            </select>
-            <select id="modelSelect" title="Modelo IA" class="control-select model-select">
-              <option value="__auto__">Auto (recomendado)</option>
-              <optgroup label="Instalados" id="modelGroupInstalled"></optgroup>
-              <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
-              <option value="__custom__">Outro...</option>
-            </select>
             <span class="active-model-badge" id="activeModelBadge" title="Modelo que o Forge vai usar (ou está usando agora)">Auto</span>
-            <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
-            <div class="steps-control" title="Max steps">
-              <span class="steps-icon" aria-hidden="true">✦</span>
-              <input id="maxStepsInput" type="number" value="20" min="1" max="50" class="control-input steps-input" />
-            </div>
-            <button type="button" class="btn btn-ghost btn-icon-text" id="btnClearChat" title="Limpar conversa">Limpar</button>
-            <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar">↻ Atualizar</button>
+            <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar arquivos e preview">↻</button>
             <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">Deploy</button>
+            <details class="topbar-more" id="topbarMore">
+              <summary class="topbar-more-btn" title="Mais opções">Opções</summary>
+              <div class="topbar-more-panel" role="group" aria-label="Opções do workspace">
+                <label class="topbar-more-label" for="modeSelect">Modo de execução</label>
+                <select id="modeSelect" title="Modo" class="control-select">
+                  <option value="chat" selected>Chat (qualquer assunto)</option>
+                  <option value="execute">Executar código</option>
+                  <option value="plan">Só plano</option>
+                  <option value="dry">Dry-run</option>
+                </select>
+                <span class="mode-chip hidden" id="modeChip" title="Modo atual">Chat</span>
+                <label class="topbar-more-label" for="modelSelect">Modelo (avançado)</label>
+                <select id="modelSelect" title="Modelo IA" class="control-select model-select">
+                  <option value="__auto__">Auto (recomendado)</option>
+                  <optgroup label="Instalados" id="modelGroupInstalled"></optgroup>
+                  <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
+                  <option value="__custom__">Outro...</option>
+                </select>
+                <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
+                <label class="topbar-more-label steps-control" for="maxStepsInput">Máx. passos</label>
+                <div class="steps-control" title="Max steps">
+                  <span class="steps-icon" aria-hidden="true">✦</span>
+                  <input id="maxStepsInput" type="number" value="20" min="1" max="50" class="control-input steps-input" />
+                </div>
+                <button type="button" class="btn btn-ghost btn-sm topbar-more-action" id="btnClearChat" title="Limpar conversa">Limpar conversa</button>
+              </div>
+            </details>
           </div>
         </header>
 
@@ -265,13 +273,27 @@
           </div>
 
           <aside class="right-panel" id="rightPanel">
-            <div class="panel-tabs" id="panelTabs">
-              <div class="panel-tab" data-tab="live">Ao vivo</div>
-              <div class="panel-tab" data-tab="files">Arquivos</div>
-              <div class="panel-tab active" data-tab="preview">Preview</div>
-              <div class="panel-tab" data-tab="compare">Comparação</div>
-              <div class="panel-tab" data-tab="report">Relatório</div>
-            </div>
+            <nav class="tools-nav" id="toolsNav" aria-label="Ferramentas do projeto">
+              <div class="tools-groups" id="toolsGroups" role="tablist" aria-label="Grupos">
+                <button type="button" class="tools-group active" data-group="app" role="tab" aria-selected="true">App</button>
+                <button type="button" class="tools-group" data-group="agent" role="tab" aria-selected="false">Agente</button>
+                <button type="button" class="tools-group" data-group="visual" role="tab" aria-selected="false">Visual</button>
+              </div>
+              <div class="tools-subtabs" id="toolsSubtabs">
+                <div class="tools-subrow" data-group-panel="app">
+                  <button type="button" class="panel-tab tools-sub active" data-tab="preview" data-group="app">Preview</button>
+                  <button type="button" class="panel-tab tools-sub" data-tab="files" data-group="app">Arquivos</button>
+                </div>
+                <div class="tools-subrow hidden" data-group-panel="agent">
+                  <button type="button" class="panel-tab tools-sub" data-tab="live" data-group="agent">Ao vivo</button>
+                  <button type="button" class="panel-tab tools-sub" data-tab="report" data-group="agent">Relatório</button>
+                </div>
+                <div class="tools-subrow hidden" data-group-panel="visual">
+                  <button type="button" class="panel-tab tools-sub" data-tab="compare" data-group="visual">Comparação</button>
+                </div>
+              </div>
+            </nav>
+            <div class="panel-tabs hidden" id="panelTabs" aria-hidden="true"></div>
             <div class="panel-content hidden" id="panelLive">
               <div class="live-code-shell" id="liveCodeShell">
                 <div class="live-code-toolbar">
@@ -339,44 +361,51 @@
                   <option value="768x1024">Tablet</option>
                   <option value="393x852">Mobile</option>
                 </select>
-                <select id="compareSuite" class="control-select" title="Suite Pixel Perfect">
-                  <option value="">Viewport único</option>
-                  <option value="responsive">Suite: Responsivo</option>
-                  <option value="desktop">Suite: Desktop</option>
-                  <option value="mobile">Suite: Mobile</option>
-                  <option value="full">Suite: Completo</option>
-                </select>
-                <select id="compareFit" class="control-select" title="Normalização">
-                  <option value="contain">Contain</option>
-                  <option value="cover">Cover</option>
-                  <option value="crop">Crop</option>
-                </select>
-                <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar agora</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="btnPixelPerfect">Pixel Perfect</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar preview</button>
-                <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto">Corrigir automaticamente</button>
+                <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnCorrectCancel">Interromper</button>
               </div>
-              <p class="compare-status" id="compareStatus">Visual Engine — compare o preview com uma URL ou mockup.</p>
-              <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
-              <input id="compareTargetUrl" type="url" placeholder="https://… ou deixe vazio para só capturar" class="compare-input" />
+              <p class="compare-status" id="compareStatus">Compare o preview com uma URL ou mockup.</p>
               <label class="compare-label" for="compareMockupPath">Mockup no projeto</label>
               <div class="compare-mockup-row">
                 <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input compare-input-inline" />
-                <button type="button" class="btn btn-ghost btn-sm" id="btnUploadMockup">Enviar mockup</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnUploadMockup">Enviar</button>
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
+              <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
+              <input id="compareTargetUrl" type="url" placeholder="https://…" class="compare-input" />
               <div class="compare-score hidden" id="compareScore"></div>
-              <div class="compare-baseline-row">
-                <label class="compare-label" for="compareRouteId">Rota / baseline</label>
-                <div class="compare-mockup-row">
-                  <input id="compareRouteId" type="text" placeholder="ex: home" class="compare-input compare-input-inline" />
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineApprove">Aprovar</button>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineReject">Rejeitar</button>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineCompare">Vs baseline</button>
+              <details class="compare-advanced" id="compareAdvanced">
+                <summary>Ferramentas avançadas</summary>
+                <div class="compare-advanced-body">
+                  <div class="compare-advanced-row">
+                    <select id="compareSuite" class="control-select" title="Suite Pixel Perfect">
+                      <option value="">Viewport único</option>
+                      <option value="responsive">Suite: Responsivo</option>
+                      <option value="desktop">Suite: Desktop</option>
+                      <option value="mobile">Suite: Mobile</option>
+                      <option value="full">Suite: Completo</option>
+                    </select>
+                    <select id="compareFit" class="control-select" title="Normalização">
+                      <option value="contain">Contain</option>
+                      <option value="cover">Cover</option>
+                      <option value="crop">Crop</option>
+                    </select>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btnPixelPerfect">Pixel Perfect</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto">Corrigir auto</button>
+                  </div>
+                  <div class="compare-baseline-row">
+                    <label class="compare-label" for="compareRouteId">Baseline por rota</label>
+                    <div class="compare-mockup-row">
+                      <input id="compareRouteId" type="text" placeholder="ex: home" class="compare-input compare-input-inline" />
+                      <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineApprove">Aprovar</button>
+                      <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineReject">Rejeitar</button>
+                      <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineCompare">Vs baseline</button>
+                    </div>
+                    <ul class="compare-baseline-list" id="compareBaselineList"></ul>
+                  </div>
                 </div>
-                <ul class="compare-baseline-list" id="compareBaselineList"></ul>
-              </div>
+              </details>
               <div class="compare-suite hidden" id="compareSuitePanel">
                 <h4>Pixel Perfect</h4>
                 <p class="compare-suite-meta" id="compareSuiteMeta"></p>
@@ -439,12 +468,10 @@
             </div>
           </aside>
         </div>
-        <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Painéis do projeto">
-          <button type="button" class="mobile-tab" data-tab="live">Ao vivo</button>
-          <button type="button" class="mobile-tab" data-tab="files">Arquivos</button>
-          <button type="button" class="mobile-tab active" data-tab="preview">Preview</button>
-          <button type="button" class="mobile-tab" data-tab="compare">Comp.</button>
-          <button type="button" class="mobile-tab" data-tab="report">Relatório</button>
+        <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
+          <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">App</button>
+          <button type="button" class="mobile-tab" data-group="agent" data-tab="live">Agente</button>
+          <button type="button" class="mobile-tab" data-group="visual" data-tab="compare">Visual</button>
         </nav>
         <div class="mobile-backdrop hidden" id="mobileBackdrop"></div>
       </section>
@@ -667,6 +694,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=25"></script>
+  <script src="/static/app.js?v=26"></script>
 </body>
 </html>
