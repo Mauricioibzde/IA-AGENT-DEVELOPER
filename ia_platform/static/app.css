@@ -664,6 +664,198 @@ body.mode-execute-flash #modeSelect {
   min-height: 0;
 }
 
+body.surface-work .view-workspace {
+  --panel-w: 420px;
+}
+
+/* ── Work rail (engineering stepper + plan) — uses existing tokens ── */
+.work-rail {
+  display: grid;
+  grid-template-columns: minmax(0, 1.2fr) minmax(220px, 0.8fr);
+  gap: 10px;
+  padding: 8px 14px 10px;
+  border-bottom: 1px solid var(--border);
+  background: rgba(252, 251, 248, 0.72);
+}
+
+.work-stepper {
+  list-style: none;
+  display: grid;
+  grid-template-columns: repeat(4, minmax(0, 1fr));
+  gap: 6px;
+  margin: 0;
+  padding: 0;
+}
+
+.work-step {
+  display: flex;
+  align-items: center;
+  justify-content: center;
+  gap: 6px;
+  padding: 8px 6px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--surface-2);
+  color: var(--muted);
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+}
+
+.work-step span {
+  display: inline-flex;
+  width: 1.15rem;
+  height: 1.15rem;
+  align-items: center;
+  justify-content: center;
+  border-radius: 999px;
+  background: var(--surface-3);
+  font-size: 0.65rem;
+}
+
+.work-step.is-done {
+  color: var(--ok);
+  border-color: rgba(23, 138, 75, 0.28);
+  background: rgba(23, 138, 75, 0.08);
+}
+.work-step.is-done span { background: rgba(23, 138, 75, 0.16); color: var(--ok); }
+
+.work-step.is-active {
+  color: var(--text);
+  border-color: rgba(52, 81, 178, 0.35);
+  background: rgba(52, 81, 178, 0.08);
+  box-shadow: 0 0 0 1px rgba(52, 81, 178, 0.12);
+}
+.work-step.is-active span {
+  background: var(--accent-2);
+  color: #fff;
+}
+
+.work-plan-card {
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  padding: 8px 10px;
+  min-width: 0;
+}
+
+.work-plan-head {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  align-items: baseline;
+  margin-bottom: 6px;
+  font-size: 0.78rem;
+}
+
+.work-plan-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 4px;
+  max-height: 4.8rem;
+  overflow: auto;
+  font-size: 0.74rem;
+}
+
+.work-plan-list li {
+  display: grid;
+  grid-template-columns: 0.9rem 1fr;
+  gap: 6px;
+  color: var(--muted);
+}
+.work-plan-list li.is-done { color: var(--ok); }
+.work-plan-list li.is-active { color: var(--text); font-weight: 600; }
+
+/* Sidebar local resources */
+.sidebar-resources {
+  margin: 0 10px 8px;
+  padding: 8px 10px;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+}
+
+.sidebar-resources-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.72rem;
+  margin-bottom: 6px;
+}
+.sidebar-resources-head span { color: var(--muted); }
+
+.resource-meter {
+  display: grid;
+  grid-template-columns: 2.2rem 1fr 3.2rem;
+  gap: 6px;
+  align-items: center;
+  font-size: 0.68rem;
+  color: var(--muted);
+  margin-top: 4px;
+}
+
+.resource-track {
+  height: 5px;
+  border-radius: 999px;
+  background: var(--surface-3);
+  border: 1px solid var(--border);
+  overflow: hidden;
+}
+.resource-track i {
+  display: block;
+  height: 100%;
+  width: 0%;
+  background: var(--accent-2);
+  transition: width 0.35s ease;
+}
+.resource-meter[data-res="ram"] .resource-track i { background: var(--ok); }
+.resource-meter[data-res="gpu"] .resource-track i { background: var(--warn); }
+.resource-meter em {
+  font-style: normal;
+  text-align: right;
+  color: var(--text);
+  font-variant-numeric: tabular-nums;
+}
+
+.project-changes {
+  border-bottom: 1px solid var(--border);
+  padding: 8px 10px;
+  background: var(--surface);
+  max-height: 7.5rem;
+  overflow: auto;
+}
+.project-changes-head {
+  display: flex;
+  justify-content: space-between;
+  font-size: 0.74rem;
+  margin-bottom: 4px;
+}
+.project-changes-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 3px;
+  font-size: 0.72rem;
+}
+.project-changes-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+}
+.project-changes-list .chg-add { color: var(--ok); font-weight: 600; }
+
+body.surface-work #workRail:not(.hidden) { display: grid; }
+body.surface-chat #workRail { display: none !important; }
+
+@media (max-width: 1100px) {
+  .work-rail { grid-template-columns: 1fr; }
+}
+
 .view-workspace {
   flex: 1;
   display: flex;

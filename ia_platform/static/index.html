@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=27" />
+  <link rel="stylesheet" href="/static/app.css?v=28" />
 </head>
 <body>
   <div class="app">
@@ -81,27 +81,48 @@
         </div>
       </div>
 
-      <div class="sidebar-bottom">
-        <div class="sidebar-tip" id="sidebarTip">
-          <strong>Como navegar</strong>
-          <p><b>Chat</b> conversa · <b>Work</b> constrói. No painel: <b>App</b> (preview/arquivos), <b>Agente</b> (ao vivo/relatório), <b>Visual</b> (comparação).</p>
-        </div>
-        <div class="sidebar-user" title="Forge · plataforma local">
-          <div class="user-avatar">F</div>
-          <div class="user-info">
-            <div class="user-name">Forge</div>
-            <div class="user-plan">Plataforma local</div>
+        <div class="sidebar-bottom">
+          <div class="sidebar-resources" id="sidebarResources" aria-label="Recursos locais">
+            <div class="sidebar-resources-head">
+              <strong>Forge local</strong>
+              <span id="sidebarResourceHint">Ollama</span>
+            </div>
+            <div class="resource-meter" data-res="cpu">
+              <span>CPU</span>
+              <div class="resource-track"><i id="resCpuFill"></i></div>
+              <em id="resCpuLabel">—</em>
+            </div>
+            <div class="resource-meter" data-res="ram">
+              <span>RAM</span>
+              <div class="resource-track"><i id="resRamFill"></i></div>
+              <em id="resRamLabel">—</em>
+            </div>
+            <div class="resource-meter" data-res="gpu">
+              <span>GPU</span>
+              <div class="resource-track"><i id="resGpuFill"></i></div>
+              <em id="resGpuLabel">—</em>
+            </div>
+          </div>
+          <div class="sidebar-tip" id="sidebarTip">
+            <strong>Como navegar</strong>
+            <p><b>Chat</b> conversa · <b>Work</b> constrói. Painel: <b>App</b> · <b>Agente</b> · <b>Visual</b>.</p>
+          </div>
+          <div class="sidebar-user" title="Forge · plataforma local">
+            <div class="user-avatar">F</div>
+            <div class="user-info">
+              <div class="user-name">Forge</div>
+              <div class="user-plan">Plataforma local</div>
+            </div>
+          </div>
+          <div class="sidebar-footer">
+            <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
+            <div class="sidebar-setup-pill hidden" id="sidebarSetupPill">
+              <span id="sidebarSetupLabel">Configurando...</span>
+              <span class="mini-bar"><span class="mini-bar-fill" id="sidebarSetupBar"></span></span>
+            </div>
+            <p class="model-hint hidden" id="modelHint"></p>
           </div>
         </div>
-        <div class="sidebar-footer">
-          <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
-          <div class="sidebar-setup-pill hidden" id="sidebarSetupPill">
-            <span id="sidebarSetupLabel">Configurando...</span>
-            <span class="mini-bar"><span class="mini-bar-fill" id="sidebarSetupBar"></span></span>
-          </div>
-          <p class="model-hint hidden" id="modelHint"></p>
-        </div>
-      </div>
     </aside>
     <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
@@ -193,6 +214,24 @@
             </details>
           </div>
         </header>
+
+        <div class="work-rail hidden" id="workRail" aria-label="Fluxo de execução">
+          <ol class="work-stepper" id="workStepper">
+            <li class="work-step" data-step="plan"><span>1</span>Planejar</li>
+            <li class="work-step" data-step="work"><span>2</span>Executar</li>
+            <li class="work-step" data-step="check"><span>3</span>Validar</li>
+            <li class="work-step" data-step="done"><span>4</span>Finalizar</li>
+          </ol>
+          <div class="work-plan-card" id="workPlanCard">
+            <div class="work-plan-head">
+              <strong>Plano atual</strong>
+              <span id="workPlanMeta" class="muted">Aguardando execução</span>
+            </div>
+            <ul class="work-plan-list" id="workPlanList">
+              <li class="muted">O plano aparece aqui quando o agente iniciar.</li>
+            </ul>
+          </div>
+        </div>
 
         <div class="workspace-body">
           <div class="chat-area">
@@ -294,6 +333,13 @@
                 </div>
               </div>
             </nav>
+            <div class="project-changes hidden" id="projectChanges">
+              <div class="project-changes-head">
+                <strong>Alterações</strong>
+                <span id="projectChangesMeta" class="muted"></span>
+              </div>
+              <ul class="project-changes-list" id="projectChangesList"></ul>
+            </div>
             <div class="panel-tabs hidden" id="panelTabs" aria-hidden="true"></div>
             <div class="panel-content hidden" id="panelLive">
               <div class="live-code-shell" id="liveCodeShell">
@@ -695,6 +741,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=27"></script>
+  <script src="/static/app.js?v=28"></script>
 </body>
 </html>

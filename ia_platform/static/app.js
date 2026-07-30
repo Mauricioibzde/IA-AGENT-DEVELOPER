@@ -179,6 +179,21 @@
     compareHistoryList: $("compareHistoryList"),
     compareRegionsMeta: $("compareRegionsMeta"),
     compareRegionsList: $("compareRegionsList"),
+    workRail: $("workRail"),
+    workStepper: $("workStepper"),
+    workPlanList: $("workPlanList"),
+    workPlanMeta: $("workPlanMeta"),
+    projectChanges: $("projectChanges"),
+    projectChangesList: $("projectChangesList"),
+    projectChangesMeta: $("projectChangesMeta"),
+    sidebarResources: $("sidebarResources"),
+    resCpuFill: $("resCpuFill"),
+    resRamFill: $("resRamFill"),
+    resGpuFill: $("resGpuFill"),
+    resCpuLabel: $("resCpuLabel"),
+    resRamLabel: $("resRamLabel"),
+    resGpuLabel: $("resGpuLabel"),
+    sidebarResourceHint: $("sidebarResourceHint"),
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
@@ -2159,6 +2174,7 @@
     els.btnSurfaceWork?.classList.toggle("active", state.surfaceMode === "work");
     els.btnSurfaceChat?.setAttribute("aria-selected", state.surfaceMode === "chat" ? "true" : "false");
     els.btnSurfaceWork?.setAttribute("aria-selected", state.surfaceMode === "work" ? "true" : "false");
+    syncWorkRailVisibility();
 
     if (els.modeSelect) {
       if (state.surfaceMode === "work" && els.modeSelect.value === "chat") {
@@ -2523,6 +2539,9 @@
     state.selectedRunId = null;
     state.lastReport = "";
     state.recentChangedFiles = [];
+    state.projectChangeMap = {};
+    if (els.projectChanges) els.projectChanges.classList.add("hidden");
+    if (els.projectChangesList) els.projectChangesList.innerHTML = "";
     state.searchMatches = null;
     state.previewMode = "static";
     state.devAutoRestarted = false;
@@ -3490,6 +3509,144 @@
     Object.assign(activity, patch);
     if (patch.stage || patch.detail) {
       addActivityEvent(activity, patch.stage || activity.stage, patch.detail || activity.detail);
+    }
+    syncWorkRail(activity);
+  }
+
+  const WORK_STEPS = ["plan", "work", "check", "done"];
+
+  function mapPhaseToWorkStep(phaseId) {
+    if (phaseId === "prepare" || phaseId === "plan" || phaseId === "think") return "plan";
+    if (phaseId === "work") return "work";
+    if (phaseId === "check") return "check";
+    return "done";
+  }
+
+  function syncWorkRailVisibility() {
+    if (!els.workRail) return;
+    const show = state.surfaceMode === "work" && !!state.current;
+    els.workRail.classList.toggle("hidden", !show);
+  }
+
+  function syncWorkRail(activity) {
+    if (!els.workStepper) return;
+    syncWorkRailVisibility();
+    const phase = activityPhaseMeta(activity || state.runActivity || {});
+    const step = mapPhaseToWorkStep(phase.phaseId);
+    const idx = WORK_STEPS.indexOf(step);
+    els.workStepper.querySelectorAll(".work-step").forEach((el) => {
+      const id = el.dataset.step;
+      const pos = WORK_STEPS.indexOf(id);
+      el.classList.remove("is-active", "is-done");
+      if (activity?.finished || phase.phaseId === "done") {
+        el.classList.add("is-done");
+      } else if (pos < idx) el.classList.add("is-done");
+      else if (pos === idx) el.classList.add("is-active");
+    });
+    if (els.workPlanMeta) {
+      els.workPlanMeta.textContent = activity?.finished
+        ? "Concluído"
+        : activity
+          ? phase.label
+          : "Aguardando execução";
+    }
+    if (activity?.planTasks && els.workPlanList) {
+      renderWorkPlan(activity.planTasks, activity);
+    }
+  }
+
+  function renderWorkPlan(tasks, activity) {
+    if (!els.workPlanList) return;
+    const list = Array.isArray(tasks) ? tasks : [];
+    if (!list.length) {
+      els.workPlanList.innerHTML = "<li class='muted'>Sem tarefas no plano.</li>";
+      return;
+    }
+    const currentId = activity?.currentTaskId || "";
+    els.workPlanList.innerHTML = list
+      .slice(0, 6)
+      .map((t) => {
+        const id = t.id || "";
+        const title = t.title || t.id || "Tarefa";
+        let cls = "";
+        let mark = "○";
+        if (activity?.finished) {
+          cls = "is-done";
+          mark = "✓";
+        } else if (id && id === currentId) {
+          cls = "is-active";
+          mark = "●";
+        } else if (t.status === "done" || t.status === "completed") {
+          cls = "is-done";
+          mark = "✓";
+        }
+        return `<li class="${cls}"><span>${mark}</span><span>${escapeHtml(title)}</span></li>`;
+      })
+      .join("");
+  }
+
+  function updateProjectChanges(paths, kind = "changed") {
+    if (!els.projectChanges || !els.projectChangesList) return;
+    if (!state.projectChangeMap) state.projectChangeMap = {};
+    (paths || []).forEach((p) => {
+      const key = String(p || "").replace(/\\/g, "/");
+      if (!key) return;
+      state.projectChangeMap[key] = kind;
+    });
+    const entries = Object.entries(state.projectChangeMap).slice(-12);
+    if (!entries.length) {
+      els.projectChanges.classList.add("hidden");
+      return;
+    }
+    els.projectChanges.classList.remove("hidden");
+    if (els.projectChangesMeta) els.projectChangesMeta.textContent = `${entries.length} arquivo(s)`;
+    els.projectChangesList.innerHTML = entries
+      .map(([path]) => {
+        const name = path.split("/").pop() || path;
+        return `<li><span>${escapeHtml(name)}</span><span class="chg-add">+</span></li>`;
+      })
+      .join("");
+  }
+
+  function updateSidebarResources(payload) {
+    if (!els.sidebarResources) return;
+    const hw = payload?.hardware || payload?.detected || payload || {};
+    const ramTotal = Number(hw.ram_total_gb ?? 0);
+    const ramAvail = Number(hw.ram_available_gb ?? ramTotal);
+    const ramUsed = ramTotal > 0 ? Math.max(0, ramTotal - ramAvail) : 0;
+    const ramPct = ramTotal > 0 ? (ramUsed / ramTotal) * 100 : 0;
+    const vramTotal = Number(hw.vram_total_gb ?? 0);
+    const vramFree = Number(hw.vram_free_gb ?? vramTotal);
+    const vramUsed = vramTotal > 0 ? Math.max(0, vramTotal - vramFree) : 0;
+    const vramPct = vramTotal > 0 ? (vramUsed / vramTotal) * 100 : 0;
+    const cores = Number(hw.cpu_cores ?? 0);
+
+    if (els.resCpuFill) els.resCpuFill.style.width = cores ? "100%" : "0%";
+    if (els.resCpuLabel) els.resCpuLabel.textContent = cores ? `${cores}c` : "—";
+    if (els.resRamFill) els.resRamFill.style.width = `${Math.min(100, ramPct)}%`;
+    if (els.resRamLabel) {
+      els.resRamLabel.textContent = ramTotal
+        ? `${ramUsed.toFixed(1)}/${ramTotal.toFixed(1)}`
+        : "—";
+    }
+    if (els.resGpuFill) els.resGpuFill.style.width = `${Math.min(100, vramPct)}%`;
+    if (els.resGpuLabel) {
+      els.resGpuLabel.textContent = vramTotal
+        ? `${vramUsed.toFixed(1)}/${vramTotal.toFixed(1)}`
+        : "—";
+    }
+    if (els.sidebarResourceHint) {
+      const gpuName = Array.isArray(hw.gpus) && hw.gpus[0]?.name ? hw.gpus[0].name : "";
+      els.sidebarResourceHint.textContent = gpuName || hw.hostname || hw.tier || "Ollama";
+    }
+  }
+
+  async function refreshSidebarResources() {
+    try {
+      const data = await api("/api/hardware");
+      updateSidebarResources(data);
+    } catch {
+      /* optional widget */
     }
   }
 
@@ -4484,6 +4641,7 @@
           detail: "O agente terminou de decidir a estratégia e vai executar as tarefas uma por uma.",
           planSummary: ev.summary || "Plano criado",
           taskCount: ev.task_count || null,
+          planTasks: Array.isArray(ev.tasks) ? ev.tasks : activity.planTasks || [],
         });
         setWorkingState(
           agentEl,
@@ -4498,6 +4656,7 @@
           stage: "Executando tarefa",
           detail: `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id || "tarefa"}`,
           step: ev.step || activity.step,
+          currentTaskId: ev.task_id || activity.currentTaskId,
           maxSteps: ev.max_steps || activity.maxSteps,
           task: ev.task_title || ev.task_id || "",
           tools: [],
@@ -4662,6 +4821,7 @@
   function markChangedFiles(paths) {
     const clean = (paths || []).map((p) => String(p || "").replace(/\\/g, "/")).filter(Boolean);
     state.recentChangedFiles = Array.from(new Set([...(state.recentChangedFiles || []), ...clean])).slice(-24);
+    updateProjectChanges(clean, "changed");
     clean.forEach((path) => {
       const parts = path.split("/");
       for (let i = 1; i < parts.length; i += 1) {
@@ -6674,6 +6834,9 @@
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);
+    refreshSidebarResources();
+    setInterval(refreshSidebarResources, 15000);
+    syncWorkRailVisibility();
     checkHealth().then(async () => {
       try {
         const status = await api("/api/setup/status");
