@@ -88,12 +88,16 @@ else {
 }
 
 Write-Step -Message ("Updating branch " + $Branch)
+# Works even for --single-branch clones that do not track other remotes yet.
+git remote set-branches --add origin $Branch 2>$null
 git fetch origin $Branch
 if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
-git checkout $Branch
+git checkout -B $Branch FETCH_HEAD
 if ($LASTEXITCODE -ne 0) { throw "git checkout failed" }
-git pull origin $Branch
-if ($LASTEXITCODE -ne 0) { throw "git pull failed" }
+git reset --hard FETCH_HEAD
+if ($LASTEXITCODE -ne 0) { throw "git reset failed" }
+git branch --set-upstream-to=("origin/" + $Branch) $Branch 2>$null
+git pull origin $Branch 2>$null
 
 Write-Step -Message "Setup Python / Ollama"
 & (Join-Path $Root "scripts\setup.ps1") -Model $Model -SkipSmoke -SkipTests

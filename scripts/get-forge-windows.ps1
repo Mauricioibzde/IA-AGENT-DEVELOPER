@@ -37,13 +37,15 @@ if (-not $repoReady) {
     if ($LASTEXITCODE -ne 0) { throw "git clone failed" }
 }
 else {
+    # Works even for --single-branch clones that do not track other remotes yet.
     Write-Host "Repository already exists - syncing branch first..." -ForegroundColor Yellow
     Set-Location $TargetDir
+    git remote set-branches --add origin $Branch 2>$null
     git fetch origin $Branch
     if ($LASTEXITCODE -ne 0) { throw "git fetch failed" }
-    git checkout $Branch
+    git checkout -B $Branch FETCH_HEAD
     if ($LASTEXITCODE -ne 0) { throw "git checkout failed" }
-    git reset --hard ("origin/" + $Branch)
+    git reset --hard FETCH_HEAD
     if ($LASTEXITCODE -ne 0) { throw "git reset failed" }
 }
 
