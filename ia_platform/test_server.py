@@ -388,6 +388,16 @@ def test_hardware_endpoint(platform_url: str) -> None:
         data = json.loads(resp.read().decode())
     assert data["hardware"]["ram_total_gb"] > 0
     assert data["hardware"]["tier"]
+    assert data["detected"]["ram_total_gb"] > 0
+    assert "cpu_cores" in data["detected"]
+
+
+def test_hardware_alias_endpoint(platform_url: str) -> None:
+    with urllib.request.urlopen(f"{platform_url}/api/hardware?refresh=1", timeout=8) as resp:
+        data = json.loads(resp.read().decode())
+    assert data["detected"]["ram_total_gb"] > 0
+    assert data["detected"]["cpu_cores"] >= 1
+    assert data["detected"].get("cpu_percent") is None or 0 <= float(data["detected"]["cpu_percent"]) <= 100
 
 
 def test_model_recommendations_endpoint(platform_url: str, monkeypatch: pytest.MonkeyPatch) -> None:

@@ -250,7 +250,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_health()
         if path == "/api/setup/status":
             return self._handle_setup_status()
-        if path == "/api/system/hardware":
+        if path == "/api/system/hardware" or path == "/api/hardware":
             return self._handle_hardware(qs)
         if path == "/api/settings":
             return self._handle_get_settings()
