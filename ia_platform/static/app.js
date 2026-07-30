@@ -82,6 +82,7 @@
     sidebarBackdrop: $("sidebarBackdrop"),
     btnToggleSidebar: $("btnToggleSidebar"),
     btnCollapseSidebar: $("btnCollapseSidebar"),
+    btnMinimizePanels: $("btnMinimizePanels"),
     btnSidebarSearch: $("btnSidebarSearch"),
     fileSearchInput: $("fileSearchInput"),
     runHistoryList: $("runHistoryList"),
@@ -2229,6 +2230,7 @@
     document.querySelectorAll(".quick-card--work").forEach((el) => {
       el.classList.toggle("hidden", state.surfaceMode === "chat");
     });
+    syncSidebarNavState();
     syncComposerProjectLabel();
     restoreLayoutSizes();
     try {
@@ -3413,6 +3415,12 @@
     const mobile = isMobileLayout();
     els.btnToggleSidebar?.classList.toggle("hidden", !mobile);
     if (!mobile) closeSidebar();
+  }
+
+  function syncSidebarNavState() {
+    const workActive = state.surfaceMode === "work";
+    els.btnNewProject?.classList.toggle("is-active", workActive);
+    els.btnNewChat?.classList.toggle("is-active", !workActive);
   }
 
   function runStatusClass(status) {
@@ -7203,6 +7211,15 @@
   els.btnCollapseSidebar?.addEventListener("click", () => {
     if (isMobileLayout()) closeSidebar();
     else toggleSidebarCollapsed();
+  });
+  els.btnMinimizePanels?.addEventListener("click", () => {
+    if (!isMobileLayout()) {
+      setSidebarCollapsed(true);
+      setPanelCollapsed(true);
+      return;
+    }
+    closeSidebar();
+    closeMobilePanel();
   });
   els.sidebar?.querySelector(".logo")?.addEventListener("click", () => {
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
