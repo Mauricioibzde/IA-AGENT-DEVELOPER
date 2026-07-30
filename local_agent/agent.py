@@ -23,11 +23,15 @@ from .reflector import Reflector
 from .tools import build_default_registry
 from .validator import Validator
 from .web_scaffold import (
+    looks_like_calculator_goal,
     looks_like_fastapi_goal,
+    looks_like_mini_app_goal,
     looks_like_offline_scaffold_goal,
     looks_like_plain_web_goal,
     looks_like_react_goal,
+    primary_goal,
     validate_plain_web,
+    workspace_satisfies_calculator,
     write_fastapi_app,
     write_plain_web_app,
     write_react_app,
@@ -124,14 +128,67 @@ class CodingAgent:
         self.memory.update_project_summary(self.index.summary(limit=20)[:1500])
         self.memory.add_event("user_request", goal)
 
+        intent = primary_goal(goal) or goal
+
+        # Calculator already present — don't burn the model budget re-scaffolding React.
+        if (
+            not self.config.plan_only
+            and looks_like_calculator_goal(intent)
+            and workspace_satisfies_calculator(self.config.workspace)
+        ):
+            self._event("planning", message="Calculadora já presente no projeto")
+            self.completed_tasks.append("Calculadora já disponível")
+            return AgentReport(
+                status=FinalStatus.SUCCESS,
+                goal=goal,
+                summary=(
+                    "A **Calculadora** já está no projeto (`index.html`, `style.css`, `app.js`). "
+                    "Abra o Preview no grupo App para usar. "
+                    "Se quiser mudanças (tema, histórico, regra de 3), peça no Work."
+                ),
+                completed_tasks=self.completed_tasks,
+                analyzed_files=["index.html", "style.css", "app.js"],
+                created_files=[],
+                modified_files=[],
+                next_steps=["Abrir Preview", "Testar operações", "Pedir melhorias se quiser"],
+            )
+
         # If Ollama is offline, still deliver tiny HTML/CSS/JS apps deterministically.
         ollama_ok = False
         try:
             ollama_ok = bool(self.client.check_available(timeout=2))
         except Exception:  # noqa: BLE001
             ollama_ok = False
-        if not ollama_ok and looks_like_offline_scaffold_goal(goal) and not self.config.plan_only:
+        if not ollama_ok and looks_like_offline_scaffold_goal(intent) and not self.config.plan_only:
             return self._deterministic_scaffold(goal, reason="Ollama offline — scaffold aplicado")
+
+        # Mini-app *create*: prefer deterministic HTML scaffold over LLM thrashing (budget 40).
+        # Do not short-circuit "melhorar/editar" on an existing app — that still needs the model.
+        wants_create = bool(
+            re.search(
+                r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|quero criar|vamos criar)\b",
+                intent.lower(),
+            )
+        )
+        if (
+            not self.config.plan_only
+            and not self.config.dry_run
+            and wants_create
+            and looks_like_mini_app_goal(intent)
+            and looks_like_plain_web_goal(intent)
+            and not (self.config.workspace / "package.json").is_file()
+            and (
+                not (self.config.workspace / "index.html").is_file()
+                or (
+                    looks_like_calculator_goal(intent)
+                    and not workspace_satisfies_calculator(self.config.workspace)
+                )
+            )
+        ):
+            return self._deterministic_scaffold(
+                goal,
+                reason="Mini-app detectada — scaffold HTML/CSS/JS aplicado (evita estourar orçamento do modelo)",
+            )
 
         # Establish baseline (what was already failing before we changed anything).
         baseline: List[ValidationResult] = []
@@ -279,8 +336,8 @@ class CodingAgent:
                 self._event("error", message=str(exc))
                 task.status = TaskStatus.FAILED
                 consecutive_failures += 1
-                # Create intents: scaffold immediately so OOM/stream death still delivers files.
-                if looks_like_offline_scaffold_goal(goal) and not self.executor.created_files:
+                # Create intents: scaffold immediately so OOM/budget/stream death still delivers files.
+                if looks_like_offline_scaffold_goal(intent) and not self._has_meaningful_created_files():
                     return self._deterministic_scaffold(
                         goal,
                         reason="Modelo falhou — scaffold aplicado para entregar o app",
@@ -301,6 +358,12 @@ class CodingAgent:
                     [{"error": "no_valid_tool_calls", "raw": model_text[:800]}],
                     ensure_ascii=False,
                 )
+                no_tool_fails = sum(1 for e in self.errors if "no valid tool calls" in e)
+                if looks_like_offline_scaffold_goal(intent) and no_tool_fails >= 2 and not self._has_meaningful_created_files():
+                    return self._deterministic_scaffold(
+                        goal,
+                        reason="Modelo sem tool calls válidas — scaffold aplicado para entregar o app",
+                    )
                 if task.attempts >= task.max_attempts:
                     task.status = TaskStatus.FAILED
                 else:
@@ -574,21 +637,65 @@ class CodingAgent:
                 break
 
         # Safety net: create intents must still leave files when the model never wrote any.
+        # Empty dirs (e.g. bare `src/`) do not count as a deliverable.
         if (
             not self.config.plan_only
             and not self.config.dry_run
-            and looks_like_offline_scaffold_goal(goal)
-            and not self.executor.created_files
-            and not (self.config.workspace / "index.html").is_file()
+            and looks_like_offline_scaffold_goal(intent)
+            and not self._has_meaningful_created_files()
+            and (
+                not (self.config.workspace / "index.html").is_file()
+                or (
+                    looks_like_calculator_goal(intent)
+                    and not workspace_satisfies_calculator(self.config.workspace)
+                )
+            )
             and not (self.config.workspace / "package.json").is_file()
             and not (self.config.workspace / "main.py").is_file()
         ):
             return self._deterministic_scaffold(
                 goal,
-                reason="Execução sem arquivos — scaffold aplicado para entregar o app",
+                reason="Execução sem arquivos úteis — scaffold aplicado para entregar o app",
+            )
+
+        # Create goal already satisfied by prior files — don't mark FAILED after empty thrashing.
+        if (
+            looks_like_calculator_goal(intent)
+            and workspace_satisfies_calculator(self.config.workspace)
+            and not self._has_meaningful_created_files()
+        ):
+            self.completed_tasks.append("Calculadora já disponível")
+            return AgentReport(
+                status=FinalStatus.SUCCESS,
+                goal=goal,
+                summary=(
+                    "A execução do modelo não gerou arquivos novos, mas a **Calculadora** "
+                    "já está pronta em `index.html`. Abra o Preview para usar."
+                ),
+                completed_tasks=self.completed_tasks,
+                analyzed_files=["index.html", "style.css", "app.js"],
+                created_files=list(dict.fromkeys(self.executor.created_files)),
+                modified_files=list(dict.fromkeys(self.executor.modified_files)),
+                errors=self.errors[-8:],
+                next_steps=["Abrir Preview", "Testar operações"],
             )
 
         return self._build_report(goal, plan, final_answer)
+
+    def _has_meaningful_created_files(self) -> bool:
+        """True if this run created real files (not only empty directories)."""
+        root = self.config.workspace
+        for rel in self.executor.created_files:
+            path = root / str(rel)
+            if path.is_file() and path.stat().st_size > 0:
+                return True
+            if path.is_dir():
+                try:
+                    if any(p.is_file() and p.stat().st_size > 0 for p in path.rglob("*")):
+                        return True
+                except OSError:
+                    continue
+        return False
 
     def _repair_tool_calls(self, model_text: str) -> str:
         try:
