@@ -3386,3 +3386,103 @@ body.surface-chat #workHomeActions { display: none !important; }
 .composer-tool:hover { color: var(--text); }
 .composer-tool.muted { cursor: default; }
 body.surface-chat .composer-toolbar #btnPickProject { display: none; }
+
+/* Visual Engine — Comparação */
+.compare-toolbar {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.45rem;
+  align-items: center;
+  padding: 0.65rem 0.75rem 0.35rem;
+  border-bottom: 1px solid var(--border);
+}
+.compare-status {
+  margin: 0.55rem 0.85rem 0.35rem;
+  font-size: 0.82rem;
+  color: var(--muted);
+  line-height: 1.4;
+}
+.compare-label {
+  display: block;
+  margin: 0.45rem 0.85rem 0.2rem;
+  font-size: 0.72rem;
+  text-transform: uppercase;
+  letter-spacing: 0.06em;
+  color: var(--muted);
+}
+.compare-input {
+  width: calc(100% - 1.7rem);
+  margin: 0 0.85rem 0.35rem;
+  padding: 0.55rem 0.7rem;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  background: var(--surface);
+  color: var(--text);
+  font: inherit;
+}
+.compare-score {
+  margin: 0.5rem 0.85rem;
+  padding: 0.55rem 0.7rem;
+  border-radius: var(--radius-sm);
+  background: var(--surface-2);
+  font-size: 0.9rem;
+}
+.compare-gallery {
+  display: grid;
+  grid-template-columns: 1fr;
+  gap: 0.65rem;
+  padding: 0.5rem 0.85rem 0.85rem;
+}
+.compare-fig {
+  margin: 0;
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  overflow: hidden;
+  background: #111;
+}
+.compare-fig figcaption {
+  padding: 0.35rem 0.55rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  background: var(--surface);
+  border-bottom: 1px solid var(--border);
+}
+.compare-fig img {
+  display: block;
+  width: 100%;
+  min-height: 72px;
+  object-fit: contain;
+  background: repeating-conic-gradient(#222 0% 25%, #1a1a1a 0% 50%) 50% / 16px 16px;
+}
+.compare-history {
+  padding: 0.35rem 0.85rem 1rem;
+  border-top: 1px solid var(--border);
+}
+.compare-history h4 {
+  font-size: 0.85rem;
+  margin-bottom: 0.4rem;
+}
+.compare-history-list {
+  list-style: none;
+  display: flex;
+  flex-direction: column;
+  gap: 0.3rem;
+}
+.compare-hist-btn {
+  width: 100%;
+  text-align: left;
+  border: 1px solid var(--border);
+  background: var(--surface);
+  border-radius: 8px;
+  padding: 0.45rem 0.55rem;
+  font: inherit;
+  font-size: 0.78rem;
+  color: var(--text);
+  cursor: pointer;
+}
+.compare-hist-btn span {
+  font-weight: 650;
+  margin-right: 0.35rem;
+}
+.compare-hist-btn:hover { border-color: var(--accent-2); }
+.compare-history-list .muted { color: var(--muted); font-size: 0.8rem; }

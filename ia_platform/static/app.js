@@ -136,6 +136,18 @@
     btnDevClear: $("btnDevClear"),
     btnDevRestart: $("btnDevRestart"),
     devStatus: $("devStatus"),
+    panelCompare: $("panelCompare"),
+    compareViewport: $("compareViewport"),
+    btnCompareNow: $("btnCompareNow"),
+    btnCapturePreview: $("btnCapturePreview"),
+    compareStatus: $("compareStatus"),
+    compareTargetUrl: $("compareTargetUrl"),
+    compareMockupPath: $("compareMockupPath"),
+    compareScore: $("compareScore"),
+    compareRefImg: $("compareRefImg"),
+    compareActImg: $("compareActImg"),
+    compareDiffImg: $("compareDiffImg"),
+    compareHistoryList: $("compareHistoryList"),
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
@@ -5516,12 +5528,141 @@
     $("panelLive")?.classList.toggle("hidden", name !== "live");
     $("panelFiles").classList.toggle("hidden", name !== "files");
     $("panelPreview").classList.toggle("hidden", name !== "preview");
+    $("panelCompare")?.classList.toggle("hidden", name !== "compare");
     $("panelReport").classList.toggle("hidden", name !== "report");
     syncMobileTabs(name);
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
     if (name === "preview") updatePreview();
     else stopPreviewPolling();
+    if (name === "compare") refreshComparePanel();
+  }
+
+  function parseCompareViewport() {
+    const raw = els.compareViewport?.value || "1366x768";
+    const [w, h] = raw.split("x").map((n) => parseInt(n, 10));
+    return { width: w || 1366, height: h || 768, deviceScaleFactor: 1 };
+  }
+
+  function artifactUrl(comparisonId, file) {
+    if (!state.current?.id || !comparisonId) return "";
+    return `/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons/${encodeURIComponent(comparisonId)}/${encodeURIComponent(file)}?t=${Date.now()}`;
+  }
+
+  function renderCompareReport(report) {
+    if (!report) return;
+    const pct = report.similarity == null ? "—" : `${(Number(report.similarity) * 100).toFixed(1)}%`;
+    if (els.compareScore) {
+      els.compareScore.classList.remove("hidden");
+      els.compareScore.innerHTML = `<strong>${escapeHtml(pct)}</strong> similar · ${escapeHtml(report.mode || "")} · ${escapeHtml(report.status || "")}`;
+    }
+    const id = report.comparisonId || report.comparison_id;
+    if (els.compareRefImg) els.compareRefImg.src = artifactUrl(id, "reference.png");
+    if (els.compareActImg) els.compareActImg.src = artifactUrl(id, "actual.png");
+    if (els.compareDiffImg) els.compareDiffImg.src = artifactUrl(id, "diff.png");
+    if (els.compareStatus) {
+      const warns = (report.warnings || []).slice(0, 2).join(" · ");
+      els.compareStatus.textContent = warns || `Comparação ${id} pronta.`;
+    }
+  }
+
+  async function refreshComparePanel() {
+    if (!state.current?.id) {
+      if (els.compareStatus) els.compareStatus.textContent = "Abra um projeto para comparar.";
+      return;
+    }
+    try {
+      const st = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/status`);
+      if (els.compareStatus) {
+        els.compareStatus.textContent = st.ok
+          ? `Visual Engine pronto${st.bridge?.chrome ? " · Chrome detectado" : ""}.`
+          : st.error || "Visual Engine indisponível (Node/Chrome).";
+      }
+      const hist = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons`);
+      const items = hist.comparisons || [];
+      if (els.compareHistoryList) {
+        els.compareHistoryList.innerHTML = items.length
+          ? items
+              .slice(0, 12)
+              .map((item) => {
+                const sim =
+                  item.similarity == null ? "—" : `${(Number(item.similarity) * 100).toFixed(1)}%`;
+                const id = item.comparisonId || item.id;
+                return `<li><button type="button" class="compare-hist-btn" data-id="${escapeHtml(id)}"><span>${escapeHtml(sim)}</span> ${escapeHtml(item.mode || "")} · ${escapeHtml(id)}</button></li>`;
+              })
+              .join("")
+          : "<li class='muted'>Nenhuma comparação ainda.</li>";
+      }
+      if (items[0]) renderCompareReport(items[0]);
+    } catch (e) {
+      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha ao carregar Visual Engine.";
+    }
+  }
+
+  async function runCapturePreview() {
+    if (!state.current?.id) return;
+    if (els.compareStatus) els.compareStatus.textContent = "Capturando preview…";
+    els.btnCapturePreview && (els.btnCapturePreview.disabled = true);
+    try {
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/capture`, {
+        method: "POST",
+        body: JSON.stringify({
+          preview: true,
+          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+          viewport: parseCompareViewport(),
+        }),
+      });
+      renderCompareReport(data.report);
+      await refreshComparePanel();
+      showToast("Screenshot do preview capturado.", "ok");
+    } catch (e) {
+      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha na captura";
+      showToast(e.message || "Falha na captura", "err");
+    } finally {
+      if (els.btnCapturePreview) els.btnCapturePreview.disabled = false;
+    }
+  }
+
+  async function runCompareNow() {
+    if (!state.current?.id) return;
+    const mockup = (els.compareMockupPath?.value || "").trim();
+    const targetUrl = (els.compareTargetUrl?.value || "").trim();
+    if (!mockup && !targetUrl) {
+      showToast("Informe uma URL alvo ou um caminho de mockup.", "info");
+      return;
+    }
+    if (els.compareStatus) els.compareStatus.textContent = "Comparando…";
+    els.btnCompareNow && (els.btnCompareNow.disabled = true);
+    try {
+      let body;
+      if (mockup) {
+        body = {
+          mockup,
+          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+          viewport: parseCompareViewport(),
+          options: { threshold: 0.1 },
+        };
+      } else {
+        body = {
+          preview_vs_url: targetUrl,
+          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+          viewport: parseCompareViewport(),
+          options: { threshold: 0.1 },
+        };
+      }
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      renderCompareReport(data.report);
+      await refreshComparePanel();
+      showToast("Comparação concluída.", "ok");
+    } catch (e) {
+      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha na comparação";
+      showToast(e.message || "Falha na comparação", "err");
+    } finally {
+      if (els.btnCompareNow) els.btnCompareNow.disabled = false;
+    }
   }
 
   // ── Modal ──
@@ -5820,6 +5961,20 @@
     if (e.target === els.deployModal) closeDeployModal();
   });
 
+  els.btnCompareNow?.addEventListener("click", runCompareNow);
+  els.btnCapturePreview?.addEventListener("click", runCapturePreview);
+  els.compareHistoryList?.addEventListener("click", async (e) => {
+    const btn = e.target.closest(".compare-hist-btn");
+    if (!btn?.dataset.id || !state.current?.id) return;
+    try {
+      const data = await api(
+        `/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons/${encodeURIComponent(btn.dataset.id)}`
+      );
+      renderCompareReport(data.comparison);
+    } catch (err) {
+      showToast(err.message || "Não foi possível abrir a comparação", "err");
+    }
+  });
   els.btnDevStart.addEventListener("click", startDevServer);
   els.btnDevStop.addEventListener("click", stopDevServer);
   els.btnDevClear?.addEventListener("click", clearDevError);

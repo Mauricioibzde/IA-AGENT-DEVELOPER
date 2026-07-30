@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=19" />
+  <link rel="stylesheet" href="/static/app.css?v=20" />
 </head>
 <body>
   <div class="app">
@@ -269,6 +269,7 @@
               <div class="panel-tab" data-tab="live">Ao vivo</div>
               <div class="panel-tab" data-tab="files">Arquivos</div>
               <div class="panel-tab active" data-tab="preview">Preview</div>
+              <div class="panel-tab" data-tab="compare">Comparação</div>
               <div class="panel-tab" data-tab="report">Relatório</div>
             </div>
             <div class="panel-content hidden" id="panelLive">
@@ -330,6 +331,42 @@
                 <button type="button" class="device-btn" data-device="mobile" title="Mobile">Mob</button>
               </div>
             </div>
+            <div class="panel-content hidden" id="panelCompare">
+              <div class="compare-toolbar">
+                <select id="compareViewport" class="control-select" title="Viewport">
+                  <option value="1366x768">Desktop 1366</option>
+                  <option value="1920x1080">Desktop Full HD</option>
+                  <option value="768x1024">Tablet</option>
+                  <option value="393x852">Mobile</option>
+                </select>
+                <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar agora</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar preview</button>
+              </div>
+              <p class="compare-status" id="compareStatus">Visual Engine — compare o preview com uma URL ou mockup.</p>
+              <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
+              <input id="compareTargetUrl" type="url" placeholder="https://… ou deixe vazio para só capturar" class="compare-input" />
+              <label class="compare-label" for="compareMockupPath">Mockup no projeto (opcional)</label>
+              <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input" />
+              <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-gallery" id="compareGallery">
+                <figure class="compare-fig">
+                  <figcaption>Referência</figcaption>
+                  <img id="compareRefImg" alt="Referência" />
+                </figure>
+                <figure class="compare-fig">
+                  <figcaption>Atual</figcaption>
+                  <img id="compareActImg" alt="Atual" />
+                </figure>
+                <figure class="compare-fig">
+                  <figcaption>Diff</figcaption>
+                  <img id="compareDiffImg" alt="Diff" />
+                </figure>
+              </div>
+              <div class="compare-history">
+                <h4>Histórico visual</h4>
+                <ul class="compare-history-list" id="compareHistoryList"></ul>
+              </div>
+            </div>
             <div class="panel-content hidden" id="panelReport">
               <div class="run-history" id="runHistory">
                 <h4>Histórico de execuções</h4>
@@ -343,6 +380,7 @@
           <button type="button" class="mobile-tab" data-tab="live">Ao vivo</button>
           <button type="button" class="mobile-tab" data-tab="files">Arquivos</button>
           <button type="button" class="mobile-tab active" data-tab="preview">Preview</button>
+          <button type="button" class="mobile-tab" data-tab="compare">Comp.</button>
           <button type="button" class="mobile-tab" data-tab="report">Relatório</button>
         </nav>
         <div class="mobile-backdrop hidden" id="mobileBackdrop"></div>
@@ -566,6 +604,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=19"></script>
+  <script src="/static/app.js?v=20"></script>
 </body>
 </html>

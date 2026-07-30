@@ -1,6 +1,7 @@
 # Migração: Puppeteer Compare → Visual Engine (Forge)
 
-**Status:** Fase 0 concluída · Fase 1 em andamento  
+**Status:** Fase 0–2 concluídas · Fase 3 a seguir  
+
 **Branch:** `feature/visual-engine-integration`  
 **Fonte:** https://github.com/Mauricioibzde/puppeteer-compare (branch `master`)  
 **Destino:** `Mauricioibzde/IA-AGENT-DEVELOPER` (Forge / IA local)

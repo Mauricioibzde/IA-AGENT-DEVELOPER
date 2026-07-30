@@ -49,6 +49,7 @@ from ia_platform.project_templates import PROJECT_TEMPLATES, get_template_files
 from ia_platform.run_history import load_runs, record_run
 from ia_platform.run_manager import run_manager
 from ia_platform.user_settings import load_settings, save_settings, settings_public
+from ia_platform.visual_engine import api as visual_api
 
 STATIC = ROOT / "static"
 PROJECTS_ROOT = ROOT.parent / "projects"
@@ -221,9 +222,24 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def do_OPTIONS(self) -> None:
         self.send_response(204)
         self.send_header("Access-Control-Allow-Origin", "*")
-        self.send_header("Access-Control-Allow-Methods", "GET, POST, OPTIONS")
+        self.send_header("Access-Control-Allow-Methods", "GET, POST, DELETE, OPTIONS")
         self.send_header("Access-Control-Allow-Headers", "Content-Type")
         self.end_headers()
+
+    def _forge_port(self) -> int:
+        try:
+            return int(self.server.server_address[1])  # type: ignore[attr-defined]
+        except Exception:  # noqa: BLE001
+            return 8787
+
+    def _visual_engine(self, project_id: str):
+        base = _project_path(project_id)
+        if not base.is_dir():
+            raise FileNotFoundError("project not found")
+        return visual_api.engine_for(base, project_id, forge_port=self._forge_port())
+
+    def _host_header(self) -> str:
+        return self.headers.get("Host") or f"127.0.0.1:{self._forge_port()}"
 
     def do_GET(self) -> None:
         parsed = urlparse(self.path)
@@ -278,6 +294,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_preview_revision(project_id)
         if project_id and sub == "search":
             return self._handle_project_search(project_id, qs)
+        if project_id and sub == "visual/status":
+            return self._handle_visual_status(project_id)
+        if project_id and sub == "visual/comparisons":
+            return self._handle_visual_list(project_id)
+        if project_id and sub.startswith("visual/comparisons/"):
+            rest = sub[len("visual/comparisons/") :]
+            parts = [p for p in rest.split("/") if p]
+            if len(parts) == 1:
+                return self._handle_visual_get(project_id, parts[0])
+            if len(parts) == 2:
+                return self._handle_visual_artifact(project_id, parts[0], parts[1])
         if path.startswith("/api/runs/") and path.endswith("/events"):
             run_id = path.split("/")[3]
             after = int(qs.get("after", ["0"])[0] or 0)
@@ -338,10 +365,26 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_write_file(project_id)
         if project_id and sub == "attachments":
             return self._handle_upload_attachment(project_id)
+        if project_id and sub == "visual/capture":
+            return self._handle_visual_capture(project_id)
+        if project_id and sub == "visual/compare":
+            return self._handle_visual_compare(project_id)
+        if project_id and sub.startswith("visual/comparisons/") and sub.endswith("/delete"):
+            cid = sub[len("visual/comparisons/") : -len("/delete")]
+            return self._handle_visual_delete(project_id, cid)
         if project_id and sub.startswith("runs/") and sub.endswith("/undo"):
             parts = sub.split("/")
             if len(parts) == 3:
                 return self._handle_undo_run(project_id, parts[1])
+        self._send_json(404, {"error": "not found"})
+
+    def do_DELETE(self) -> None:
+        path = urlparse(self.path).path
+        project_id, sub = _parse_project_route(path)
+        if project_id and sub and sub.startswith("visual/comparisons/"):
+            cid = sub[len("visual/comparisons/") :].strip("/")
+            if cid and "/" not in cid:
+                return self._handle_visual_delete(project_id, cid)
         self._send_json(404, {"error": "not found"})
 
     def _ollama_host(self) -> str:
@@ -1185,6 +1228,88 @@ class PlatformHandler(BaseHTTPRequestHandler):
                 ],
             },
         )
+
+    def _handle_visual_status(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_status(engine)
+        return self._send_json(code, {"project": project_id, **payload})
+
+    def _handle_visual_list(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_list(engine)
+        return self._send_json(code, {"project": project_id, **payload})
+
+    def _handle_visual_get(self, project_id: str, comparison_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_get(engine, comparison_id)
+        return self._send_json(code, payload)
+
+    def _handle_visual_delete(self, project_id: str, comparison_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_delete(engine, comparison_id)
+        return self._send_json(code, payload)
+
+    def _handle_visual_capture(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_capture(engine, data, host_header=self._host_header())
+        return self._send_json(code, payload)
+
+    def _handle_visual_compare(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_compare(engine, data, host_header=self._host_header())
+        return self._send_json(code, payload)
+
+    def _handle_visual_artifact(self, project_id: str, comparison_id: str, filename: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        path = visual_api.resolve_artifact_file(engine, comparison_id, filename)
+        if not path:
+            return self._send_json(404, {"error": "artifact not found"})
+        content = path.read_bytes()
+        ctype = visual_api.guess_content_type(path)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.send_header("Access-Control-Allow-Origin", "*")
+        self.end_headers()
+        self.wfile.write(content)
 
     def _handle_dev_status(self, project_id: str) -> None:
         try:

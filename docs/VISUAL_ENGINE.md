@@ -90,6 +90,26 @@ cd visual_engine && npm install
 
 Ver também: `docs/SECURITY.md` (evolutivo), `docs/ARTIFACTS.md`.
 
+## API Forge (Fase 2)
+
+| Método | Rota | Função |
+|--------|------|--------|
+| GET | `/api/projects/:id/visual/status` | Node/Chrome disponíveis |
+| GET | `/api/projects/:id/visual/comparisons` | Histórico |
+| GET | `/api/projects/:id/visual/comparisons/:cid` | Relatório |
+| GET | `/api/projects/:id/visual/comparisons/:cid/:file` | Artefato PNG/JSON |
+| POST | `/api/projects/:id/visual/capture` | Captura preview ou URL |
+| POST | `/api/projects/:id/visual/compare` | Compare unificado |
+| DELETE | `/api/projects/:id/visual/comparisons/:cid` | Remove comparação |
+
+Atalhos no body de `compare`:
+
+- `{ "url1", "url2" }` — legado puppeteer-compare
+- `{ "mockup": "mockups/home.png" }` — mockup × preview
+- `{ "preview_vs_url": "https://…" }` — preview × URL
+
+UI: aba **Comparação** no painel direito (`?v=20`).
+
 ## Fases
 
 Ver `docs/MIGRATION_FROM_PUPPETEER_COMPARE.md`.
