@@ -112,3 +112,33 @@ def test_describe_mockup_missing_file(tmp_path: Path) -> None:
     result = describe_mockup(tmp_path, "mockups/missing.png")
     assert result["ok"] is False
     assert "not found" in result["error"].lower()
+
+
+def test_parse_and_format_structured_vision() -> None:
+    from ia_platform.visual_engine.vision import format_vision_spec_for_goal, parse_vision_payload
+
+    raw = json.dumps(
+        {
+            "overview": "IDE dark premium",
+            "style": "dark",
+            "layout": ["sidebar esquerda", "main chat"],
+            "colors": {"background": "#0b0f14", "accent": "#3b82f6"},
+            "priorities": ["1. sidebar", "2. tipografia"],
+        }
+    )
+    parsed = parse_vision_payload(raw)
+    assert parsed["structured"]["style"] == "dark"
+    assert "#0b0f14" in parsed["spec"]
+    packed = format_vision_spec_for_goal(parsed["structured"])
+    assert "Cores" in packed
+    assert "sidebar esquerda" in packed
+
+
+def test_prepare_image_bytes_passthrough(tmp_path: Path) -> None:
+    from ia_platform.visual_engine.vision import prepare_image_bytes
+
+    png = tmp_path / "tiny.png"
+    png.write_bytes(b"\x89PNG\r\n\x1a\n" + b"\x00" * 40)
+    data, meta = prepare_image_bytes(png)
+    assert data.startswith(b"\x89PNG")
+    assert meta["resized"] is False

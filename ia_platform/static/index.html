@@ -502,6 +502,25 @@
                 <button type="button" class="btn btn-ghost btn-sm" id="btnUploadMockup">Enviar</button>
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
+              <div class="compare-mockup-row compare-i2c-row">
+                <button type="button" class="btn btn-primary btn-sm" id="btnMockupToCode" title="Mockup → código → comparar → corrigir com o agente">Mockup → Código</button>
+                <select id="correctionStrategy" class="control-select" title="Estratégia do loop">
+                  <option value="hybrid" selected>Híbrido</option>
+                  <option value="agent">Agente</option>
+                  <option value="css">Só CSS</option>
+                </select>
+                <label class="compare-vision-toggle" title="Analisar mockup com modelo de visão Ollama">
+                  <input type="checkbox" id="useVision" checked />
+                  Visão
+                </label>
+                <select id="visionModel" class="control-select" title="Modelo de visão">
+                  <option value="">Visão: auto</option>
+                  <option value="llava">llava</option>
+                  <option value="qwen2.5-vl">qwen2.5-vl</option>
+                  <option value="llama3.2-vision">llama3.2-vision</option>
+                  <option value="moondream">moondream</option>
+                </select>
+              </div>
               <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
               <input id="compareTargetUrl" type="url" placeholder="https://…" class="compare-input" />
               <div class="compare-score hidden" id="compareScore"></div>
@@ -523,12 +542,6 @@
                     </select>
                     <button type="button" class="btn btn-ghost btn-sm" id="btnPixelPerfect">Pixel Perfect</button>
                     <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto" title="Loop CSS heurístico">Corrigir CSS</button>
-                    <button type="button" class="btn btn-primary btn-sm" id="btnMockupToCode" title="Mockup → código → comparar → corrigir com o agente">Mockup → Código</button>
-                    <select id="correctionStrategy" class="control-select" title="Estratégia do loop">
-                      <option value="hybrid" selected>Híbrido (recomendado)</option>
-                      <option value="agent">Agente (código)</option>
-                      <option value="css">Só CSS</option>
-                    </select>
                   </div>
                   <div class="compare-baseline-row">
                     <label class="compare-label" for="compareRouteId">Baseline por rota</label>
@@ -555,6 +568,10 @@
                 </div>
                 <p class="compare-correction-meta" id="compareCorrectionMeta"></p>
                 <p class="compare-correction-live muted" id="compareCorrectionLive">Aguardando eventos…</p>
+                <details class="compare-vision-spec hidden" id="compareVisionSpec">
+                  <summary>Especificação visual</summary>
+                  <pre id="compareVisionSpecBody" class="compare-vision-spec-body"></pre>
+                </details>
                 <ol class="compare-correction-attempts" id="compareCorrectionAttempts"></ol>
               </div>
               <div class="compare-view-tabs" id="compareViewTabs">

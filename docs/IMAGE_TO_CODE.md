@@ -62,12 +62,13 @@ Estratégias:
 - `css` — apenas patches heurísticos (botão **Corrigir CSS**)
 
 Melhorias do loop:
-- checklist prioritário a partir de regiões/layout
+- Visão: JSON estruturado (cores/layout/componentes), resize via ffmpeg, cache versionado, reanálise se estagnar
+- checklist prioritário a partir de regiões/layout (bbox, texto, styleChanges)
 - inventário de arquivos + detecção de stack (HTML/React)
 - espera de settle do preview antes de recomparar
-- barra de progresso e status ao vivo na UI
-- após upload do mockup, a UI aponta para **Mockup → Código**
-- especificação visual via modelo multimodal (quando disponível)
+- híbrido só aplica CSS mensurável quando similarity ≥ ~82%
+- barra de progresso, status ao vivo e preview da especificação visual
+- após upload do mockup, CTA **Mockup → Código** + toggle/modelo de visão
 
 ## API
 

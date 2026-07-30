@@ -16,6 +16,7 @@ from ia_platform.visual_engine.image_to_code import (
 def test_needs_bootstrap_thresholds() -> None:
     assert needs_bootstrap(None) is True
     assert needs_bootstrap({"similarity": 0.2}) is True
+    assert needs_bootstrap({"similarity": 0.5}) is True
     assert needs_bootstrap({"similarity": 0.8}) is False
 
 
@@ -143,10 +144,21 @@ def test_hybrid_plan_prefers_css_when_close(tmp_path: Path) -> None:
         tmp_path,
         mockup="mockups/ui.png",
         strategy="hybrid",
+        use_vision=False,
     )
+    # Attempt 1 (odd): agent refine/bootstrap path even when close.
+    first = fns["plan_fn"](
+        {
+            "similarity": 0.88,
+            "layoutChanges": [{"selector": ".box", "delta": {"width": 12, "height": 0, "x": 0, "y": 0}}],
+            "regions": [],
+        }
+    )
+    assert first and first[0].get("kind") == "agent"
+    # Attempt 2 (even) + high similarity + layout delta → meaningful CSS.
     patches = fns["plan_fn"](
         {
-            "similarity": 0.82,
+            "similarity": 0.88,
             "layoutChanges": [{"selector": ".box", "delta": {"width": 12, "height": 0, "x": 0, "y": 0}}],
             "regions": [],
         }
@@ -154,6 +166,23 @@ def test_hybrid_plan_prefers_css_when_close(tmp_path: Path) -> None:
     assert patches
     assert patches[0].get("kind") != "agent"
     assert patches[0].get("selector") == ".box"
+
+
+def test_hybrid_plan_keeps_agent_at_mid_fidelity(tmp_path: Path) -> None:
+    fns = make_agent_strategy_fns(
+        tmp_path,
+        mockup="mockups/ui.png",
+        strategy="hybrid",
+        use_vision=False,
+    )
+    patches = fns["plan_fn"](
+        {
+            "similarity": 0.7,
+            "layoutChanges": [{"selector": ".box", "delta": {"width": 12, "height": 0, "x": 0, "y": 0}}],
+            "regions": [],
+        }
+    )
+    assert patches[0].get("kind") == "agent"
 
 
 def test_agent_apply_uses_runner_and_records_run(tmp_path: Path, monkeypatch) -> None:

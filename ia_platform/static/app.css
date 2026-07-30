@@ -4468,6 +4468,42 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
   margin: 0 0 0.4rem;
   min-height: 1.1em;
 }
+.compare-i2c-row {
+  margin: 0.45rem 0 0.35rem;
+  flex-wrap: wrap;
+  gap: 0.4rem;
+  align-items: center;
+}
+.compare-vision-toggle {
+  display: inline-flex;
+  align-items: center;
+  gap: 0.28rem;
+  font-size: 0.72rem;
+  color: var(--muted);
+  white-space: nowrap;
+}
+.compare-vision-spec {
+  margin: 0 0 0.45rem;
+  border: 1px solid rgba(127, 140, 170, 0.18);
+  border-radius: 6px;
+  padding: 0.2rem 0.45rem;
+  background: rgba(8, 12, 20, 0.35);
+}
+.compare-vision-spec > summary {
+  cursor: pointer;
+  font-size: 0.72rem;
+  color: var(--muted);
+}
+.compare-vision-spec-body {
+  margin: 0.35rem 0 0.2rem;
+  max-height: 9rem;
+  overflow: auto;
+  white-space: pre-wrap;
+  font-size: 0.68rem;
+  line-height: 1.35;
+  color: var(--text);
+  font-family: ui-monospace, SFMono-Regular, Menlo, Consolas, monospace;
+}
 .compare-correction-attempts {
   margin: 0 0 0 1.1rem;
   padding: 0;

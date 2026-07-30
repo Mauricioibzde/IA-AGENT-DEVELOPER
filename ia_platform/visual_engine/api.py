@@ -510,17 +510,32 @@ def handle_correction_start(
                 suite=suite,
                 viewports=viewports,
                 target_similarity=config.target_similarity,
-                include_reports=False,
+                include_reports=True,
             )
-            # Drive the loop by the worst viewport score.
+            # Drive the loop by the worst viewport score, keeping its actionable diffs.
+            worst_report: Dict[str, Any] = {}
+            for vp in suite_report.viewports:
+                if vp.report and isinstance(vp.report, dict):
+                    if not worst_report:
+                        worst_report = dict(vp.report)
+                    sim = vp.similarity
+                    worst_sim = worst_report.get("similarity")
+                    if isinstance(sim, (int, float)) and (
+                        not isinstance(worst_sim, (int, float)) or float(sim) < float(worst_sim)
+                    ):
+                        worst_report = dict(vp.report)
             return {
                 "comparisonId": suite_report.primary_comparison_id,
                 "similarity": suite_report.min_similarity,
                 "status": suite_report.status,
                 "mode": "pixel_perfect",
                 "suite": suite_report.to_dict(),
-                "layoutChanges": [],
-                "regions": [],
+                "layoutChanges": worst_report.get("layoutChanges") or [],
+                "regions": worst_report.get("regions") or [],
+                "styleChanges": worst_report.get("styleChanges") or [],
+                "summary": worst_report.get("summary") or {},
+                "artifacts": worst_report.get("artifacts") or {},
+                "recommendations": worst_report.get("recommendations") or [],
             }
 
         report = engine.compare(

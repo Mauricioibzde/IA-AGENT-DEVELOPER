@@ -152,6 +152,8 @@
     btnCorrectAuto: $("btnCorrectAuto"),
     btnMockupToCode: $("btnMockupToCode"),
     correctionStrategy: $("correctionStrategy"),
+    useVision: $("useVision"),
+    visionModel: $("visionModel"),
     btnCorrectCancel: $("btnCorrectCancel"),
     compareCorrection: $("compareCorrection"),
     compareCorrectionMeta: $("compareCorrectionMeta"),
@@ -159,6 +161,8 @@
     compareCorrectionFill: $("compareCorrectionFill"),
     compareCorrectionProgressLabel: $("compareCorrectionProgressLabel"),
     compareCorrectionLive: $("compareCorrectionLive"),
+    compareVisionSpec: $("compareVisionSpec"),
+    compareVisionSpecBody: $("compareVisionSpecBody"),
     btnUploadMockup: $("btnUploadMockup"),
     compareMockupFile: $("compareMockupFile"),
     compareStatus: $("compareStatus"),
@@ -6949,6 +6953,22 @@
     }
   }
 
+  function latestVisionSpecPreview(job) {
+    const events = Array.isArray(job?.events) ? job.events : [];
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const ev = events[i];
+      if (!ev || !ev.type) continue;
+      if (
+        (ev.type === "vision.completed" || ev.type === "vision.cached") &&
+        typeof ev.preview === "string" &&
+        ev.preview.trim()
+      ) {
+        return ev.preview.trim();
+      }
+    }
+    return "";
+  }
+
   function latestCorrectionLiveMessage(job) {
     const events = Array.isArray(job?.events) ? job.events : [];
     for (let i = events.length - 1; i >= 0; i -= 1) {
@@ -6962,6 +6982,9 @@
       }
       if (ev.type === "vision.cached") {
         return `Usando especificação visual em cache (${ev.model || "vision"})`;
+      }
+      if (ev.type === "vision.refresh") {
+        return `Reanalisando mockup com visão (tentativa ${ev.attempt || "?"})…`;
       }
       if (ev.type === "vision.skipped" || ev.type === "vision.failed") {
         return `Visão indisponível — seguindo com Visual Engine (${ev.reason || ev.error || "fallback"})`;
@@ -7016,6 +7039,16 @@
     }
     if (els.compareCorrectionLive) {
       els.compareCorrectionLive.textContent = latestCorrectionLiveMessage(job);
+    }
+    const visionPreview = latestVisionSpecPreview(job);
+    if (els.compareVisionSpec && els.compareVisionSpecBody) {
+      if (visionPreview) {
+        els.compareVisionSpec.classList.remove("hidden");
+        els.compareVisionSpecBody.textContent = visionPreview;
+      } else {
+        els.compareVisionSpec.classList.add("hidden");
+        els.compareVisionSpecBody.textContent = "";
+      }
     }
     if (els.compareStatus && (job.status === "queued" || job.status === "running")) {
       els.compareStatus.textContent = latestCorrectionLiveMessage(job);
@@ -7105,10 +7138,11 @@
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
           target_similarity: 0.95,
-          max_attempts: strategy === "css" ? 5 : 5,
+          max_attempts: strategy === "css" ? 5 : 6,
           max_agent_steps: 14,
           settle_seconds: 1.8,
-          use_vision: strategy !== "css",
+          use_vision: strategy === "css" ? false : Boolean(els.useVision?.checked ?? true),
+          vision_model: els.visionModel?.value || undefined,
         }),
       });
       state.correctionJob = data.correction;

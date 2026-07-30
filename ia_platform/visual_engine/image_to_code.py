@@ -13,6 +13,8 @@ from typing import Any, Callable, Dict, List, Optional, Sequence
 from local_agent.checkpoint import RunCheckpoint
 
 CONF_RANK = {"high": 0, "medium": 1, "low": 2}
+BOOTSTRAP_SIMILARITY = 0.62
+HYBRID_CSS_MIN_SIMILARITY = 0.82
 
 
 def detect_stack_hint(workspace: Path) -> str:
@@ -103,6 +105,11 @@ def summarize_visual_diff(report: Dict[str, Any], *, max_items: int = 10) -> str
 
     for art in _artifact_paths(report):
         lines.append(f"Artefato {art}")
+    if _artifact_paths(report):
+        lines.append(
+            "Abra os artefatos de diff/actual no workspace para guiar os ajustes "
+            "(não invente — use o que divergir na imagem)."
+        )
 
     layout = report.get("layoutChanges") or report.get("layout_changes") or []
     if isinstance(report.get("layoutDiff"), dict):
@@ -126,6 +133,19 @@ def summarize_visual_diff(report: Dict[str, Any], *, max_items: int = 10) -> str
             f"Δy={int(delta.get('y') or 0)}"
         )
 
+    style_changes = report.get("styleChanges") or report.get("style_changes") or []
+    for change in style_changes[:max_items]:
+        if not isinstance(change, dict):
+            continue
+        sel = str(change.get("selector") or "").strip() or "?"
+        prop = str(change.get("property") or change.get("prop") or "").strip()
+        before = change.get("before") or change.get("expected") or change.get("reference")
+        after = change.get("after") or change.get("actual") or change.get("current")
+        if prop:
+            lines.append(f"Estilo {sel}: {prop} {before!s} → {after!s}")
+        else:
+            lines.append(f"Estilo {sel}: {change}")
+
     for region in _sorted_regions(report)[:max_items]:
         el = region.get("probableElement") or region.get("probable_element") or {}
         if not isinstance(el, dict):
@@ -135,7 +155,19 @@ def summarize_visual_diff(report: Dict[str, Any], *, max_items: int = 10) -> str
             continue
         conf = el.get("confidence") or "?"
         cat = region.get("category") or "diff"
-        lines.append(f"Região prioritária [{cat}/{conf}] → {sel}")
+        rect = el.get("rect") or region.get("bbox") or region.get("rect") or {}
+        where = ""
+        if isinstance(rect, dict) and any(k in rect for k in ("x", "y", "width", "height", "w", "h")):
+            x = int(rect.get("x") or 0)
+            y = int(rect.get("y") or 0)
+            w = int(rect.get("width") or rect.get("w") or 0)
+            h = int(rect.get("height") or rect.get("h") or 0)
+            where = f" @({x},{y},{w}x{h})"
+        text = str(el.get("text") or region.get("text") or "").strip()
+        text_bit = f' texto="{text[:48]}"' if text else ""
+        sev = region.get("severity") or region.get("score") or ""
+        sev_bit = f" sev={sev}" if sev != "" else ""
+        lines.append(f"Região prioritária [{cat}/{conf}]{sev_bit} → {sel}{where}{text_bit}")
 
     recs = report.get("recommendations") or []
     for rec in recs[:5]:
@@ -167,16 +199,40 @@ def build_priority_checklist(report: Dict[str, Any], *, limit: int = 6) -> List[
         if not sel:
             continue
         cat = str(region.get("category") or "layout")
+        rect = el.get("rect") or region.get("bbox") or region.get("rect") or {}
+        loc = ""
+        if isinstance(rect, dict) and any(k in rect for k in ("x", "y", "width", "height", "w", "h")):
+            x = int(rect.get("x") or 0)
+            y = int(rect.get("y") or 0)
+            w = int(rect.get("width") or rect.get("w") or 0)
+            h = int(rect.get("height") or rect.get("h") or 0)
+            loc = f" em ({x},{y},{w}x{h})"
+        text = str(el.get("text") or region.get("text") or "").strip()
+        text_bit = f' (“{text[:40]}”)' if text else ""
         if cat in {"typography", "text"}:
-            items.append(f"Ajustar tipografia/cor/peso em `{sel}`")
+            items.append(f"Ajustar tipografia/cor/peso em `{sel}`{loc}{text_bit}")
         elif cat in {"spacing", "layout"}:
-            items.append(f"Corrigir espaçamento/posição/tamanho de `{sel}`")
+            items.append(f"Corrigir espaçamento/posição/tamanho de `{sel}`{loc}")
         elif cat in {"color", "background"}:
-            items.append(f"Alinhar cores/fundo de `{sel}` ao mockup")
+            items.append(f"Alinhar cores/fundo de `{sel}`{loc} ao mockup")
         else:
-            items.append(f"Aproximar `{sel}` do mockup ({cat})")
+            items.append(f"Aproximar `{sel}`{loc} do mockup ({cat}){text_bit}")
         if len(items) >= limit:
             break
+
+    style_changes = report.get("styleChanges") or report.get("style_changes") or []
+    for change in style_changes:
+        if len(items) >= limit:
+            break
+        if not isinstance(change, dict):
+            continue
+        sel = str(change.get("selector") or "").strip()
+        prop = str(change.get("property") or change.get("prop") or "").strip()
+        if not sel or not prop:
+            continue
+        before = change.get("before") or change.get("expected") or change.get("reference")
+        after = change.get("after") or change.get("actual") or change.get("current")
+        items.append(f"Corrigir `{sel}` {prop}: {after!s} → {before!s} (alvo mockup)")
 
     layout = report.get("layoutChanges") or []
     if isinstance(report.get("layoutDiff"), dict):
@@ -303,7 +359,7 @@ def build_correction_goal(
     )
 
 
-def needs_bootstrap(report: Optional[Dict[str, Any]], *, threshold: float = 0.45) -> bool:
+def needs_bootstrap(report: Optional[Dict[str, Any]], *, threshold: float = BOOTSTRAP_SIMILARITY) -> bool:
     """True when the UI is missing/far from the mockup and should be (re)implemented."""
     if not isinstance(report, dict):
         return True
@@ -351,7 +407,14 @@ def make_agent_strategy_fns(
     checkpoint_to_agent_run: Dict[str, str] = {}
     attempt_counter = {"n": 0}
     last_mode = {"value": ""}
-    vision_cache: Dict[str, Any] = {"spec": "", "tried": False, "model": None, "error": None}
+    vision_cache: Dict[str, Any] = {
+        "spec": "",
+        "structured": {},
+        "tried": False,
+        "model": None,
+        "error": None,
+        "runs": 0,
+    }
 
     def _emit(typ: str, **payload: Any) -> None:
         if on_event:
@@ -360,12 +423,13 @@ def make_agent_strategy_fns(
             except Exception:  # noqa: BLE001
                 pass
 
-    def _ensure_vision_spec() -> str:
+    def _ensure_vision_spec(*, force: bool = False) -> str:
         if not use_vision:
             return ""
-        if vision_cache["tried"]:
+        if vision_cache["tried"] and not force:
             return str(vision_cache.get("spec") or "")
         vision_cache["tried"] = True
+        vision_cache["runs"] = int(vision_cache.get("runs") or 0) + 1
         try:
             from .vision import describe_mockup
 
@@ -374,13 +438,15 @@ def make_agent_strategy_fns(
                 mockup,
                 host=ollama_host,
                 model=vision_model,
-                use_cache=True,
+                use_cache=not force,
                 cancel_check=cancel_check,
                 on_event=on_event,
             )
             if result.get("ok") and result.get("spec"):
                 vision_cache["spec"] = str(result["spec"])
+                vision_cache["structured"] = result.get("structured") or {}
                 vision_cache["model"] = result.get("model")
+                vision_cache["error"] = None
             else:
                 vision_cache["error"] = result.get("error")
                 _emit(
@@ -393,31 +459,56 @@ def make_agent_strategy_fns(
             _emit("vision.skipped", reason=str(exc))
         return str(vision_cache.get("spec") or "")
 
+    def _should_refresh_vision(report: Dict[str, Any], attempt: int) -> bool:
+        if not use_vision or not vision_cache.get("tried"):
+            return False
+        sim = report.get("similarity")
+        if not isinstance(sim, (int, float)):
+            return False
+        if float(sim) >= 0.78:
+            return False
+        return attempt in {3, 5} and int(vision_cache.get("runs") or 0) < 3
+
     def plan_fn(report: Dict[str, Any]) -> List[Dict[str, Any]]:
         attempt_counter["n"] += 1
         attempt = attempt_counter["n"]
         report = report if isinstance(report, dict) else {}
         files = list_workspace_files(workspace)
-        vision_spec = _ensure_vision_spec() if strategy in {"agent", "hybrid"} else ""
+        force_vision = _should_refresh_vision(report, attempt)
+        if force_vision:
+            _emit("vision.refresh", attempt=attempt, similarity=report.get("similarity"))
+        vision_spec = (
+            _ensure_vision_spec(force=force_vision) if strategy in {"agent", "hybrid"} else ""
+        )
 
         if strategy == "css":
             from .patches import plan_heuristic_patches
 
             return plan_heuristic_patches(report)
 
-        # Hybrid: early/low similarity → agent; mid attempts → CSS; later escalate to agent again.
+        # Hybrid: only apply measurable CSS when already close; otherwise agent.
         use_css = False
-        if strategy == "hybrid" and not needs_bootstrap(report):
-            if attempt % 3 != 0:
-                from .patches import plan_heuristic_patches
+        sim = report.get("similarity")
+        sim_f = float(sim) if isinstance(sim, (int, float)) else 0.0
+        if (
+            strategy == "hybrid"
+            and not needs_bootstrap(report)
+            and sim_f >= HYBRID_CSS_MIN_SIMILARITY
+            and attempt % 2 == 0
+        ):
+            from .patches import plan_heuristic_patches
 
-                css_patches = plan_heuristic_patches(report)
-                if css_patches:
-                    use_css = True
-                    last_mode["value"] = "css"
-                    return css_patches
+            css_patches = plan_heuristic_patches(
+                report,
+                allow_marker=False,
+                meaningful_only=True,
+            )
+            if css_patches:
+                use_css = True
+                last_mode["value"] = "css"
+                return css_patches
 
-        if needs_bootstrap(report) or (strategy == "hybrid" and not use_css and attempt == 1):
+        if needs_bootstrap(report) or (strategy == "hybrid" and not use_css and attempt == 1 and sim_f < 0.75):
             goal = build_bootstrap_goal(
                 mockup,
                 stack_hint=resolved_stack,
@@ -515,7 +606,12 @@ def make_agent_strategy_fns(
         wait_for_preview_settle(seconds=min(1.0, settle_seconds), cancel_check=cancel_check)
         return restored
 
-    return {"plan_fn": plan_fn, "apply_fn": apply_fn, "rollback_fn": rollback_fn}
+    return {
+        "plan_fn": plan_fn,
+        "apply_fn": apply_fn,
+        "rollback_fn": rollback_fn,
+        "vision_cache": vision_cache,
+    }
 
 
 def run_agent_step(
