@@ -122,6 +122,7 @@
     btnNewProject: $("btnNewProject"),
     btnRefreshFiles: $("btnRefreshFiles"),
     btnClearChat: $("btnClearChat"),
+    btnResetProjectLayout: $("btnResetProjectLayout"),
     btnDeploy: $("btnDeploy"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
@@ -2814,6 +2815,35 @@
     workRailMin: 72,
     workRailMax: 280,
   };
+  const LAYOUT_PRESETS = {
+    chat: {
+      label: "Foco Chat",
+      sidebarW: 220,
+      panelWChat: 300,
+      panelWWork: 340,
+      panelCollapsedChat: true,
+      panelCollapsedWork: true,
+      workRailH: 72,
+    },
+    preview: {
+      label: "Foco Preview",
+      sidebarW: 220,
+      panelWChat: 520,
+      panelWWork: 560,
+      panelCollapsedChat: false,
+      panelCollapsedWork: false,
+      workRailH: 88,
+    },
+    balanced: {
+      label: "Equilibrado",
+      sidebarW: LAYOUT_DEFAULTS.sidebarW,
+      panelWChat: LAYOUT_DEFAULTS.panelWChat,
+      panelWWork: LAYOUT_DEFAULTS.panelWWork,
+      panelCollapsedChat: true,
+      panelCollapsedWork: false,
+      workRailH: LAYOUT_DEFAULTS.workRailH,
+    },
+  };
 
   function layoutProjectKey(key) {
     const pid = state.current?.id;
@@ -3006,6 +3036,52 @@
   function resetWorkRailHeight() {
     applyWorkRailHeight(LAYOUT_DEFAULTS.workRailH, { persist: true });
     showToast("Altura do fluxo restaurada.", "info", 2200);
+  }
+
+  function clearProjectLayoutPreferences() {
+    if (!state.current?.id) {
+      showToast("Abra um projeto para resetar o layout.", "info");
+      return;
+    }
+    try {
+      Object.values(LAYOUT_KEYS).forEach((key) => {
+        localStorage.removeItem(layoutProjectKey(key));
+      });
+    } catch {
+      /* ignore */
+    }
+    restoreLayoutSizes();
+    showToast("Layout deste projeto restaurado ao padrão.", "info", 2600);
+  }
+
+  function applyLayoutPreset(presetId) {
+    const preset = LAYOUT_PRESETS[presetId];
+    if (!preset) return;
+    if (!state.current?.id) {
+      showToast("Abra um projeto para aplicar um preset de layout.", "info");
+      return;
+    }
+    writeLayoutNumber(LAYOUT_KEYS.sidebarW, preset.sidebarW, { projectScoped: true });
+    writeLayoutNumber(LAYOUT_KEYS.panelWChat, preset.panelWChat, { projectScoped: true });
+    writeLayoutNumber(LAYOUT_KEYS.panelWWork, preset.panelWWork, { projectScoped: true });
+    writeLayoutFlag(LAYOUT_KEYS.panelCollapsedChat, preset.panelCollapsedChat, { projectScoped: true });
+    writeLayoutFlag(LAYOUT_KEYS.panelCollapsedWork, preset.panelCollapsedWork, { projectScoped: true });
+    writeLayoutNumber(LAYOUT_KEYS.workRailH, preset.workRailH, { projectScoped: true });
+    restoreLayoutSizes();
+    document.getElementById("topbarMore")?.removeAttribute("open");
+    showToast(`Layout aplicado: ${preset.label}`, "info", 2400);
+  }
+
+  function initLayoutPresets() {
+    document.querySelectorAll("[data-layout-preset]").forEach((btn) => {
+      btn.addEventListener("click", () => {
+        applyLayoutPreset(btn.getAttribute("data-layout-preset"));
+      });
+    });
+    els.btnResetProjectLayout?.addEventListener("click", () => {
+      clearProjectLayoutPreferences();
+      document.getElementById("topbarMore")?.removeAttribute("open");
+    });
   }
 
   function bindVerticalSplitter(el, { onMove, onReset, onActivate, canDrag }) {
@@ -7388,6 +7464,7 @@
       setSurfaceMode("chat");
     }
     initLayoutSplitters();
+    initLayoutPresets();
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);
