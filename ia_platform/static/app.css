@@ -7284,3 +7284,62 @@ body.surface-work .composer {
   margin-left: 8px !important;
   padding: 0 8px !important;
 }
+
+/* ── Lovable shell (UX slice 1): coherent tools only ── */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.workspace-superbar[hidden],
+.surface-toggle-wrap[hidden],
+.workspace-dock[hidden] {
+  display: none !important;
+}
+
+button.active-model-badge {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.active-model-badge:hover {
+  filter: brightness(1.08);
+}
+
+.topbar-more-hint {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+#appWorkbench.workbench-focus-files {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+#appWorkbench.workbench-focus-files .app-preview-col {
+  display: none !important;
+}
+
+#appWorkbench.workbench-focus-files .app-explorer-col {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+.tools-sub-ghost {
+  display: none !important;
+}
+
+.app-explorer-actions,
+.app-explorer-git {
+  display: none !important;
+}

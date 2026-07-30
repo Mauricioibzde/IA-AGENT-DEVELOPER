@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=54" />
+  <link rel="stylesheet" href="/static/app.css?v=55" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -47,7 +47,7 @@
           </svg>
           <span class="nav-label">Chat</span>
         </button>
-        <button type="button" class="sidebar-nav-item" id="btnSidebarSearch" title="Arquivos">
+        <button type="button" class="sidebar-nav-item" id="btnSidebarSearch" title="Arquivos do projeto">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4 7.5h6l1.4 2H20v8.5H4z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
           </svg>
@@ -66,19 +66,6 @@
             <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" stroke="currentColor" stroke-width="1.5" opacity=".7"/>
           </svg>
           <span class="nav-label">Modelos</span>
-        </button>
-        <button type="button" class="sidebar-nav-item" title="Plugins">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M9 4h6v5h5v6h-5v5H9v-5H4V9h5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-          </svg>
-          <span class="nav-label">Plugins</span>
-        </button>
-        <button type="button" class="sidebar-nav-item" title="Configurações">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z" stroke="currentColor" stroke-width="1.7"/>
-            <path d="M4 12h2.2M17.8 12H20M12 4v2.2M12 17.8V20M6.3 6.3l1.6 1.6M16.1 16.1l1.6 1.6M17.7 6.3l-1.6 1.6M7.9 16.1l-1.6 1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-          </svg>
-          <span class="nav-label">Configurações</span>
         </button>
       </nav>
 
@@ -125,7 +112,7 @@
           </div>
           <div class="sidebar-tip" id="sidebarTip">
             <strong>Como navegar</strong>
-            <p><b>Chat</b> conversa · <b>Work</b> constrói. Painel: <b>App</b> · <b>Agente</b> · <b>Visual</b>.</p>
+            <p><b>Chat</b> conversa · <b>Work</b> constrói. À direita: <b>Preview</b>, <b>Arquivos</b> e <b>Visual</b>.</p>
           </div>
           <div class="sidebar-user" title="Forge · plataforma local">
             <div class="user-avatar">F</div>
@@ -159,7 +146,7 @@
     <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
     <div class="main">
-      <div class="surface-toggle-wrap">
+      <div class="surface-toggle-wrap" hidden aria-hidden="true">
         <div class="surface-toggle" role="tablist" aria-label="Área">
           <button type="button" class="surface-btn active" data-surface="chat" id="btnSurfaceChatGhost" role="tab" aria-selected="true">Chat</button>
           <button type="button" class="surface-btn" data-surface="work" id="btnSurfaceWorkGhost" role="tab" aria-selected="false">Work</button>
@@ -200,17 +187,11 @@
       </section>
 
       <section class="view-workspace hidden" id="workspaceView">
-        <div class="workspace-superbar" aria-label="Navegação do workspace">
+        <div class="workspace-superbar" aria-label="Modo do workspace" hidden>
+          <!-- Chat/Work canônicos ficam na sidebar; estes IDs permanecem para sync do JS. -->
           <div class="workspace-superbar-left">
-            <button type="button" class="superbar-link surface-btn" data-surface="chat" id="btnSurfaceChat" role="tab" aria-selected="false">Chat</button>
-            <button type="button" class="superbar-link surface-btn active" data-surface="work" id="btnSurfaceWork" role="tab" aria-selected="true">Work</button>
-            <button type="button" class="superbar-link">Arquivos</button>
-            <button type="button" class="superbar-link">Banco de Conhecimento</button>
-            <button type="button" class="superbar-link">Configurações</button>
-          </div>
-          <div class="workspace-superbar-right">
-            <span class="superbar-chip">Autosave 2m</span>
-            <span class="superbar-chip">Projeto ativo</span>
+            <button type="button" class="superbar-link surface-btn" data-surface="chat" id="btnSurfaceChat" role="tab" aria-selected="false" hidden>Chat</button>
+            <button type="button" class="superbar-link surface-btn active" data-surface="work" id="btnSurfaceWork" role="tab" aria-selected="true" hidden>Work</button>
           </div>
         </div>
         <header class="topbar">
@@ -227,7 +208,7 @@
             </div>
           </div>
           <div class="topbar-controls">
-            <span class="active-model-badge" id="activeModelBadge" title="Modelo que o Forge vai usar (ou está usando agora)">Auto</span>
+            <button type="button" class="active-model-badge" id="activeModelBadge" title="Abrir Modelos IA">Auto</button>
             <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar arquivos e preview">↻</button>
             <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">Deploy</button>
             <details class="topbar-more" id="topbarMore">
@@ -241,14 +222,15 @@
                   <option value="dry">Dry-run</option>
                 </select>
                 <span class="mode-chip hidden" id="modeChip" title="Modo atual">Chat</span>
-                <label class="topbar-more-label" for="modelSelect">Modelo (avançado)</label>
-                <select id="modelSelect" title="Modelo IA" class="control-select model-select">
+                <p class="topbar-more-hint muted">Modelo: use o seletor do composer ou o badge Auto no topo.</p>
+                <label class="topbar-more-label sr-only" for="modelSelect">Modelo</label>
+                <select id="modelSelect" title="Modelo IA" class="control-select model-select sr-only" tabindex="-1" aria-hidden="true">
                   <option value="__auto__">Auto (recomendado)</option>
                   <optgroup label="Instalados" id="modelGroupInstalled"></optgroup>
                   <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
                   <option value="__custom__">Outro...</option>
                 </select>
-                <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
+                <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" tabindex="-1" aria-hidden="true" />
                 <label class="topbar-more-label" for="maxStepsInput">Máx. passos</label>
                 <div class="steps-control" id="stepsControl" title="Max steps">
                   <span class="steps-icon" aria-hidden="true">✦</span>
@@ -366,7 +348,7 @@
                   Projeto
                 </button>
                 <span class="composer-tool muted" id="composerProjectLabel">Nenhum selecionado</span>
-                <span class="composer-tool-hint muted" id="composerToolHint">Arraste as bordas para redimensionar · Chat/Work no topo</span>
+                <span class="composer-tool-hint muted" id="composerToolHint">Chat/Work na barra lateral · Preview e Arquivos à direita</span>
               </div>
               <div class="chat-input-actions">
                 <div class="busy-banner hidden" id="busyBanner">
@@ -414,10 +396,7 @@
               <div class="tools-subtabs" id="toolsSubtabs">
                 <div class="tools-subrow" data-group-panel="app">
                   <button type="button" class="panel-tab tools-sub active" data-tab="preview" data-group="app">Preview</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Console</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Logs</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Testes</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Banco de Dados</button>
+                  <button type="button" class="panel-tab tools-sub" data-tab="files" data-group="app">Arquivos</button>
                 </div>
                 <div class="tools-subrow hidden" data-group-panel="agent">
                   <button type="button" class="panel-tab tools-sub" data-tab="live" data-group="agent">Ao vivo</button>
@@ -486,28 +465,11 @@
                 <div class="app-explorer-col" id="panelFiles">
                   <div class="app-explorer-head">
                     <strong>Arquivos do projeto</strong>
-                    <div class="app-explorer-actions" aria-hidden="true">
-                      <button type="button" tabindex="-1" title="Novo arquivo">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
-                      </button>
-                      <button type="button" tabindex="-1" title="Atualizar">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-13.7-5.6L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 13.7 5.6L20 16"/><path d="M20 20v-4h-4"/></svg>
-                      </button>
-                      <button type="button" tabindex="-1" title="Mais">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
-                      </button>
-                    </div>
                   </div>
                   <div class="file-search-row">
                     <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
                   </div>
                   <ul class="file-tree" id="fileTree"></ul>
-                  <div class="app-explorer-git" aria-hidden="true">
-                    <strong>Git</strong>
-                    <span>⌘ main</span>
-                    <span>○ 3</span>
-                    <span>○ 1</span>
-                  </div>
                   <div class="file-editor-shell hidden" id="fileEditorShell">
                     <div class="file-editor-toolbar">
                       <span class="file-editor-path" id="fileEditorPath"></span>
@@ -634,35 +596,13 @@
             </div>
           </aside>
         </div>
-        <section class="workspace-dock" id="workspaceDock" aria-label="Painéis inferiores">
-          <article class="dock-card dock-compare">
-            <header class="dock-head">
-              <strong>Comparação visual</strong>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="visual" data-open-tab="compare">Abrir</button>
-            </header>
-            <p class="dock-main" id="dockCompareStatus">Sem comparações recentes.</p>
-            <p class="dock-meta muted" id="dockCompareMeta">Use “Visual” para iniciar uma nova comparação.</p>
-          </article>
-          <article class="dock-card dock-history">
-            <header class="dock-head">
-              <strong>Histórico</strong>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Ver runs</button>
-            </header>
-            <ul class="dock-run-list" id="dockRunList">
-              <li class="muted">Nenhuma execução registrada.</li>
-            </ul>
-          </article>
-          <article class="dock-card dock-metrics">
-            <header class="dock-head">
-              <strong>Métricas</strong>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="live">Ao vivo</button>
-            </header>
-            <div class="dock-metric-grid">
-              <div class="dock-metric"><span>Performance</span><b id="dockMetricTotal">96%</b></div>
-              <div class="dock-metric"><span>Erros</span><b id="dockMetricFail">0</b></div>
-              <div class="dock-metric"><span>Tempo</span><b id="dockMetricSuccess">1.2s</b></div>
-            </div>
-          </article>
+        <section class="workspace-dock hidden" id="workspaceDock" hidden aria-hidden="true" aria-label="Painéis inferiores">
+          <p class="dock-main" id="dockCompareStatus" hidden>Sem comparações recentes.</p>
+          <p class="dock-meta muted" id="dockCompareMeta" hidden></p>
+          <ul class="dock-run-list" id="dockRunList" hidden></ul>
+          <b id="dockMetricTotal" hidden>0</b>
+          <b id="dockMetricFail" hidden>0</b>
+          <b id="dockMetricSuccess" hidden>0</b>
         </section>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
           <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">App</button>
@@ -890,6 +830,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=42"></script>
+  <script src="/static/app.js?v=43"></script>
 </body>
 </html>

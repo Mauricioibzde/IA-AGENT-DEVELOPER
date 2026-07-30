@@ -753,7 +753,7 @@
       if (!shown) {
         els.activeModelBadge.textContent = "Auto";
         els.activeModelBadge.classList.remove("is-live", "is-manual");
-        els.activeModelBadge.title = "Auto: o Forge escolhe o modelo na hora da execução";
+        els.activeModelBadge.title = "Auto · clique para abrir Modelos IA";
       } else if (auto) {
         els.activeModelBadge.textContent = live ? `Usando ${shown}` : `Auto → ${shown}`;
         els.activeModelBadge.classList.toggle("is-live", live);
@@ -825,13 +825,13 @@
   function syncModelSelectorsFromCanonical() {
     const top = topBarModelValue();
     const composerVal = els.composerModelSelect?.value || "";
-    // If they diverge, top bar wins (Work toolbar); mirror into composer.
-    if (top && els.composerModelSelect) {
+    // Composer is the primary picker (Lovable shell); keep hidden top select in sync.
+    if (composerVal) {
+      setModelSelection(composerVal, { skipComposer: true });
+    } else if (top && els.composerModelSelect) {
       const opts = Array.from(els.composerModelSelect.options).map((o) => o.value);
       if (opts.includes(top)) els.composerModelSelect.value = top;
-    } else if (!top && composerVal) {
-      // Composer had a model while top was Auto — promote composer to top.
-      setModelSelection(composerVal, { skipComposer: true });
+      else els.composerModelSelect.value = "";
     } else if (!top && els.composerModelSelect) {
       els.composerModelSelect.value = "";
     }
@@ -2775,6 +2775,13 @@
     renderProjectList();
   }
 
+  function showWorkspace() {
+    els.emptyView?.classList.add("hidden");
+    els.workspaceView?.classList.remove("hidden");
+    restoreLayoutSizes();
+    syncWorkRailVisibility();
+  }
+
   // ── Chat history ──
 
   function escapeHtml(text) {
@@ -3480,46 +3487,11 @@
   }
 
   function renderWorkspaceDock() {
+    // Dock chrome removed in Lovable shell; keep IDs for callers but never show.
     if (!els.workspaceDock) return;
-    const hasProject = !!state.current;
-    els.workspaceDock.classList.toggle("hidden", !hasProject);
-    if (!hasProject) return;
-
-    const compareText = (els.compareStatus?.textContent || "").trim();
-    if (els.dockCompareStatus) {
-      els.dockCompareStatus.textContent = compareText || "Sem comparações recentes.";
-    }
-    if (els.dockCompareMeta) {
-      const project = state.current?.name || "projeto";
-      els.dockCompareMeta.textContent = `Dados de visual do ${project}.`;
-    }
-
-    const runs = state.runs || [];
-    if (els.dockRunList) {
-      if (!runs.length) {
-        els.dockRunList.innerHTML = "<li class='muted'>Nenhuma execução registrada.</li>";
-      } else {
-        els.dockRunList.innerHTML = runs
-          .slice(0, 3)
-          .map((run) => {
-            const label = String(run.status || "RUN").toUpperCase();
-            const cls = runStatusClass(run.status);
-            const goal = (run.goal || run.summary || "Execução").slice(0, 28);
-            return `<li><span>${escapeHtml(goal)}</span><strong class="${cls}">${escapeHtml(label)}</strong></li>`;
-          })
-          .join("");
-      }
-    }
-
-    const total = runs.length;
-    const success = runs.filter((r) => String(r.status || "").toUpperCase() === "SUCCESS").length;
-    const fail = runs.filter((r) => {
-      const s = String(r.status || "").toUpperCase();
-      return s === "FAILED" || s === "ERROR" || s === "FAIL";
-    }).length;
-    if (els.dockMetricTotal) els.dockMetricTotal.textContent = String(total);
-    if (els.dockMetricSuccess) els.dockMetricSuccess.textContent = String(success);
-    if (els.dockMetricFail) els.dockMetricFail.textContent = String(fail);
+    els.workspaceDock.classList.add("hidden");
+    els.workspaceDock.setAttribute("hidden", "");
+    els.workspaceDock.setAttribute("aria-hidden", "true");
   }
 
   function formatRunTime(ts) {
@@ -6578,11 +6550,16 @@
       el.classList.toggle("active", el.dataset.tab === tab);
     });
     const isAppPreview = group === "app" && tab === "preview";
+    const isAppFiles = group === "app" && tab === "files";
     $("panelLive")?.classList.toggle("hidden", tab !== "live");
-    $("panelFiles").classList.toggle("hidden", !isAppPreview && tab !== "files");
-    $("panelPreview").classList.toggle("hidden", tab !== "preview" && tab !== "files");
+    $("panelFiles")?.classList.toggle("hidden", !isAppPreview && !isAppFiles);
+    $("panelPreview")?.classList.toggle("hidden", tab !== "preview" && tab !== "files");
     $("panelCompare")?.classList.toggle("hidden", tab !== "compare");
-    $("panelReport").classList.toggle("hidden", tab !== "report");
+    $("panelReport")?.classList.toggle("hidden", tab !== "report");
+    const workbench = $("appWorkbench");
+    workbench?.classList.toggle("workbench-focus-files", isAppFiles);
+    workbench?.classList.toggle("workbench-focus-preview", isAppPreview);
+    els.btnSidebarSearch?.classList.toggle("is-active", isAppFiles);
     syncMobileTabs(tab, group);
     if (isMobileLayout()) openMobilePanel();
     else closeMobilePanel();
@@ -7280,9 +7257,15 @@
   });
   els.btnSidebarSearch?.addEventListener("click", () => {
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
-    requestAnimationFrame(() => {
+    if (!state.current) {
+      showToast("Escolha um projeto para abrir os arquivos.", "info", 4000);
       els.projectSearch?.focus();
-      els.projectSearch?.select?.();
+      return;
+    }
+    showWorkspace();
+    switchToolGroup("app", "files");
+    requestAnimationFrame(() => {
+      els.fileSearchInput?.focus();
     });
   });
   els.sidebarBackdrop?.addEventListener("click", closeSidebar);
@@ -7437,6 +7420,7 @@
 
   els.btnDeploy.addEventListener("click", runDeploy);
   els.btnModels.addEventListener("click", openModelsModal);
+  els.activeModelBadge?.addEventListener("click", openModelsModal);
   els.btnRefreshHardware?.addEventListener("click", () => {
     if (els.btnRefreshHardware) els.btnRefreshHardware.disabled = true;
     loadModelRecommendations({ refresh: true })
