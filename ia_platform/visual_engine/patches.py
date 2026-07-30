@@ -10,15 +10,41 @@ from local_agent.checkpoint import RunCheckpoint
 from local_agent.security import resolve_in_workspace
 
 
+def _signal_from_report(report: Dict[str, Any]) -> Dict[str, Any]:
+    """Normalize report shapes (top-level, nested report, or raw bridge payload)."""
+    if not isinstance(report, dict):
+        return {}
+    nested = report.get("report") if isinstance(report.get("report"), dict) else {}
+    raw = report.get("raw") if isinstance(report.get("raw"), dict) else {}
+    nested_raw = nested.get("raw") if isinstance(nested.get("raw"), dict) else {}
+    merged: Dict[str, Any] = {**nested_raw, **nested, **raw, **report}
+
+    layout_changes = (
+        merged.get("layoutChanges")
+        or merged.get("layout_changes")
+        or []
+    )
+    layout_diff = merged.get("layoutDiff") if isinstance(merged.get("layoutDiff"), dict) else {}
+    if not layout_changes and layout_diff:
+        layout_changes = layout_diff.get("layoutChanges") or layout_diff.get("layout_changes") or []
+
+    regions = merged.get("regions") or []
+    return {
+        "similarity": merged.get("similarity"),
+        "layoutChanges": layout_changes if isinstance(layout_changes, list) else [],
+        "regions": regions if isinstance(regions, list) else [],
+        "layoutDiff": layout_diff,
+    }
+
+
 def plan_heuristic_patches(report: Dict[str, Any], *, max_patches: int = 8) -> List[Dict[str, Any]]:
     """Derive safe CSS-oriented patches from a visual report.
 
     These are best-effort nudges (layout/style), not full redesigns.
     """
     patches: List[Dict[str, Any]] = []
-    layout_changes = report.get("layoutChanges") or report.get("layout_changes") or []
-    if isinstance(report.get("layoutDiff"), dict):
-        layout_changes = layout_changes or report["layoutDiff"].get("layoutChanges") or []
+    signal = _signal_from_report(report)
+    layout_changes = signal["layoutChanges"]
 
     for change in layout_changes:
         if len(patches) >= max_patches:
@@ -54,7 +80,7 @@ def plan_heuristic_patches(report: Dict[str, Any], *, max_patches: int = 8) -> L
             }
         )
 
-    for region in report.get("regions") or []:
+    for region in signal["regions"]:
         if len(patches) >= max_patches:
             break
         if not isinstance(region, dict):
@@ -88,7 +114,7 @@ def plan_heuristic_patches(report: Dict[str, Any], *, max_patches: int = 8) -> L
         )
 
     # Always ensure a visible correction trail file exists when we have any signal.
-    if not patches and (report.get("similarity") or 0) < 0.999:
+    if not patches and (signal.get("similarity") or 0) < 0.999:
         patches.append(
             {
                 "kind": "css_rule",

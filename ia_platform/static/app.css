@@ -7712,7 +7712,7 @@ button.project-badge:hover {
 
 .compare-primary-cta {
   display: grid;
-  gap: 4px;
+  gap: 6px;
   margin: 0 0 10px;
   padding: 10px;
   border-radius: 10px;
@@ -7720,9 +7720,21 @@ button.project-badge:hover {
   background: color-mix(in srgb, currentColor 4%, transparent);
 }
 
+.compare-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
 .compare-primary-hint {
   margin: 0;
   font-size: 0.75rem;
+}
+
+.visual-outcome-card .visual-outcome-copy {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  line-height: 1.35;
 }
 
 body.surface-chat .work-rail,

@@ -75,6 +75,14 @@
       history: [],
       autoOpened: false,
     },
+    lastCompareReport: null,
+    lastSuiteReport: null,
+    visualTargetSimilarity: 0.92,
+    visualAutoCompare: false,
+    visualReachInFlight: false,
+    correctionJob: null,
+    correctionTimer: null,
+    compareView: "side",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -162,7 +170,10 @@
     btnCapturePreview: $("btnCapturePreview"),
     btnCorrectAuto: $("btnCorrectAuto"),
     btnCorrectPrimary: $("btnCorrectPrimary"),
+    btnReachResult: $("btnReachResult"),
+    btnVisualAgentBrief: $("btnVisualAgentBrief"),
     comparePrimaryCta: $("comparePrimaryCta"),
+    comparePrimaryHint: $("comparePrimaryHint"),
     compareAdvanced: $("compareAdvanced"),
     devErrorPanel: $("devErrorPanel"),
     devErrorSummary: $("devErrorSummary"),
@@ -6202,7 +6213,14 @@
       actions.push({ action: "files", label: `Ver arquivos (${changed.length})` });
     }
     if (visualEngineAvailable() && (hasMockupHint || htmlPath || changed.some(isUiPath))) {
-      actions.push({ action: "visual", label: hasMockupHint ? "Comparar mockup" : "Enviar mockup" });
+      actions.push({
+        action: hasMockupHint ? "reach-result" : "visual",
+        label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        primary: hasMockupHint && !(htmlPath || changed.some(isUiPath)),
+      });
+      if (hasMockupHint) {
+        actions.push({ action: "visual", label: "Comparar mockup" });
+      }
     }
     if (status && status !== "SUCCESS" && status !== "CANCELLED") {
       actions.push({
@@ -6211,7 +6229,7 @@
         prompt:
           "Corrija o erro da última execução neste projeto. Leia o relatório e os logs, identifique a causa e aplique a correção mínima necessária.",
       });
-    } else {
+    } else if (!hasMockupHint) {
       actions.push({
         action: "prompt",
         label: "Melhorar visual",
@@ -6283,10 +6301,14 @@
           setSurfaceMode("work");
           switchToolGroup("visual", "compare");
           setCompareFlowStep("compare");
-          runCompareNow();
+          runCompareNow({ smartFollowUp: true });
         } else {
           openVisualMockupFlow();
         }
+      } else if (action === "reach-result") {
+        setSurfaceMode("work");
+        switchToolGroup("visual", "compare");
+        startReachResultFlow({ autoCorrect: true });
       } else if (action === "open-file" && btn.dataset.path) {
         await openFile(btn.dataset.path, {
           switchToFiles: !/\.html?$/i.test(btn.dataset.path),
@@ -6303,18 +6325,193 @@
     return el;
   }
 
-  async function suggestVisualIfMockupPresent() {
-    if (!state.current?.id || !visualEngineAvailable() || state.surfaceMode !== "work") return;
-    if ((els.compareMockupPath?.value || "").trim()) return;
-    try {
-      const files = state.files || [];
-      const mock = files.find((f) => /mockup/i.test(f.path || f.name || "") && /\.(png|jpe?g|webp)$/i.test(f.path || ""));
-      if (!mock) return;
-      if (els.compareMockupPath) els.compareMockupPath.value = mock.path;
-      showToast(`Mockup encontrado (${mock.path}). Abra Visual para comparar.`, "info", 5500);
-    } catch (_) {
-      /* ignore */
+  function findProjectMockupPath() {
+    const current = (els.compareMockupPath?.value || "").trim();
+    if (current) return current;
+    const files = state.files || [];
+    const mock = files.find(
+      (f) => /mockup|referencia|reference|design/i.test(f.path || f.name || "") && /\.(png|jpe?g|webp)$/i.test(f.path || "")
+    );
+    return mock?.path || "";
+  }
+
+  function ensureMockupPath() {
+    const path = findProjectMockupPath();
+    if (path && els.compareMockupPath && !(els.compareMockupPath.value || "").trim()) {
+      els.compareMockupPath.value = path;
     }
+    return (els.compareMockupPath?.value || "").trim() || path;
+  }
+
+  function reportSimilarity(report) {
+    if (!report) return null;
+    const val =
+      report.similarity ??
+      report.best_similarity ??
+      report.current_similarity ??
+      report.minSimilarity ??
+      report.min_similarity;
+    if (val == null) return null;
+    const n = Number(val);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function visualTargetReached(sim) {
+    const target = Number(state.visualTargetSimilarity) || 0.92;
+    return sim != null && sim >= target;
+  }
+
+  function buildVisualAgentBrief(report, job) {
+    const sim = reportSimilarity(report) ?? reportSimilarity(job);
+    const pct = sim == null ? "—" : `${(sim * 100).toFixed(1)}%`;
+    const target = `${((Number(state.visualTargetSimilarity) || 0.92) * 100).toFixed(0)}%`;
+    const mockup = ensureMockupPath() || "mockup";
+    const regions = Array.isArray(report?.regions) ? report.regions : [];
+    const layout =
+      report?.layoutChanges ||
+      report?.layout_changes ||
+      report?.layoutDiff?.layoutChanges ||
+      [];
+    const regionLines = regions
+      .slice(0, 8)
+      .map((r) => {
+        const el = r.probableElement || r.probable_element || {};
+        const sel = el.selector || "elemento desconhecido";
+        return `- Região ${r.id || "?"}: ${r.category || "diff"} / ${r.severity || "?"} → ${sel}${
+          r.diagnosis ? ` (${r.diagnosis})` : ""
+        }`;
+      })
+      .join("\n");
+    const layoutLines = (Array.isArray(layout) ? layout : [])
+      .slice(0, 8)
+      .map((c) => {
+        const d = c.delta || {};
+        return `- ${c.selector || "?"}: Δx=${d.x || 0} Δy=${d.y || 0} Δw=${d.width || 0} Δh=${d.height || 0}`;
+      })
+      .join("\n");
+    const base = job?.baseline_similarity;
+    const best = job?.best_similarity;
+    const loopLine =
+      base != null && best != null
+        ? `Loop CSS: ${(Number(base) * 100).toFixed(1)}% → ${(Number(best) * 100).toFixed(1)}% (${job.status || "done"}).`
+        : "";
+
+    return [
+      `Ajuste a UI para ficar visualmente parecida com o mockup "${mockup}".`,
+      `Similaridade atual: ${pct} (meta ~${target}). ${loopLine}`.trim(),
+      "Use o preview e os arquivos CSS/HTML existentes. Preserve estrutura e conteúdo; foque em layout, tipografia, espaçamento e cores.",
+      regionLines ? `Regiões com diferença:\n${regionLines}` : "Não há regiões correlacionadas — compare o mockup e o preview e corrija as áreas mais óbvias.",
+      layoutLines ? `Deltas de layout:\n${layoutLines}` : "",
+      "Aplique mudanças mínimas e mensuráveis. Ao terminar, mantenha a página responsiva.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  function updateVisualPrimaryCta(report) {
+    const sim = reportSimilarity(report);
+    const reached = visualTargetReached(sim);
+    els.comparePrimaryCta?.classList.toggle("hidden", !report);
+    els.btnVisualAgentBrief?.classList.toggle("hidden", !report || reached);
+    if (els.comparePrimaryHint) {
+      if (!report) {
+        els.comparePrimaryHint.textContent =
+          "Compare → corrige CSS → se ainda ficar longe, o agente recebe o brief visual.";
+      } else if (reached) {
+        els.comparePrimaryHint.textContent = `Meta atingida (${(sim * 100).toFixed(1)}%). Pode aprovar baseline ou pedir refinamentos.`;
+      } else {
+        els.comparePrimaryHint.textContent = `Ainda em ${(sim * 100).toFixed(1)}%. Corrija via CSS ou peça ao agente com o brief do compare.`;
+      }
+    }
+  }
+
+  function addVisualOutcomeCard(report, job) {
+    if (!els.chatMessages) return;
+    const sim = reportSimilarity(report) ?? reportSimilarity(job);
+    const pct = sim == null ? "—" : `${(sim * 100).toFixed(1)}%`;
+    const reached = visualTargetReached(sim);
+    const el = document.createElement("div");
+    el.className = "msg system next-steps visual-outcome";
+    const title = reached
+      ? `Visual próximo do mockup · ${pct}`
+      : `Visual ainda longe do mockup · ${pct}`;
+    const actions = [];
+    if (!reached) {
+      actions.push({ action: "correct", label: "Corrigir CSS", primary: true });
+      actions.push({ action: "agent", label: "Pedir ao agente" });
+    }
+    actions.push({ action: "compare", label: "Ver comparação" });
+    if (reached) actions.push({ action: "preview", label: "Ver preview", primary: true });
+
+    el.innerHTML = `
+      <div class="next-steps-card visual-outcome-card">
+        <div class="next-steps-title">${escapeHtml(title)}</div>
+        <p class="muted visual-outcome-copy">${
+          reached
+            ? "O motor de comparação indica que o resultado está na meta."
+            : "Use o loop CSS ou envie o brief visual ao agente para fechar as diferenças restantes."
+        }</p>
+        <div class="next-steps-actions">
+          ${actions
+            .map(
+              (item) =>
+                `<button type="button" class="btn ${item.primary ? "btn-primary btn-gradient" : "btn-ghost"} btn-sm visual-outcome-action" data-action="${item.action}">${escapeHtml(item.label)}</button>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+
+    el.addEventListener("click", (event) => {
+      const btn = event.target.closest(".visual-outcome-action");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "correct") {
+        setSurfaceMode("work");
+        switchToolGroup("visual", "compare");
+        startCorrectionLoop({ fromSmartFlow: true });
+      } else if (action === "agent") {
+        fillVisualAgentBrief(report, job, { send: false });
+      } else if (action === "compare") {
+        setSurfaceMode("work");
+        switchToolGroup("visual", "compare");
+      } else if (action === "preview") {
+        setSurfaceMode("work");
+        switchToolGroup("app", "preview");
+        updatePreview();
+      }
+    });
+
+    els.chatMessages.appendChild(el);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  }
+
+  function fillVisualAgentBrief(report, job, { send = false } = {}) {
+    const brief = buildVisualAgentBrief(report || state.lastCompareReport, job || state.correctionJob);
+    if (!brief || !els.promptInput) return;
+    els.promptInput.value = brief;
+    els.promptInput.focus();
+    showToast(send ? "Enviando brief visual ao agente…" : "Brief visual pronto no composer.", "info", 4500);
+    if (send && !state.running) sendPrompt();
+  }
+
+  async function suggestVisualIfMockupPresent({ autoCompare = false, uiChanged = false } = {}) {
+    if (!state.current?.id || !visualEngineAvailable()) return null;
+    const mock = ensureMockupPath();
+    if (!mock) return null;
+    if (autoCompare && uiChanged && !state.running && !state.visualReachInFlight) {
+      showToast(`Mockup ${mock} — comparando com o preview…`, "info", 4500);
+      state.visualAutoCompare = true;
+      try {
+        await runCompareNow({ smartFollowUp: true, quiet: true });
+      } finally {
+        state.visualAutoCompare = false;
+      }
+      return mock;
+    }
+    if (!autoCompare) {
+      showToast(`Mockup encontrado (${mock}). Use “Alcançar resultado” no Visual.`, "info", 5500);
+    }
+    return mock;
   }
 
   async function syncWorkspaceAfterRun(donePayload) {
@@ -6332,6 +6529,7 @@
     const uiChanged = changed.some(isUiPath);
     const packageTouched = changed.some((p) => /(^|\/)package\.json$/i.test(p) || /(^|\/)vite\.config\./i.test(p));
     const hasDev = !!state.devStatus?.has_dev_script;
+    const success = donePayload?.status === "SUCCESS";
 
     if (hasDev && (packageTouched || uiChanged) && !state.devStatus?.running && canStartDevPreview()) {
       await maybeEnableDevPreview({ preferDev: true, autoStart: true });
@@ -6354,7 +6552,10 @@
     }
 
     addNextStepActions(changed, donePayload);
-    await suggestVisualIfMockupPresent();
+    await suggestVisualIfMockupPresent({
+      autoCompare: success && !!(uiChanged || htmlChanged),
+      uiChanged: !!(uiChanged || htmlChanged),
+    });
   }
 
   // ── Dev server ──
@@ -6859,14 +7060,15 @@
     if (!report) return;
     state.lastCompareReport = report;
     const pct = report.similarity == null ? "—" : `${(Number(report.similarity) * 100).toFixed(1)}%`;
-    const fit = report.normalization?.fit || "";
+    const fit = report.normalization?.fit || report.raw?.normalization?.fit || "";
     if (els.compareScore) {
       els.compareScore.classList.remove("hidden");
       els.compareScore.innerHTML = `<strong>${escapeHtml(pct)}</strong> similar · ${escapeHtml(report.mode || "")} · ${escapeHtml(fit)} · ${escapeHtml(report.status || "")}`;
     }
     const id = report.comparisonId || report.comparison_id;
-    const refFile = report.artifacts?.referenceNormalized ? "reference-normalized.png" : "reference.png";
-    const actFile = report.artifacts?.actualNormalized ? "actual-normalized.png" : "actual.png";
+    const artifacts = report.artifacts || report.raw?.artifacts || {};
+    const refFile = artifacts.referenceNormalized ? "reference-normalized.png" : "reference.png";
+    const actFile = artifacts.actualNormalized ? "actual-normalized.png" : "actual.png";
     if (els.compareRefImg) els.compareRefImg.src = artifactUrl(id, refFile);
     if (els.compareActImg) els.compareActImg.src = artifactUrl(id, actFile);
     if (els.compareDiffImg) els.compareDiffImg.src = artifactUrl(id, "diff.png");
@@ -6877,9 +7079,15 @@
       const warns = (report.warnings || []).slice(0, 2).join(" · ");
       els.compareStatus.textContent = warns || `Comparação ${id} pronta.`;
     }
+    // Prefer regions from promoted fields or raw bridge payload.
+    if (!report.regions?.length && report.raw?.regions) {
+      report = { ...report, regions: report.raw.regions };
+      state.lastCompareReport = report;
+    }
     renderCompareRegions(report);
     setCompareView(state.compareView || "side");
     setCompareFlowStep("correct");
+    updateVisualPrimaryCta(report);
     renderWorkspaceDock();
   }
 
@@ -6961,9 +7169,14 @@
       });
       if (els.compareMockupPath) els.compareMockupPath.value = data.path;
       setCompareFlowStep("compare");
-      showToast(`Mockup salvo. Próximo passo: Comparar com o preview.`, "ok", 5500);
+      els.comparePrimaryCta?.classList.remove("hidden");
+      if (els.comparePrimaryHint) {
+        els.comparePrimaryHint.textContent =
+          "Mockup pronto. Use “Alcançar resultado” para comparar e corrigir até a meta.";
+      }
+      showToast(`Mockup salvo. Use “Alcançar resultado” para fechar o loop.`, "ok", 5500);
       if (els.compareStatus) {
-        els.compareStatus.textContent = `Mockup pronto: ${data.path}. Clique em Comparar.`;
+        els.compareStatus.textContent = `Mockup pronto: ${data.path}. Clique em Alcançar resultado.`;
       }
     } catch (e) {
       const msg = visualApiMissingMessage(e);
@@ -7217,32 +7430,59 @@
       if (job && (job.status === "queued" || job.status === "running")) return;
       stopCorrectionPolling();
       if (job?.status === "completed") {
-        showToast("Correction loop finalizado.", "ok");
+        const best = reportSimilarity(job);
+        const reached = visualTargetReached(best);
+        showToast(
+          reached
+            ? `Correção concluída · ${(best * 100).toFixed(1)}% (meta atingida).`
+            : `Correção concluída · ${best == null ? "—" : `${(best * 100).toFixed(1)}%`}. Ainda abaixo da meta.`,
+          reached ? "ok" : "info",
+          6000
+        );
         refreshComparePanel();
+        updatePreview();
+        const synthetic = state.lastCompareReport
+          ? { ...state.lastCompareReport, similarity: best ?? state.lastCompareReport.similarity }
+          : { similarity: best, regions: [], layoutChanges: [] };
+        if (best != null) {
+          state.lastCompareReport = synthetic;
+          updateVisualPrimaryCta(synthetic);
+        }
+        addVisualOutcomeCard(synthetic, job);
+        if (!reached && state.visualReachInFlight) {
+          fillVisualAgentBrief(synthetic, job, { send: false });
+          showToast("CSS estabilizou abaixo da meta — brief visual pronto para o agente.", "info", 6500);
+        }
+        state.visualReachInFlight = false;
       } else if (job?.status === "cancelled") {
+        state.visualReachInFlight = false;
         showToast("Correction loop interrompido.", "info");
       } else if (job?.status === "failed") {
+        state.visualReachInFlight = false;
         showToast(job.error || "Correction loop falhou", "err");
       }
     } catch (e) {
       stopCorrectionPolling();
+      state.visualReachInFlight = false;
       showToast(e.message || "Falha ao consultar correction", "err");
     }
   }
 
-  async function startCorrectionLoop() {
+  async function startCorrectionLoop({ fromSmartFlow = false } = {}) {
     if (!state.current?.id) return;
-    const mockup = (els.compareMockupPath?.value || "").trim();
+    const mockup = ensureMockupPath();
     if (!mockup) {
       showToast("Envie ou informe um mockup antes de corrigir.", "info");
-      return;
+      return null;
     }
     stopCorrectionPolling();
     setCompareFlowStep("correct");
     if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
     try {
-      const suite = selectedCompareSuite();
+      // Prefer single-viewport layout-aware correction unless the user chose a suite.
+      const suite = fromSmartFlow ? "" : selectedCompareSuite();
+      const target = Number(state.visualTargetSimilarity) || 0.92;
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/start`, {
         method: "POST",
         body: JSON.stringify({
@@ -7251,7 +7491,8 @@
           viewport: parseCompareViewport(),
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
-          target_similarity: 0.95,
+          options: { includeDomDiff: true, includeLayout: true, fit: els.compareFit?.value || "contain" },
+          target_similarity: Math.max(target, 0.95),
           max_attempts: 5,
         }),
       });
@@ -7259,9 +7500,52 @@
       renderCorrectionJob(data.correction);
       state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), 1500);
       showToast("Correction loop em execução…", "info");
+      return data.correction;
     } catch (e) {
       els.btnCorrectAuto && (els.btnCorrectAuto.disabled = false);
+      state.visualReachInFlight = false;
       showToast(e.message || "Não foi possível iniciar a correção", "err");
+      return null;
+    }
+  }
+
+  async function startReachResultFlow({ autoCorrect = true } = {}) {
+    if (!state.current?.id || state.visualReachInFlight) return;
+    const mockup = ensureMockupPath();
+    if (!mockup) {
+      openVisualMockupFlow();
+      showToast("Envie o mockup para o motor guiar o resultado.", "info", 5000);
+      return;
+    }
+    state.visualReachInFlight = true;
+    setSurfaceMode("work");
+    switchToolGroup("visual", "compare");
+    setCompareFlowStep("compare");
+    try {
+      const report = await runCompareNow({ smartFollowUp: false, quiet: true, layoutAware: true });
+      const sim = reportSimilarity(report);
+      if (visualTargetReached(sim)) {
+        showToast(`Já está perto do mockup (${(sim * 100).toFixed(1)}%).`, "ok", 5000);
+        addVisualOutcomeCard(report, null);
+        state.visualReachInFlight = false;
+        return;
+      }
+      if (!autoCorrect) {
+        updateVisualPrimaryCta(report);
+        addVisualOutcomeCard(report, null);
+        state.visualReachInFlight = false;
+        return;
+      }
+      showToast(
+        `Similaridade ${sim == null ? "—" : `${(sim * 100).toFixed(1)}%`} — iniciando correção automática…`,
+        "info",
+        5500
+      );
+      const job = await startCorrectionLoop({ fromSmartFlow: true });
+      if (!job) state.visualReachInFlight = false;
+    } catch (e) {
+      state.visualReachInFlight = false;
+      showToast(e.message || "Falha ao alcançar resultado", "err");
     }
   }
 
@@ -7280,21 +7564,22 @@
     }
   }
 
-  function buildCompareBody({ pixelPerfect = false } = {}) {
-    const mockup = (els.compareMockupPath?.value || "").trim();
+  function buildCompareBody({ pixelPerfect = false, layoutAware = false } = {}) {
+    const mockup = ensureMockupPath() || (els.compareMockupPath?.value || "").trim();
     const targetUrl = (els.compareTargetUrl?.value || "").trim();
     const fit = els.compareFit?.value || "contain";
-    const suite = selectedCompareSuite();
+    const suite = layoutAware ? "" : selectedCompareSuite();
+    const wantLayout = layoutAware || !(pixelPerfect || !!suite);
     const body = {
       mode: els.previewMode?.value === "dev" ? "dev" : "auto",
       viewport: parseCompareViewport(),
       options: {
         threshold: 0.1,
         fit,
-        includeDomDiff: !(pixelPerfect || !!suite),
-        includeLayout: !(pixelPerfect || !!suite),
+        includeDomDiff: wantLayout,
+        includeLayout: wantLayout,
       },
-      target_similarity: 0.95,
+      target_similarity: Number(state.visualTargetSimilarity) || 0.92,
     };
     if (mockup) body.mockup = mockup;
     else if (targetUrl) body.preview_vs_url = targetUrl;
@@ -7305,12 +7590,15 @@
     return { body, mockup, targetUrl };
   }
 
-  async function runCompareNow() {
-    if (!state.current?.id) return;
-    const { body, mockup, targetUrl } = buildCompareBody({ pixelPerfect: false });
+  async function runCompareNow({ smartFollowUp = false, quiet = false, layoutAware = false } = {}) {
+    if (!state.current?.id) return null;
+    const { body, mockup, targetUrl } = buildCompareBody({
+      pixelPerfect: false,
+      layoutAware: layoutAware || smartFollowUp,
+    });
     if (!mockup && !targetUrl) {
       showToast("Informe uma URL alvo ou um caminho de mockup.", "info");
-      return;
+      return null;
     }
     if (els.compareStatus) els.compareStatus.textContent = "Comparando…";
     setCompareFlowStep("compare");
@@ -7325,18 +7613,29 @@
       renderCompareReport(data.report);
       await refreshComparePanel();
       setCompareFlowStep("correct");
-      els.comparePrimaryCta?.classList.remove("hidden");
+      updateVisualPrimaryCta(data.report);
       if (els.compareAdvanced) els.compareAdvanced.open = false;
-      showToast(
-        data.suite
-          ? "Suite concluída. Use “Corrigir para ficar parecido” se precisar."
-          : "Comparação pronta. Próximo: Corrigir para ficar parecido.",
-        "ok",
-        5500
-      );
+      const sim = reportSimilarity(data.report);
+      const reached = visualTargetReached(sim);
+      if (!quiet) {
+        showToast(
+          reached
+            ? `Comparação pronta · ${(sim * 100).toFixed(1)}% (meta ok).`
+            : data.suite
+              ? "Suite concluída. Use “Alcançar resultado” ou corrija as diferenças."
+              : `Comparação pronta · ${sim == null ? "—" : `${(sim * 100).toFixed(1)}%`}. Próximo: corrigir.`,
+          reached ? "ok" : "info",
+          5500
+        );
+      }
+      if (smartFollowUp && data.report) {
+        addVisualOutcomeCard(data.report, null);
+      }
+      return data.report;
     } catch (e) {
       if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha na comparação";
       showToast(e.message || "Falha na comparação", "err");
+      return null;
     } finally {
       if (els.btnCompareNow) els.btnCompareNow.disabled = false;
     }
@@ -7726,10 +8025,14 @@
   els.btnCompareNow?.addEventListener("click", runCompareNow);
   els.btnPixelPerfect?.addEventListener("click", runPixelPerfect);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
-  els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
+  els.btnCorrectAuto?.addEventListener("click", () => startCorrectionLoop());
   els.btnCorrectPrimary?.addEventListener("click", () => {
     if (els.compareAdvanced) els.compareAdvanced.open = true;
-    startCorrectionLoop();
+    startCorrectionLoop({ fromSmartFlow: true });
+  });
+  els.btnReachResult?.addEventListener("click", () => startReachResultFlow({ autoCorrect: true }));
+  els.btnVisualAgentBrief?.addEventListener("click", () => {
+    fillVisualAgentBrief(state.lastCompareReport, state.correctionJob, { send: false });
   });
   els.btnDevErrorRestart?.addEventListener("click", () => startDevServer());
   els.projectBadge?.addEventListener("click", () => {

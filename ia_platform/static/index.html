@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=58" />
+  <link rel="stylesheet" href="/static/app.css?v=59" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -534,8 +534,14 @@
               <input id="compareTargetUrl" type="url" placeholder="https://…" class="compare-input" />
               <div class="compare-score hidden" id="compareScore"></div>
               <div class="compare-primary-cta hidden" id="comparePrimaryCta">
-                <button type="button" class="btn btn-primary btn-sm" id="btnCorrectPrimary">Corrigir para ficar parecido</button>
-                <p class="muted compare-primary-hint">Roda o loop de correção com o mockup atual.</p>
+                <div class="compare-primary-actions">
+                  <button type="button" class="btn btn-primary btn-sm" id="btnCorrectPrimary">Corrigir para ficar parecido</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnReachResult">Alcançar resultado</button>
+                  <button type="button" class="btn btn-ghost btn-sm hidden" id="btnVisualAgentBrief">Pedir ao agente</button>
+                </div>
+                <p class="muted compare-primary-hint" id="comparePrimaryHint">
+                  Compare → corrige CSS → se ainda ficar longe, o agente recebe o brief visual.
+                </p>
               </div>
               <details class="compare-advanced" id="compareAdvanced">
                 <summary>Ferramentas avançadas</summary>
@@ -865,6 +871,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=46"></script>
+  <script src="/static/app.js?v=47"></script>
 </body>
 </html>

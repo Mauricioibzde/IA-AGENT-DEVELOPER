@@ -7,6 +7,19 @@ from typing import Any, Dict, List, Literal, Optional
 
 SideType = Literal["url", "image", "artifact"]
 
+# Bridge fields needed by UI + heuristic correction patches.
+_PROMOTE_FROM_RAW = (
+    "layoutChanges",
+    "regions",
+    "domChanges",
+    "layoutDiff",
+    "styleChanges",
+    "normalization",
+    "domDiff",
+    "metrics",
+    "comparisonId",
+)
+
 
 @dataclass
 class Side:
@@ -38,8 +51,20 @@ class VisualReport:
 
     def to_dict(self) -> Dict[str, Any]:
         data = asdict(self)
+        raw = dict(self.raw or {})
         data.pop("raw", None)
-        data["raw"] = self.raw
+        # Promote bridge payload fields so correction/UI do not need to dig into raw.
+        for key in _PROMOTE_FROM_RAW:
+            if key in raw and (key not in data or data.get(key) in (None, {}, [])):
+                data[key] = raw[key]
+        if raw.get("comparisonId"):
+            data["comparisonId"] = raw["comparisonId"]
+        elif data.get("comparison_id") and "comparisonId" not in data:
+            data["comparisonId"] = data["comparison_id"]
+        # Prefer richer artifacts from bridge when present.
+        if isinstance(raw.get("artifacts"), dict) and raw["artifacts"]:
+            data["artifacts"] = raw["artifacts"]
+        data["raw"] = raw
         return data
 
     @classmethod

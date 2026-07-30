@@ -30,6 +30,89 @@ def test_plan_heuristic_patches_from_layout() -> None:
     assert any(p["selector"] == ".sidebar" for p in patches)
 
 
+def test_plan_heuristic_patches_from_raw_bridge_payload() -> None:
+    """VisualReport.to_dict used to bury layoutChanges under raw — patches must still see them."""
+    report = {
+        "comparison_id": "c1",
+        "status": "done",
+        "mode": "image-url",
+        "similarity": 0.72,
+        "raw": {
+            "comparisonId": "c1",
+            "similarity": 0.72,
+            "layoutChanges": [
+                {"selector": ".card", "delta": {"x": 8, "y": 0, "width": 0, "height": 12}}
+            ],
+            "regions": [
+                {
+                    "id": "region-2",
+                    "category": "typography",
+                    "probableElement": {"selector": "h1", "confidence": "medium"},
+                }
+            ],
+        },
+    }
+    patches = plan_heuristic_patches(report)
+    assert any(p["selector"] == ".card" for p in patches)
+    assert any(p["selector"] == "h1" for p in patches)
+
+
+def test_visual_report_to_dict_promotes_bridge_fields() -> None:
+    from ia_platform.visual_engine.models import VisualReport
+
+    report = VisualReport.from_bridge(
+        {
+            "comparisonId": "abc",
+            "status": "done",
+            "mode": "image-url",
+            "similarity": 0.81,
+            "layoutChanges": [{"selector": ".nav", "delta": {"width": 4}}],
+            "regions": [{"id": "region-1", "category": "layout"}],
+            "artifacts": {"diff": "diff.png"},
+        }
+    )
+    data = report.to_dict()
+    assert data["comparisonId"] == "abc"
+    assert data["layoutChanges"][0]["selector"] == ".nav"
+    assert data["regions"][0]["id"] == "region-1"
+    assert data["raw"]["comparisonId"] == "abc"
+
+
+def test_worst_viewport_patch_signal_keeps_layout() -> None:
+    from types import SimpleNamespace
+
+    from ia_platform.visual_engine.api import _worst_viewport_patch_signal
+
+    suite = SimpleNamespace(
+        viewports=[
+            SimpleNamespace(
+                similarity=0.9,
+                comparison_id="good",
+                viewport={"id": "desktop"},
+                report={"layoutChanges": [], "regions": []},
+            ),
+            SimpleNamespace(
+                similarity=0.7,
+                comparison_id="bad",
+                viewport={"id": "mobile"},
+                report={
+                    "layoutChanges": [{"selector": ".hero", "delta": {"width": 20}}],
+                    "regions": [
+                        {
+                            "id": "region-1",
+                            "probableElement": {"selector": ".hero", "confidence": "high"},
+                        }
+                    ],
+                },
+            ),
+        ]
+    )
+    signal = _worst_viewport_patch_signal(suite)
+    assert signal["comparisonId"] == "bad"
+    assert signal["layoutChanges"][0]["selector"] == ".hero"
+    assert signal["regions"]
+
+
 def test_apply_and_rollback_patches(tmp_path: Path) -> None:
     (tmp_path / "index.html").write_text(
         "<!DOCTYPE html><html><head></head><body><div class='x'></div></body></html>",
