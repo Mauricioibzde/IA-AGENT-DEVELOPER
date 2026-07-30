@@ -7,9 +7,29 @@ from pathlib import Path
 from typing import Dict, List, Tuple
 
 
+def primary_goal(goal: str) -> str:
+    """User intent only — strip injected chat context / memory blocks."""
+    text = str(goal or "").strip()
+    if not text:
+        return ""
+    cut_markers = (
+        "\n--- contexto",
+        "\n--- Contexto",
+        "\n--- Fim do contexto",
+        "\nMemória do projeto:",
+    )
+    lower = text
+    cut_at = len(text)
+    for marker in cut_markers:
+        idx = lower.find(marker)
+        if idx != -1:
+            cut_at = min(cut_at, idx)
+    return text[:cut_at].strip()
+
+
 def looks_like_mini_app_goal(goal: str) -> bool:
     """True for common small utility apps (calculator, todo, etc.)."""
-    g = (goal or "").lower()
+    g = primary_goal(goal).lower()
     return bool(
         re.search(
             r"\b(calculadora|calculator|contador|counter|todo|to-?do|cron[oô]metro|timer|"
@@ -20,13 +40,13 @@ def looks_like_mini_app_goal(goal: str) -> bool:
 
 
 def looks_like_calculator_goal(goal: str) -> bool:
-    g = (goal or "").lower()
+    g = primary_goal(goal).lower()
     return bool(re.search(r"\b(calculadora|calculator)\b", g))
 
 
 def looks_like_plain_web_goal(goal: str) -> bool:
     """True for small static HTML/CSS/JS apps (not React/Vite/API)."""
-    g = (goal or "").lower()
+    g = primary_goal(goal).lower()
     if re.search(r"\b(react|vite|next\.?js|fastapi|flask|express|django|api rest|backend)\b", g):
         return False
     has_web = bool(
@@ -69,8 +89,11 @@ def is_plain_web_workspace(workspace: Path) -> bool:
 
 
 def looks_like_react_goal(goal: str) -> bool:
-    g = (goal or "").lower()
+    g = primary_goal(goal).lower()
     if re.search(r"\b(fastapi|flask|django|api rest)\b", g) and not re.search(r"\b(react|vite)\b", g):
+        return False
+    # Mini-apps default to plain HTML even if chat context mentioned React elsewhere.
+    if looks_like_mini_app_goal(goal):
         return False
     return bool(re.search(r"\b(react|vite|next\.?js|spa)\b", g)) and bool(
         re.search(r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|app|aplicat|site|dashboard|landing)\b", g)
@@ -78,8 +101,10 @@ def looks_like_react_goal(goal: str) -> bool:
 
 
 def looks_like_fastapi_goal(goal: str) -> bool:
-    g = (goal or "").lower()
+    g = primary_goal(goal).lower()
     if re.search(r"\b(react|vite|html|css)\b", g) and not re.search(r"\b(fastapi|api|endpoint|backend)\b", g):
+        return False
+    if looks_like_mini_app_goal(goal):
         return False
     has_api = bool(re.search(r"\b(fastapi|api rest|endpoint|/health|backend python)\b", g))
     wants = bool(re.search(r"\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|implement)\b", g))
@@ -90,8 +115,25 @@ def looks_like_offline_scaffold_goal(goal: str) -> bool:
     return looks_like_plain_web_goal(goal) or looks_like_react_goal(goal) or looks_like_fastapi_goal(goal)
 
 
+def workspace_satisfies_calculator(workspace: Path) -> bool:
+    """True when index.html already looks like a working calculator UI."""
+    root = Path(workspace)
+    html_path = root / "index.html"
+    js_path = root / "app.js"
+    if not html_path.is_file() or not js_path.is_file():
+        return False
+    try:
+        html = html_path.read_text(encoding="utf-8", errors="ignore").lower()
+        js = js_path.read_text(encoding="utf-8", errors="ignore").lower()
+    except OSError:
+        return False
+    has_ui = "display" in html and ("data-op" in html or "data-num" in html)
+    has_logic = "operator" in js or "compute" in js or "eval" in js
+    return has_ui and has_logic and not validate_plain_web(root)
+
+
 def _title_from_goal(goal: str) -> str:
-    g = (goal or "").strip()
+    g = primary_goal(goal).strip()
     if looks_like_calculator_goal(g):
         return "Calculadora"
     if re.search(r"\b(contador|counter)\b", g.lower()):
