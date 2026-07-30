@@ -141,6 +141,11 @@
     compareFit: $("compareFit"),
     btnCompareNow: $("btnCompareNow"),
     btnCapturePreview: $("btnCapturePreview"),
+    btnCorrectAuto: $("btnCorrectAuto"),
+    btnCorrectCancel: $("btnCorrectCancel"),
+    compareCorrection: $("compareCorrection"),
+    compareCorrectionMeta: $("compareCorrectionMeta"),
+    compareCorrectionAttempts: $("compareCorrectionAttempts"),
     btnUploadMockup: $("btnUploadMockup"),
     compareMockupFile: $("compareMockupFile"),
     compareStatus: $("compareStatus"),
@@ -5759,6 +5764,114 @@
     }
   }
 
+  function renderCorrectionJob(job) {
+    if (!job) {
+      els.compareCorrection?.classList.add("hidden");
+      els.btnCorrectCancel?.classList.add("hidden");
+      return;
+    }
+    els.compareCorrection?.classList.remove("hidden");
+    const base = job.baseline_similarity == null ? "—" : `${(job.baseline_similarity * 100).toFixed(1)}%`;
+    const best = job.best_similarity == null ? "—" : `${(job.best_similarity * 100).toFixed(1)}%`;
+    const imp = job.improvement == null ? "—" : `${(job.improvement * 100).toFixed(1)} pp`;
+    if (els.compareCorrectionMeta) {
+      els.compareCorrectionMeta.textContent = `${job.status} · base ${base} → melhor ${best} · Δ ${imp}`;
+    }
+    if (els.compareCorrectionAttempts) {
+      const attempts = job.attempts || [];
+      els.compareCorrectionAttempts.innerHTML = attempts.length
+        ? attempts
+            .map((a) => {
+              const sim = a.similarity == null ? "—" : `${(Number(a.similarity) * 100).toFixed(1)}%`;
+              return `<li><strong>#${a.attempt}</strong> ${escapeHtml(sim)} · ${escapeHtml(a.status)} · ${escapeHtml(a.notes || "")}</li>`;
+            })
+            .join("")
+        : "<li class='muted'>Aguardando tentativas…</li>";
+    }
+    const running = job.status === "queued" || job.status === "running";
+    els.btnCorrectCancel?.classList.toggle("hidden", !running);
+    els.btnCorrectAuto && (els.btnCorrectAuto.disabled = running);
+  }
+
+  function stopCorrectionPolling() {
+    if (state.correctionTimer) {
+      clearInterval(state.correctionTimer);
+      state.correctionTimer = null;
+    }
+  }
+
+  async function pollCorrection(jobId) {
+    if (!state.current?.id || !jobId) return;
+    try {
+      const data = await api(
+        `/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/${encodeURIComponent(jobId)}`
+      );
+      const job = data.correction;
+      state.correctionJob = job;
+      renderCorrectionJob(job);
+      if (job && (job.status === "queued" || job.status === "running")) return;
+      stopCorrectionPolling();
+      if (job?.status === "completed") {
+        showToast("Correction loop finalizado.", "ok");
+        refreshComparePanel();
+      } else if (job?.status === "cancelled") {
+        showToast("Correction loop interrompido.", "info");
+      } else if (job?.status === "failed") {
+        showToast(job.error || "Correction loop falhou", "err");
+      }
+    } catch (e) {
+      stopCorrectionPolling();
+      showToast(e.message || "Falha ao consultar correction", "err");
+    }
+  }
+
+  async function startCorrectionLoop() {
+    if (!state.current?.id) return;
+    const mockup = (els.compareMockupPath?.value || "").trim();
+    if (!mockup) {
+      showToast("Envie ou informe um mockup antes de corrigir.", "info");
+      return;
+    }
+    stopCorrectionPolling();
+    if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
+    els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
+    try {
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/start`, {
+        method: "POST",
+        body: JSON.stringify({
+          mockup,
+          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+          viewport: parseCompareViewport(),
+          fit: els.compareFit?.value || "contain",
+          target_similarity: 0.95,
+          max_attempts: 5,
+        }),
+      });
+      state.correctionJob = data.correction;
+      renderCorrectionJob(data.correction);
+      state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), 1500);
+      showToast("Correction loop em execução…", "info");
+    } catch (e) {
+      els.btnCorrectAuto && (els.btnCorrectAuto.disabled = false);
+      showToast(e.message || "Não foi possível iniciar a correção", "err");
+    }
+  }
+
+  async function cancelCorrectionLoop() {
+    const id = state.correctionJob?.id;
+    if (!state.current?.id || !id) return;
+    try {
+      const data = await api(
+        `/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/${encodeURIComponent(id)}/cancel`,
+        { method: "POST", body: "{}" }
+      );
+      renderCorrectionJob(data.correction);
+      showToast("Cancelamento solicitado.", "info");
+    } catch (e) {
+      showToast(e.message || "Falha ao cancelar", "err");
+    }
+  }
+
   async function runCompareNow() {
     if (!state.current?.id) return;
     const mockup = (els.compareMockupPath?.value || "").trim();
@@ -6100,6 +6213,8 @@
 
   els.btnCompareNow?.addEventListener("click", runCompareNow);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
+  els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
+  els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
   els.btnUploadMockup?.addEventListener("click", () => els.compareMockupFile?.click());
   els.compareMockupFile?.addEventListener("change", () => {
     const file = els.compareMockupFile.files?.[0];

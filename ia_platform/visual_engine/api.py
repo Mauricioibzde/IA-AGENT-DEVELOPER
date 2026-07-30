@@ -242,3 +242,110 @@ def resolve_artifact_file(engine: VisualEngine, comparison_id: str, filename: st
 def guess_content_type(path: Path) -> str:
     ctype, _ = mimetypes.guess_type(str(path))
     return ctype or "application/octet-stream"
+
+
+def handle_correction_start(
+    engine: VisualEngine,
+    data: Dict[str, Any],
+    *,
+    host_header: str,
+) -> Tuple[int, Dict[str, Any]]:
+    """Start a background correction loop (mockup vs preview by default)."""
+    from .correction import CorrectionConfig, correction_manager
+
+    from local_agent.security import resolve_in_workspace
+
+    mockup = str(data.get("mockup") or data.get("reference") or "").strip()
+    if not mockup:
+        return 400, {"error": "mockup path is required"}
+    try:
+        mockup_path = resolve_in_workspace(engine.project_dir, mockup)
+    except Exception as exc:  # noqa: BLE001
+        return 400, {"error": f"invalid mockup path: {exc}"}
+    if not mockup_path.is_file():
+        return 404, {"error": f"mockup not found: {mockup}"}
+
+    cfg_raw = data.get("config") if isinstance(data.get("config"), dict) else {}
+    config = CorrectionConfig(
+        target_similarity=float(cfg_raw.get("target_similarity") or data.get("target_similarity") or 0.95),
+        max_attempts=int(cfg_raw.get("max_attempts") or data.get("max_attempts") or 5),
+        min_improvement=float(cfg_raw.get("min_improvement") or data.get("min_improvement") or 0.005),
+        stagnation_limit=int(cfg_raw.get("stagnation_limit") or data.get("stagnation_limit") or 2),
+        timeout_sec=float(cfg_raw.get("timeout_sec") or data.get("timeout_sec") or 600),
+    )
+    viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else {"width": 1366, "height": 768}
+    options = data.get("options") if isinstance(data.get("options"), dict) else {}
+    options = {
+        **options,
+        "fit": options.get("fit") or data.get("fit") or "contain",
+        "includeDomDiff": True,
+        "includeLayout": True,
+    }
+    mode = str(data.get("mode") or "auto")
+    file_path = str(data.get("path") or "index.html")
+
+    def compare_fn() -> Dict[str, Any]:
+        preview_url = engine.resolve_preview_url(
+            host_header=host_header,
+            mode=mode,
+            file_path=file_path,
+        )
+        report = engine.compare(
+            CompareRequest(
+                source=Side(type="image", value=mockup),
+                target=Side(type="url", value=preview_url),
+                viewport=viewport,
+                options=options,
+            )
+        )
+        return report.to_dict()
+
+    try:
+        job = correction_manager.start_background(
+            project_id=engine.project_id,
+            workspace=engine.project_dir,
+            compare_fn=compare_fn,
+            config=config,
+            meta={"mockup": mockup, "mode": mode, "path": file_path, "viewport": viewport},
+            persist_dir=engine.artifacts_root / "corrections",
+        )
+    except RuntimeError as exc:
+        return 409, {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return 500, {"error": str(exc)}
+    return 202, {"ok": True, "correction": job.to_dict()}
+
+
+def handle_correction_get(engine: VisualEngine, correction_id: str) -> Tuple[int, Dict[str, Any]]:
+    from .correction import correction_manager
+
+    job = correction_manager.get(correction_id)
+    if job and job.project_id == engine.project_id:
+        return 200, {"ok": True, "correction": job.to_dict()}
+    # Disk fallback
+    path = engine.artifacts_root / "corrections" / f"{correction_id}.json"
+    if path.is_file():
+        try:
+            import json
+
+            data = json.loads(path.read_text(encoding="utf-8"))
+            return 200, {"ok": True, "correction": data}
+        except (OSError, json.JSONDecodeError):
+            pass
+    return 404, {"error": "correction not found"}
+
+
+def handle_correction_cancel(engine: VisualEngine, correction_id: str) -> Tuple[int, Dict[str, Any]]:
+    from .correction import correction_manager
+
+    job = correction_manager.cancel(correction_id)
+    if not job or job.project_id != engine.project_id:
+        return 404, {"error": "correction not found"}
+    return 200, {"ok": True, "correction": job.to_dict()}
+
+
+def handle_correction_active(engine: VisualEngine) -> Tuple[int, Dict[str, Any]]:
+    from .correction import correction_manager
+
+    job = correction_manager.active_for_project(engine.project_id)
+    return 200, {"ok": True, "correction": job.to_dict() if job else None}

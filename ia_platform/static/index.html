@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=22" />
+  <link rel="stylesheet" href="/static/app.css?v=23" />
 </head>
 <body>
   <div class="app">
@@ -346,6 +346,8 @@
                 </select>
                 <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar agora</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar preview</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto">Corrigir automaticamente</button>
+                <button type="button" class="btn btn-ghost btn-sm hidden" id="btnCorrectCancel">Interromper</button>
               </div>
               <p class="compare-status" id="compareStatus">Visual Engine — compare o preview com uma URL ou mockup.</p>
               <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
@@ -357,6 +359,11 @@
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
               <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-correction hidden" id="compareCorrection">
+                <h4>Correction loop</h4>
+                <p class="compare-correction-meta" id="compareCorrectionMeta"></p>
+                <ol class="compare-correction-attempts" id="compareCorrectionAttempts"></ol>
+              </div>
               <div class="compare-view-tabs" id="compareViewTabs">
                 <button type="button" class="compare-view-btn active" data-view="side">Lado a lado</button>
                 <button type="button" class="compare-view-btn" data-view="diff">Diff</button>
@@ -637,6 +644,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=22"></script>
+  <script src="/static/app.js?v=23"></script>
 </body>
 </html>

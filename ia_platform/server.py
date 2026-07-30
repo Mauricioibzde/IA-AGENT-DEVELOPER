@@ -298,6 +298,12 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_visual_status(project_id)
         if project_id and sub == "visual/comparisons":
             return self._handle_visual_list(project_id)
+        if project_id and sub == "visual/correction":
+            return self._handle_visual_correction_active(project_id)
+        if project_id and sub.startswith("visual/correction/"):
+            cid = sub[len("visual/correction/") :].strip("/")
+            if cid and "/" not in cid:
+                return self._handle_visual_correction_get(project_id, cid)
         if project_id and sub.startswith("visual/comparisons/"):
             rest = sub[len("visual/comparisons/") :]
             parts = [p for p in rest.split("/") if p]
@@ -371,6 +377,11 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_visual_compare(project_id)
         if project_id and sub == "visual/mockup":
             return self._handle_visual_mockup_upload(project_id)
+        if project_id and sub == "visual/correction/start":
+            return self._handle_visual_correction_start(project_id)
+        if project_id and sub.startswith("visual/correction/") and sub.endswith("/cancel"):
+            cid = sub[len("visual/correction/") : -len("/cancel")].strip("/")
+            return self._handle_visual_correction_cancel(project_id, cid)
         if project_id and sub.startswith("visual/comparisons/") and sub.endswith("/delete"):
             cid = sub[len("visual/comparisons/") : -len("/delete")]
             return self._handle_visual_delete(project_id, cid)
@@ -1302,6 +1313,49 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(404, {"error": "project not found"})
         data = self._read_json()
         code, payload = visual_api.handle_mockup_upload(engine, data)
+        return self._send_json(code, payload)
+
+    def _handle_visual_correction_start(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_correction_start(
+            engine, data, host_header=self._host_header()
+        )
+        return self._send_json(code, payload)
+
+    def _handle_visual_correction_get(self, project_id: str, correction_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_correction_get(engine, correction_id)
+        return self._send_json(code, payload)
+
+    def _handle_visual_correction_cancel(self, project_id: str, correction_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_correction_cancel(engine, correction_id)
+        return self._send_json(code, payload)
+
+    def _handle_visual_correction_active(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_correction_active(engine)
         return self._send_json(code, payload)
 
     def _handle_visual_artifact(self, project_id: str, comparison_id: str, filename: str) -> None:
