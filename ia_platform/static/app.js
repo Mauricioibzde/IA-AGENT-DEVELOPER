@@ -3819,20 +3819,23 @@
     if (!t) return false;
     const react = /\b(react|vite|next\.?js)\b/.test(t) && /\b(cri(e|ar)|faz(er)?|mont(e|ar)|app|aplicat|site|dashboard)\b/.test(t);
     const api = /\b(fastapi|api rest|endpoint|\/health|backend python)\b/.test(t) && /\b(cri(e|ar)|faz(er)?|implement|mont(e|ar))\b/.test(t);
+    const miniApp =
+      /\b(calculadora|calculator|contador|counter|todo|to-?do|cron[oô]metro|timer|conversor|quiz)\b/.test(t);
     const plain =
       !/\b(react|vite|fastapi|flask|django)\b/.test(t) &&
-      (/\bhtml\b/.test(t) && /\b(css|javascript|\bjs\b)\b/.test(t) ||
-        /\b(html|css|javascript|site|p[aá]gina|landing|aplicat|app)\b/.test(t)) &&
-      /\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit)\b/.test(t);
+      ((/\bhtml\b/.test(t) && /\b(css|javascript|\bjs\b)\b/.test(t)) ||
+        /\b(html|css|javascript|site|p[aá]gina|landing|aplicat|app)\b/.test(t) ||
+        miniApp) &&
+      /\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|pequena|simples|mini|melhor(e|ar)|adicion|alter|edit|quero)\b/.test(t);
     return react || api || plain;
   }
 
   function looksLikeStrongCreateIntent(text) {
     const t = String(text || "").toLowerCase().trim();
-    if (t.length < 14) return false;
+    if (t.length < 12) return false;
     return (
-      /\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?)\b/.test(t) &&
-      /\b(app|aplicat|site|landing|dashboard|api|react|html|p[aá]gina)\b/.test(t)
+      /\b(cri(e|ar)|faz(er)?|mont(e|ar)|gera(r)?|quero)\b/.test(t) &&
+      /\b(app|aplicat|site|landing|dashboard|api|react|html|p[aá]gina|calculadora|calculator|contador|todo)\b/.test(t)
     );
   }
 
@@ -3858,11 +3861,11 @@
       return false;
     }
     const hasAction =
-      /\b(cri(e|ar)|faz(er)?|implement(e|ar)?|adicion(e|ar)?|alter(e|ar)?|edit(e|ar)?|corrig(a|ir)?|refator(e|ar)?|melhor(e|ar)|redesenh(e|ar)?|build|gera(r)?|escrev(a|er)|mont(e|ar)|atualiz(e|ar)|aplique|aplica)\b/i.test(
+      /\b(cri(e|ar)|faz(er)?|implement(e|ar)?|adicion(e|ar)?|alter(e|ar)?|edit(e|ar)?|corrig(a|ir)?|refator(e|ar)?|melhor(e|ar)|redesenh(e|ar)?|build|gera(r)?|escrev(a|er)|mont(e|ar)|atualiz(e|ar)|aplique|aplica|quero)\b/i.test(
         t
       );
     const hasTarget =
-      /\b(landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|layout|ui|ux|dashboard|backend|frontend|visual|estilo|navbar|hero|formul[aá]rio|melhorias?|sugest\w*|mudan[cç]\w*|altera[cç]\w*|projeto)\b/i.test(
+      /\b(landing|website|site|app|aplicativ|html|css|react|vite|api|arquivo|c[oó]digo|componente|p[aá]gina|endpoint|fun[cç][aã]o|layout|ui|ux|dashboard|backend|frontend|visual|estilo|navbar|hero|formul[aá]rio|melhorias?|sugest\w*|mudan[cç]\w*|altera[cç]\w*|projeto|calculadora|calculator|contador|todo|to-?do)\b/i.test(
         t
       );
     return hasAction && hasTarget;
@@ -4196,6 +4199,31 @@
         err.streamError = true;
         throw err;
       } else {
+        // Stream died without done (common when a huge model OOMs mid-run).
+        // Retry once with a fitting smaller model for create/scaffold goals.
+        const createLike =
+          looksLikeOfflineScaffoldGoal(displayPrompt) ||
+          looksLikeStrongCreateIntent(displayPrompt) ||
+          looksLikeCodeRequest(displayPrompt);
+        if (createLike && !opts.noReportRetried && mode !== "plan") {
+          const broken = modelForRequest || resolveModelForRequest();
+          const fallback = banAndSwitchFromBrokenModel(broken, "Execução interrompida sem relatório");
+          state.running = false;
+          removeMessage(agentEl);
+          removeMessage(progressEl);
+          addMessage(
+            fallback
+              ? `Execução interrompida sem relatório — repetindo com <strong>${escapeHtml(fallback)}</strong> (scaffold se o modelo falhar).`
+              : "Execução interrompida sem relatório — repetindo com Auto / scaffold determinístico…",
+            "system"
+          );
+          return sendAgentPrompt(prompt, mode, {
+            displayPrompt,
+            model: fallback,
+            noReportRetried: true,
+            oomRetried: true,
+          });
+        }
         finalizeAgentMessage(agentEl, "Execução finalizada sem relatório.", { error: true, activity });
         window.setTimeout(() => removeMessage(progressEl), 2500);
       }

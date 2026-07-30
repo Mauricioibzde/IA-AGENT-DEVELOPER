@@ -1743,6 +1743,23 @@ class PlatformHandler(BaseHTTPRequestHandler):
             err_ev = {"type": "error", "error": str(exc), "trace": traceback.format_exc()[-1200:]}
             run_manager.append_event(run_id, err_ev)
             self._send_sse(err_ev)
+            # Always close the stream with done so the UI never lands on "sem relatório".
+            fail_done = {
+                "type": "done",
+                "ok": False,
+                "status": "FAILED",
+                "report": f"Execução falhou: {exc}",
+                "summary": f"Execução falhou: {exc}",
+                "created_files": [],
+                "modified_files": [],
+                "run_id": run_id,
+                "model_mode": "manual" if requested_model else "auto",
+            }
+            run_manager.append_event(run_id, fail_done)
+            try:
+                self._send_sse(fail_done)
+            except Exception:  # noqa: BLE001
+                pass
         finally:
             run_manager.clear(run_id)
 

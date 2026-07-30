@@ -279,12 +279,13 @@ class CodingAgent:
                 self._event("error", message=str(exc))
                 task.status = TaskStatus.FAILED
                 consecutive_failures += 1
+                # Create intents: scaffold immediately so OOM/stream death still delivers files.
+                if looks_like_offline_scaffold_goal(goal) and not self.executor.created_files:
+                    return self._deterministic_scaffold(
+                        goal,
+                        reason="Modelo falhou — scaffold aplicado para entregar o app",
+                    )
                 if consecutive_failures >= 3:
-                    if looks_like_offline_scaffold_goal(goal) and not self.executor.created_files:
-                        return self._deterministic_scaffold(
-                            goal,
-                            reason="Modelo indisponível após falhas — scaffold aplicado",
-                        )
                     self.logger.error("consecutive_failures", message="3 LLM failures in a row, stopping")
                     break
                 continue
@@ -572,6 +573,21 @@ class CodingAgent:
                 self.errors.append(decision.analysis[:300])
                 break
 
+        # Safety net: create intents must still leave files when the model never wrote any.
+        if (
+            not self.config.plan_only
+            and not self.config.dry_run
+            and looks_like_offline_scaffold_goal(goal)
+            and not self.executor.created_files
+            and not (self.config.workspace / "index.html").is_file()
+            and not (self.config.workspace / "package.json").is_file()
+            and not (self.config.workspace / "main.py").is_file()
+        ):
+            return self._deterministic_scaffold(
+                goal,
+                reason="Execução sem arquivos — scaffold aplicado para entregar o app",
+            )
+
         return self._build_report(goal, plan, final_answer)
 
     def _repair_tool_calls(self, model_text: str) -> str:
@@ -762,13 +778,17 @@ class CodingAgent:
             kind_label = "FastAPI"
             next_steps = ["pip install -r requirements.txt", "uvicorn main:app --reload", "pytest -q"]
         else:
-            from local_agent.web_scaffold import plain_web_files
+            from local_agent.web_scaffold import plain_web_files_for_goal
 
-            for rel in plain_web_files().keys():
+            for rel in plain_web_files_for_goal(goal).keys():
                 self.checkpoint.snapshot_before(rel)
             created, title = write_plain_web_app(self.config.workspace, goal)
             kind_label = "HTML/CSS/JS"
-            next_steps = ["Abrir Preview", "Melhorar visual", "Adicionar seção"]
+            next_steps = (
+                ["Abrir Preview", "Testar operações", "Pedir tema claro ou histórico"]
+                if "calcul" in (goal or "").lower()
+                else ["Abrir Preview", "Melhorar visual", "Adicionar seção"]
+            )
             problems = validate_plain_web(self.config.workspace)
             if problems:
                 self.errors.extend(problems)
