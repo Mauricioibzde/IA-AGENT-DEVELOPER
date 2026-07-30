@@ -4387,3 +4387,39 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
 .empty-state p {
   color: #9aabc8;
 }
+
+@media (min-width: 901px) {
+  .main {
+    padding: 8px 10px 10px;
+  }
+  .surface-toggle-wrap,
+  .empty-state,
+  .view-workspace {
+    border: 1px solid #1f2b43;
+    border-radius: 12px;
+    overflow: hidden;
+    background: rgba(9, 14, 24, 0.88);
+    box-shadow: 0 14px 30px rgba(4, 8, 16, 0.35);
+  }
+  .surface-toggle-wrap {
+    margin-bottom: 8px;
+  }
+  .topbar {
+    padding: 10px 14px;
+    min-height: 54px;
+  }
+  .workspace-body {
+    border-top: 1px solid #1c2942;
+  }
+  .chat-area,
+  .right-panel,
+  .panel-content {
+    background: #0c1423;
+  }
+  .chat-messages {
+    padding: 10px 14px;
+  }
+  .project-changes {
+    border-top: 1px solid #1f2b43;
+  }
+}
