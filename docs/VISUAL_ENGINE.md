@@ -61,7 +61,7 @@ projects/<projectId>/.agent/visual/<comparisonId>/
   metadata.json
 ```
 
-Baselines (Fase 7): `.agent/visual/baselines/<route-id>/`.
+Baselines (Fase 7): `.agent/visual/baselines/<route-id>/` — ver `docs/BASELINES.md`.
 
 ## Eventos SSE (planejados)
 

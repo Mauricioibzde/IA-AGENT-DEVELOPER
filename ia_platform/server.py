@@ -298,6 +298,15 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_visual_status(project_id)
         if project_id and sub == "visual/suites":
             return self._handle_visual_suites(project_id)
+        if project_id and sub == "visual/baselines":
+            return self._handle_visual_baselines_list(project_id)
+        if project_id and sub.startswith("visual/baselines/"):
+            rest = sub[len("visual/baselines/") :].strip("/")
+            parts = [p for p in rest.split("/") if p]
+            if len(parts) == 1:
+                return self._handle_visual_baseline_get(project_id, parts[0])
+            if len(parts) == 2:
+                return self._handle_visual_baseline_file(project_id, parts[0], parts[1])
         if project_id and sub == "visual/comparisons":
             return self._handle_visual_list(project_id)
         if project_id and sub == "visual/correction":
@@ -384,6 +393,12 @@ class PlatformHandler(BaseHTTPRequestHandler):
         if project_id and sub.startswith("visual/correction/") and sub.endswith("/cancel"):
             cid = sub[len("visual/correction/") : -len("/cancel")].strip("/")
             return self._handle_visual_correction_cancel(project_id, cid)
+        if project_id and sub == "visual/baselines/approve":
+            return self._handle_visual_baseline_approve(project_id)
+        if project_id and sub == "visual/baselines/reject":
+            return self._handle_visual_baseline_reject(project_id)
+        if project_id and sub == "visual/baselines/compare":
+            return self._handle_visual_baseline_compare(project_id)
         if project_id and sub.startswith("visual/comparisons/") and sub.endswith("/delete"):
             cid = sub[len("visual/comparisons/") : -len("/delete")]
             return self._handle_visual_delete(project_id, cid)
@@ -396,6 +411,10 @@ class PlatformHandler(BaseHTTPRequestHandler):
     def do_DELETE(self) -> None:
         path = urlparse(self.path).path
         project_id, sub = _parse_project_route(path)
+        if project_id and sub and sub.startswith("visual/baselines/"):
+            rid = sub[len("visual/baselines/") :].strip("/")
+            if rid and "/" not in rid:
+                return self._handle_visual_baseline_delete(project_id, rid)
         if project_id and sub and sub.startswith("visual/comparisons/"):
             cid = sub[len("visual/comparisons/") :].strip("/")
             if cid and "/" not in cid:
@@ -1303,6 +1322,90 @@ class PlatformHandler(BaseHTTPRequestHandler):
         except FileNotFoundError:
             return self._send_json(404, {"error": "project not found"})
         code, payload = visual_api.handle_list_suites(engine)
+        return self._send_json(code, payload)
+
+    def _handle_visual_baselines_list(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_list_baselines(engine)
+        return self._send_json(code, payload)
+
+    def _handle_visual_baseline_get(self, project_id: str, route_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_get_baseline(engine, route_id)
+        return self._send_json(code, payload)
+
+    def _handle_visual_baseline_file(self, project_id: str, route_id: str, filename: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        path = visual_api.resolve_baseline_file(engine, route_id, filename)
+        if not path:
+            return self._send_json(404, {"error": "baseline file not found"})
+        content = path.read_bytes()
+        ctype = visual_api.guess_content_type(path)
+        self.send_response(200)
+        self.send_header("Content-Type", ctype)
+        self.send_header("Content-Length", str(len(content)))
+        self.send_header("Cache-Control", "no-store")
+        self.end_headers()
+        self.wfile.write(content)
+
+    def _handle_visual_baseline_approve(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_approve_baseline(engine, data)
+        return self._send_json(code, payload)
+
+    def _handle_visual_baseline_reject(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_reject_baseline(engine, data)
+        return self._send_json(code, payload)
+
+    def _handle_visual_baseline_compare(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_compare_baseline(
+            engine, data, host_header=self._host_header()
+        )
+        return self._send_json(code, payload)
+
+    def _handle_visual_baseline_delete(self, project_id: str, route_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_delete_baseline(engine, route_id)
         return self._send_json(code, payload)
 
     def _handle_visual_compare(self, project_id: str) -> None:

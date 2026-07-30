@@ -157,6 +157,11 @@
     compareSuitePanel: $("compareSuitePanel"),
     compareSuiteMeta: $("compareSuiteMeta"),
     compareSuiteList: $("compareSuiteList"),
+    compareRouteId: $("compareRouteId"),
+    btnBaselineApprove: $("btnBaselineApprove"),
+    btnBaselineReject: $("btnBaselineReject"),
+    btnBaselineCompare: $("btnBaselineCompare"),
+    compareBaselineList: $("compareBaselineList"),
     compareViewTabs: $("compareViewTabs"),
     compareGallery: $("compareGallery"),
     compareRefImg: $("compareRefImg"),
@@ -5778,9 +5783,102 @@
               .join("")
           : "<li class='muted'>Nenhuma comparação ainda.</li>";
       }
-      if (items[0]) renderCompareReport(items[0]);
+      await refreshBaselinesList();
+      if (items[0] && items[0].mode !== "pixel_perfect") renderCompareReport(items[0]);
     } catch (e) {
       if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha ao carregar Visual Engine.";
+    }
+  }
+
+  async function refreshBaselinesList() {
+    if (!state.current?.id || !els.compareBaselineList) return;
+    try {
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/baselines`);
+      const items = data.baselines || [];
+      els.compareBaselineList.innerHTML = items.length
+        ? items
+            .map((b) => {
+              const st = escapeHtml(b.status || "");
+              const label = escapeHtml(b.label || b.routeId);
+              return `<li><button type="button" class="compare-baseline-btn" data-route="${escapeHtml(b.routeId)}"><span>${label}</span> · ${st}</button></li>`;
+            })
+            .join("")
+        : "<li class='muted'>Nenhuma baseline aprovada.</li>";
+    } catch {
+      els.compareBaselineList.innerHTML = "<li class='muted'>Baselines indisponíveis.</li>";
+    }
+  }
+
+  function currentRouteId() {
+    return (els.compareRouteId?.value || "").trim() || "home";
+  }
+
+  async function approveBaseline() {
+    if (!state.current?.id) return;
+    const routeId = currentRouteId();
+    const cid = state.lastCompareReport?.comparisonId || state.lastCompareReport?.comparison_id;
+    const mockup = (els.compareMockupPath?.value || "").trim();
+    if (!cid && !mockup) {
+      showToast("Compare ou informe um mockup antes de aprovar.", "info");
+      return;
+    }
+    try {
+      const body = { routeId, label: routeId, viewport: parseCompareViewport() };
+      if (cid) body.comparisonId = cid;
+      else body.path = mockup;
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/baselines/approve`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      showToast(`Baseline aprovada: ${data.baseline?.routeId || routeId}`, "ok");
+      await refreshBaselinesList();
+    } catch (e) {
+      showToast(e.message || "Falha ao aprovar baseline", "err");
+    }
+  }
+
+  async function rejectBaseline() {
+    if (!state.current?.id) return;
+    const routeId = currentRouteId();
+    const cid = state.lastCompareReport?.comparisonId || state.lastCompareReport?.comparison_id || "";
+    try {
+      await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/baselines/reject`, {
+        method: "POST",
+        body: JSON.stringify({ routeId, comparisonId: cid, notes: "rejected from UI" }),
+      });
+      showToast(`Baseline rejeitada: ${routeId}`, "info");
+      await refreshBaselinesList();
+    } catch (e) {
+      showToast(e.message || "Falha ao rejeitar baseline", "err");
+    }
+  }
+
+  async function compareAgainstBaseline() {
+    if (!state.current?.id) return;
+    const routeId = currentRouteId();
+    if (els.compareStatus) els.compareStatus.textContent = `Comparando vs baseline ${routeId}…`;
+    try {
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/baselines/compare`, {
+        method: "POST",
+        body: JSON.stringify({
+          routeId,
+          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+          viewport: parseCompareViewport(),
+          target_similarity: 0.95,
+          options: { fit: els.compareFit?.value || "contain", threshold: 0.1 },
+        }),
+      });
+      renderCompareReport(data.report);
+      const bl = data.baseline;
+      if (els.compareScore && bl) {
+        const badge = bl.passed ? "PASS" : "FAIL";
+        els.compareScore.innerHTML += ` · baseline <strong>${escapeHtml(badge)}</strong>`;
+      }
+      await refreshComparePanel();
+      showToast(bl?.passed ? "Regressão OK vs baseline." : "Regressão detectada vs baseline.", bl?.passed ? "ok" : "info");
+    } catch (e) {
+      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha vs baseline";
+      showToast(e.message || "Falha vs baseline", "err");
     }
   }
 
@@ -6301,6 +6399,14 @@
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
   els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
+  els.btnBaselineApprove?.addEventListener("click", approveBaseline);
+  els.btnBaselineReject?.addEventListener("click", rejectBaseline);
+  els.btnBaselineCompare?.addEventListener("click", compareAgainstBaseline);
+  els.compareBaselineList?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".compare-baseline-btn");
+    if (!btn?.dataset.route || !els.compareRouteId) return;
+    els.compareRouteId.value = btn.dataset.route;
+  });
   els.btnUploadMockup?.addEventListener("click", () => els.compareMockupFile?.click());
   els.compareMockupFile?.addEventListener("change", () => {
     const file = els.compareMockupFile.files?.[0];

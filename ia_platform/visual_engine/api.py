@@ -289,15 +289,34 @@ def resolve_artifact_file(engine: VisualEngine, comparison_id: str, filename: st
         "metadata.json",
         "dom-diff.json",
         "layout-diff.json",
+        "baseline.png",
+        "meta.json",
     }
     if name not in allowed:
         return None
-    path = (engine.artifacts_root / cid / name).resolve()
+    # Baseline artifacts live under baselines/<routeId>/
+    if cid.startswith("baselines/"):
+        rel = cid[len("baselines/") :].strip("/")
+        if not rel or "/" in rel or ".." in rel:
+            return None
+        path = (engine.artifacts_root / "baselines" / rel / name).resolve()
+    else:
+        path = (engine.artifacts_root / cid / name).resolve()
     try:
         path.relative_to(engine.artifacts_root.resolve())
     except ValueError:
         return None
     return path if path.is_file() else None
+
+
+def resolve_baseline_file(engine: VisualEngine, route_id: str, filename: str = "baseline.png") -> Optional[Path]:
+    from .baselines import sanitize_route_id
+
+    try:
+        rid = sanitize_route_id(route_id)
+    except ValueError:
+        return None
+    return resolve_artifact_file(engine, f"baselines/{rid}", filename)
 
 
 def guess_content_type(path: Path) -> str:
@@ -452,3 +471,153 @@ def handle_correction_active(engine: VisualEngine) -> Tuple[int, Dict[str, Any]]
 
     job = correction_manager.active_for_project(engine.project_id)
     return 200, {"ok": True, "correction": job.to_dict() if job else None}
+
+
+def handle_list_baselines(engine: VisualEngine) -> Tuple[int, Dict[str, Any]]:
+    from .baselines import list_baselines
+
+    return 200, {"ok": True, "baselines": list_baselines(engine.artifacts_root)}
+
+
+def handle_get_baseline(engine: VisualEngine, route_id: str) -> Tuple[int, Dict[str, Any]]:
+    from .baselines import get_baseline
+
+    item = get_baseline(engine.artifacts_root, route_id)
+    if not item:
+        return 404, {"error": "baseline not found"}
+    return 200, {"ok": True, "baseline": item}
+
+
+def handle_approve_baseline(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    from .baselines import approve_baseline, find_comparison_actual, sanitize_route_id
+
+    try:
+        route_id = sanitize_route_id(str(data.get("routeId") or data.get("route_id") or data.get("route") or ""))
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    comparison_id = str(data.get("comparisonId") or data.get("comparison_id") or "").strip()
+    prefer = str(data.get("prefer") or "actual")
+    if prefer not in {"actual", "reference"}:
+        prefer = "actual"
+    try:
+        if comparison_id:
+            source = find_comparison_actual(engine.artifacts_root, comparison_id, prefer=prefer)
+        elif data.get("path"):
+            from local_agent.security import resolve_in_workspace
+
+            source = resolve_in_workspace(engine.project_dir, str(data["path"]))
+            if not source.is_file():
+                return 404, {"error": f"image not found: {data['path']}"}
+        else:
+            return 400, {"error": "comparisonId or path is required"}
+        baseline = approve_baseline(
+            engine.artifacts_root,
+            route_id=route_id,
+            source_png=source,
+            comparison_id=comparison_id,
+            viewport=data.get("viewport") if isinstance(data.get("viewport"), dict) else None,
+            label=str(data.get("label") or ""),
+            notes=str(data.get("notes") or ""),
+        )
+        return 200, {"ok": True, "baseline": baseline}
+    except FileNotFoundError as exc:
+        return 404, {"error": str(exc)}
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return 500, {"error": str(exc)}
+
+
+def handle_reject_baseline(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    from .baselines import reject_baseline, sanitize_route_id
+
+    try:
+        route_id = sanitize_route_id(str(data.get("routeId") or data.get("route_id") or data.get("route") or ""))
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    try:
+        baseline = reject_baseline(
+            engine.artifacts_root,
+            route_id=route_id,
+            comparison_id=str(data.get("comparisonId") or data.get("comparison_id") or ""),
+            notes=str(data.get("notes") or ""),
+            remove_image=bool(data.get("remove_image") or data.get("removeImage")),
+        )
+        return 200, {"ok": True, "baseline": baseline}
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return 500, {"error": str(exc)}
+
+
+def handle_delete_baseline(engine: VisualEngine, route_id: str) -> Tuple[int, Dict[str, Any]]:
+    from .baselines import delete_baseline, sanitize_route_id
+
+    try:
+        rid = sanitize_route_id(route_id)
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    removed = delete_baseline(engine.artifacts_root, rid)
+    if not removed:
+        return 404, {"error": "baseline not found"}
+    return 200, {"ok": True, "deleted": rid}
+
+
+def handle_compare_baseline(
+    engine: VisualEngine,
+    data: Dict[str, Any],
+    *,
+    host_header: str,
+) -> Tuple[int, Dict[str, Any]]:
+    """Compare current preview (or URL) against an approved baseline route."""
+    from .baselines import get_baseline, sanitize_route_id
+
+    try:
+        route_id = sanitize_route_id(str(data.get("routeId") or data.get("route_id") or data.get("route") or ""))
+    except ValueError as exc:
+        return 400, {"error": str(exc)}
+    baseline = get_baseline(engine.artifacts_root, route_id)
+    if not baseline or not baseline.get("hasBaseline"):
+        return 404, {"error": f"no approved baseline for route: {route_id}"}
+    target_sim = float(data.get("target_similarity") or data.get("targetSimilarity") or 0.95)
+    viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else baseline.get("viewport") or {
+        "width": 1366,
+        "height": 768,
+    }
+    options = data.get("options") if isinstance(data.get("options"), dict) else {}
+    options = {**options, "fit": options.get("fit") or data.get("fit") or "contain"}
+    # Build compare payload: baseline image vs preview/url
+    payload = {
+        "source": {"type": "image", "value": baseline["path"]},
+        "target": data.get("target"),
+        "viewport": viewport,
+        "options": options,
+        "mode": data.get("mode") or "auto",
+        "path": data.get("path") or "index.html",
+    }
+    if not payload["target"]:
+        if data.get("url"):
+            payload["target"] = {"type": "url", "value": str(data["url"])}
+        else:
+            payload["target"] = {
+                "type": "url",
+                "value": engine.resolve_preview_url(
+                    host_header=host_header,
+                    mode=str(payload["mode"]),
+                    file_path=str(payload["path"]),
+                ),
+            }
+    code, result = handle_compare(engine, payload, host_header=host_header)
+    if code != 200:
+        return code, result
+    report = result.get("report") or {}
+    sim = report.get("similarity")
+    passed = isinstance(sim, (int, float)) and float(sim) >= target_sim
+    result["baseline"] = {
+        "routeId": route_id,
+        "targetSimilarity": target_sim,
+        "passed": passed,
+        "status": "passed" if passed else "failed",
+        "path": baseline["path"],
+    }
+    return 200, result

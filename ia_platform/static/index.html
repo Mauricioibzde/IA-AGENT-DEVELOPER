@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=24" />
+  <link rel="stylesheet" href="/static/app.css?v=25" />
 </head>
 <body>
   <div class="app">
@@ -367,6 +367,16 @@
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
               <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-baseline-row">
+                <label class="compare-label" for="compareRouteId">Rota / baseline</label>
+                <div class="compare-mockup-row">
+                  <input id="compareRouteId" type="text" placeholder="ex: home" class="compare-input compare-input-inline" />
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineApprove">Aprovar</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineReject">Rejeitar</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnBaselineCompare">Vs baseline</button>
+                </div>
+                <ul class="compare-baseline-list" id="compareBaselineList"></ul>
+              </div>
               <div class="compare-suite hidden" id="compareSuitePanel">
                 <h4>Pixel Perfect</h4>
                 <p class="compare-suite-meta" id="compareSuiteMeta"></p>
@@ -657,6 +667,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=24"></script>
+  <script src="/static/app.js?v=25"></script>
 </body>
 </html>

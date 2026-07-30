@@ -3590,6 +3590,26 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
 .compare-region-item.severity-high { border-color: rgba(194, 65, 12, 0.45); }
 .compare-region-item.severity-medium { border-color: rgba(180, 83, 9, 0.4); }
 .compare-region-item .muted { color: var(--muted); }
+.compare-baseline-row { margin: 0.5rem 0 0.75rem; }
+.compare-baseline-list {
+  list-style: none;
+  margin: 0.4rem 0 0;
+  padding: 0;
+  display: flex;
+  flex-wrap: wrap;
+  gap: 0.35rem;
+}
+.compare-baseline-btn {
+  border: 1px solid var(--border, rgba(255,255,255,0.1));
+  background: transparent;
+  color: inherit;
+  font-size: 0.75rem;
+  padding: 0.2rem 0.45rem;
+  border-radius: 6px;
+  cursor: pointer;
+}
+.compare-baseline-btn:hover { border-color: rgba(255,255,255,0.25); }
+
 .compare-suite {
   margin: 0.75rem 0 1rem;
   padding: 0.65rem 0.75rem;

@@ -7,11 +7,21 @@ projects/<projectId>/.agent/visual/<comparisonId>/
   diff.png
   report.json
   metadata.json
+
+projects/<projectId>/.agent/visual/baselines/<routeId>/
+  baseline.png
+  meta.json
+
+projects/<projectId>/.agent/visual/suites/<suiteRunId>/
+  report.json
 ```
 
 - IDs sanitizados (`safeId`)
 - Path traversal rejeitado
-- Baselines (Fase 7) em `.agent/visual/baselines/` — **não** apagar no cleanup automático
-- Retenção: idade + contagem (portar de `cleanup.js` na Fase 2)
+- Baselines em `.agent/visual/baselines/` — **não** apagar no cleanup automático
+- Retenção: idade + contagem (Fase 8)
 
-Servir via Forge: `GET /api/projects/<id>/visual/<comparisonId>/<file>` (Fase 2).
+Servir via Forge: `GET /api/projects/<id>/visual/comparisons/<comparisonId>/<file>`  
+Baselines: `GET /api/projects/<id>/visual/baselines/<routeId>/baseline.png`
+
+Ver `docs/BASELINES.md`.
