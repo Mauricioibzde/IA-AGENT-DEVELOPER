@@ -183,8 +183,8 @@
                   <option value="__custom__">Outro...</option>
                 </select>
                 <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
-                <label class="topbar-more-label steps-control" for="maxStepsInput">Máx. passos</label>
-                <div class="steps-control" title="Max steps">
+                <label class="topbar-more-label" for="maxStepsInput">Máx. passos</label>
+                <div class="steps-control" id="stepsControl" title="Max steps">
                   <span class="steps-icon" aria-hidden="true">✦</span>
                   <input id="maxStepsInput" type="number" value="20" min="1" max="50" class="control-input steps-input" />
                 </div>
@@ -258,9 +258,10 @@
               </div>
               <div class="composer-toolbar" id="composerToolbar">
                 <button type="button" class="composer-tool" id="btnPickProject" title="Escolher projeto">
-                  <span aria-hidden="true">📁</span> Escolher projeto
+                  Projeto
                 </button>
-                <span class="composer-tool muted" id="composerProjectLabel">Sem projeto</span>
+                <span class="composer-tool muted" id="composerProjectLabel">Nenhum selecionado</span>
+                <span class="composer-tool-hint muted" id="composerToolHint">Modelo no seletor à direita · Chat/Work no topo</span>
               </div>
               <div class="chat-input-actions">
                 <div class="busy-banner hidden" id="busyBanner">

@@ -1720,6 +1720,19 @@ body.mode-execute-flash #modeSelect {
 body.surface-chat .btn-deploy { display: none; }
 body.surface-work .btn-deploy { display: inline-flex; }
 
+.composer-tool-hint {
+  margin-left: auto;
+  font-size: 0.7rem;
+  opacity: 0.75;
+  max-width: 46%;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+@media (max-width: 900px) {
+  .composer-tool-hint { display: none; }
+}
+
 .panel-content {
   flex: 1;
   overflow-y: auto;

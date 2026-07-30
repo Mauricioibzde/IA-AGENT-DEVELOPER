@@ -725,6 +725,7 @@ class PlatformHandler(BaseHTTPRequestHandler):
                     "dev_recovery": True,
                     "run_reconnect": True,
                     "file_revisions": True,
+                    "visual_engine": True,
                 },
             },
         )

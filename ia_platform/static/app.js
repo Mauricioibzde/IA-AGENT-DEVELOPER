@@ -5796,17 +5796,55 @@
     }
   }
 
+  function setVisualControlsEnabled(enabled) {
+    [
+      els.btnCompareNow,
+      els.btnCapturePreview,
+      els.btnPixelPerfect,
+      els.btnCorrectAuto,
+      els.btnUploadMockup,
+      els.btnBaselineApprove,
+      els.btnBaselineReject,
+      els.btnBaselineCompare,
+    ].forEach((btn) => {
+      if (btn) btn.disabled = !enabled;
+    });
+  }
+
+  function visualApiMissingMessage(err) {
+    const msg = String(err?.message || err?.data?.error || "");
+    if (err?.status === 404 && (!msg || /not found|não encontrado/i.test(msg))) {
+      return (
+        "API Visual ausente neste servidor. Pare o Forge e reinicie na branch com Visual Engine " +
+        "(feature/visual-engine-integration ou cursor/ui-nav-simplify-40ee), depois atualize a página."
+      );
+    }
+    if (err?.status === 404 && /project not found/i.test(msg)) {
+      return "Projeto não encontrado no servidor. Reabra o projeto na sidebar.";
+    }
+    return msg || "Falha ao carregar Visual Engine.";
+  }
+
   async function refreshComparePanel() {
     if (!state.current?.id) {
       if (els.compareStatus) els.compareStatus.textContent = "Abra um projeto para comparar.";
       return;
     }
+    if (state.serverFeatures && state.serverFeatures.visual_engine === false) {
+      if (els.compareStatus) {
+        els.compareStatus.textContent = "Este servidor não inclui Visual Engine.";
+      }
+      setVisualControlsEnabled(false);
+      return;
+    }
     try {
       const st = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/status`);
+      state.visualApiOk = true;
+      setVisualControlsEnabled(true);
       if (els.compareStatus) {
         els.compareStatus.textContent = st.ok
           ? `Visual Engine pronto${st.bridge?.chrome ? " · Chrome detectado" : ""}.`
-          : st.error || "Visual Engine indisponível (Node/Chrome).";
+          : st.error || "Visual Engine indisponível (Node/Chrome). Instale: cd visual_engine && npm install";
       }
       const hist = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons`);
       const items = hist.comparisons || [];
@@ -5826,7 +5864,12 @@
       await refreshBaselinesList();
       if (items[0] && items[0].mode !== "pixel_perfect") renderCompareReport(items[0]);
     } catch (e) {
-      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha ao carregar Visual Engine.";
+      state.visualApiOk = false;
+      setVisualControlsEnabled(false);
+      if (els.compareStatus) els.compareStatus.textContent = visualApiMissingMessage(e);
+      if (els.compareHistoryList) {
+        els.compareHistoryList.innerHTML = "<li class='muted'>Histórico indisponível até o servidor Visual estar ativo.</li>";
+      }
     }
   }
 
@@ -6516,7 +6559,8 @@
     const mode = els.modeSelect?.value || "chat";
     const isChat = mode === "chat";
     const isExecute = mode === "execute";
-    document.querySelector(".steps-control")?.classList.toggle("hidden", isChat);
+    document.getElementById("stepsControl")?.classList.toggle("hidden", isChat);
+    document.querySelector('label[for="maxStepsInput"]')?.classList.toggle("hidden", isChat);
     if (els.modeChip) {
       els.modeChip.textContent = isExecute ? "Executar" : "Chat";
       els.modeChip.classList.toggle("mode-chip--execute", isExecute);
