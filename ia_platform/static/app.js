@@ -123,6 +123,7 @@
     btnRefreshFiles: $("btnRefreshFiles"),
     btnClearChat: $("btnClearChat"),
     btnResetProjectLayout: $("btnResetProjectLayout"),
+    layoutPresetStatus: $("layoutPresetStatus"),
     btnDeploy: $("btnDeploy"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
@@ -2930,6 +2931,7 @@
       els.splitSidebar.setAttribute("aria-valuenow", String(Math.round(width)));
     }
     if (persist) writeLayoutNumber(LAYOUT_KEYS.sidebarW, width, { projectScoped: true });
+    if (persist) syncLayoutPresetIndicator();
     return width;
   }
 
@@ -2947,6 +2949,7 @@
       els.splitPanel.setAttribute("aria-valuemax", String(max));
     }
     if (persist) writeLayoutNumber(currentPanelWidthKey(), width, { projectScoped: true });
+    if (persist) syncLayoutPresetIndicator();
     return width;
   }
 
@@ -2958,6 +2961,7 @@
       els.splitWorkRail.setAttribute("aria-valuemax", String(LAYOUT_LIMITS.workRailMax));
     }
     if (persist) writeLayoutNumber(LAYOUT_KEYS.workRailH, height, { projectScoped: true });
+    if (persist) syncLayoutPresetIndicator();
     return height;
   }
 
@@ -2994,6 +2998,7 @@
       );
     }
     if (persist) writeLayoutFlag(currentPanelCollapsedKey(), !!collapsed, { projectScoped: true });
+    if (persist) syncLayoutPresetIndicator();
   }
 
   function togglePanelCollapsed() {
@@ -3020,6 +3025,7 @@
     applyWorkRailHeight(workRailH);
     syncWorkRailSplitter();
     els.workspaceView?.setAttribute("data-layout-ready", "1");
+    syncLayoutPresetIndicator();
   }
 
   function resetSidebarWidth() {
@@ -3038,6 +3044,54 @@
     showToast("Altura do fluxo restaurada.", "info", 2200);
   }
 
+  function readProjectLayoutSnapshot() {
+    return {
+      sidebarW: readLayoutNumber(LAYOUT_KEYS.sidebarW, LAYOUT_DEFAULTS.sidebarW, { projectScoped: true }),
+      panelWChat: readLayoutNumber(LAYOUT_KEYS.panelWChat, LAYOUT_DEFAULTS.panelWChat, { projectScoped: true }),
+      panelWWork: readLayoutNumber(LAYOUT_KEYS.panelWWork, LAYOUT_DEFAULTS.panelWWork, { projectScoped: true }),
+      panelCollapsedChat: readLayoutFlag(LAYOUT_KEYS.panelCollapsedChat, true, { projectScoped: true }),
+      panelCollapsedWork: readLayoutFlag(LAYOUT_KEYS.panelCollapsedWork, false, { projectScoped: true }),
+      workRailH: readLayoutNumber(LAYOUT_KEYS.workRailH, LAYOUT_DEFAULTS.workRailH, { projectScoped: true }),
+    };
+  }
+
+  function detectActiveLayoutPreset() {
+    if (!state.current?.id) return null;
+    const snap = readProjectLayoutSnapshot();
+    const EPS = 16;
+    for (const [id, preset] of Object.entries(LAYOUT_PRESETS)) {
+      const match =
+        Math.abs(snap.sidebarW - preset.sidebarW) <= EPS &&
+        Math.abs(snap.panelWChat - preset.panelWChat) <= EPS &&
+        Math.abs(snap.panelWWork - preset.panelWWork) <= EPS &&
+        snap.panelCollapsedChat === preset.panelCollapsedChat &&
+        snap.panelCollapsedWork === preset.panelCollapsedWork &&
+        Math.abs(snap.workRailH - preset.workRailH) <= EPS;
+      if (match) return id;
+    }
+    return "custom";
+  }
+
+  function syncLayoutPresetIndicator() {
+    const active = detectActiveLayoutPreset();
+    document.querySelectorAll("[data-layout-preset]").forEach((btn) => {
+      const on = !!active && btn.getAttribute("data-layout-preset") === active;
+      btn.classList.toggle("is-active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
+    });
+    if (!els.layoutPresetStatus) return;
+    if (!state.current?.id) {
+      els.layoutPresetStatus.textContent = "Abra um projeto para aplicar presets.";
+      return;
+    }
+    if (active === "custom") {
+      els.layoutPresetStatus.textContent = "Preset ativo: personalizado · atalhos Ctrl+Alt+1/2/3";
+      return;
+    }
+    const label = LAYOUT_PRESETS[active]?.label || "Personalizado";
+    els.layoutPresetStatus.textContent = `Preset ativo: ${label} · reset: Ctrl+Alt+0`;
+  }
+
   function clearProjectLayoutPreferences() {
     if (!state.current?.id) {
       showToast("Abra um projeto para resetar o layout.", "info");
@@ -3051,6 +3105,7 @@
       /* ignore */
     }
     restoreLayoutSizes();
+    syncLayoutPresetIndicator();
     showToast("Layout deste projeto restaurado ao padrão.", "info", 2600);
   }
 
@@ -3068,6 +3123,7 @@
     writeLayoutFlag(LAYOUT_KEYS.panelCollapsedWork, preset.panelCollapsedWork, { projectScoped: true });
     writeLayoutNumber(LAYOUT_KEYS.workRailH, preset.workRailH, { projectScoped: true });
     restoreLayoutSizes();
+    syncLayoutPresetIndicator();
     document.getElementById("topbarMore")?.removeAttribute("open");
     showToast(`Layout aplicado: ${preset.label}`, "info", 2400);
   }
@@ -3082,6 +3138,25 @@
       clearProjectLayoutPreferences();
       document.getElementById("topbarMore")?.removeAttribute("open");
     });
+    document.addEventListener("keydown", (e) => {
+      if (!(e.ctrlKey && e.altKey)) return;
+      const tag = (e.target && e.target.tagName ? e.target.tagName : "").toLowerCase();
+      if (tag === "input" || tag === "textarea" || tag === "select" || e.target?.isContentEditable) return;
+      if (e.key === "1") {
+        e.preventDefault();
+        applyLayoutPreset("chat");
+      } else if (e.key === "2") {
+        e.preventDefault();
+        applyLayoutPreset("preview");
+      } else if (e.key === "3") {
+        e.preventDefault();
+        applyLayoutPreset("balanced");
+      } else if (e.key === "0") {
+        e.preventDefault();
+        clearProjectLayoutPreferences();
+      }
+    });
+    syncLayoutPresetIndicator();
   }
 
   function bindVerticalSplitter(el, { onMove, onReset, onActivate, canDrag }) {
