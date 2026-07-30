@@ -2085,6 +2085,15 @@ body.surface-chat #workRail { display: none !important; }
   justify-content: center;
   font-size: 0.72rem;
 }
+.layout-preset-btn.is-active {
+  border-color: rgba(52, 81, 178, 0.35);
+  color: var(--accent-2);
+  background: rgba(52, 81, 178, 0.08);
+}
+.layout-preset-status {
+  font-size: 0.68rem;
+  line-height: 1.35;
+}
 
 /* Deploy is a Work action — keep Chat chrome quieter */
 body.surface-chat .btn-deploy { display: none; }
