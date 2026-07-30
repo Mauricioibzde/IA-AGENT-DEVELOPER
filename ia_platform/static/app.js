@@ -150,6 +150,8 @@
     btnPixelPerfect: $("btnPixelPerfect"),
     btnCapturePreview: $("btnCapturePreview"),
     btnCorrectAuto: $("btnCorrectAuto"),
+    btnMockupToCode: $("btnMockupToCode"),
+    correctionStrategy: $("correctionStrategy"),
     btnCorrectCancel: $("btnCorrectCancel"),
     compareCorrection: $("compareCorrection"),
     compareCorrectionMeta: $("compareCorrectionMeta"),
@@ -6746,6 +6748,7 @@
       els.btnCapturePreview,
       els.btnPixelPerfect,
       els.btnCorrectAuto,
+      els.btnMockupToCode,
       els.btnUploadMockup,
       els.btnBaselineApprove,
       els.btnBaselineReject,
@@ -6944,7 +6947,9 @@
     const best = job.best_similarity == null ? "—" : `${(job.best_similarity * 100).toFixed(1)}%`;
     const imp = job.improvement == null ? "—" : `${(job.improvement * 100).toFixed(1)} pp`;
     if (els.compareCorrectionMeta) {
-      els.compareCorrectionMeta.textContent = `${job.status} · base ${base} → melhor ${best} · Δ ${imp}`;
+      const strategy = job.meta?.strategy || "css";
+      els.compareCorrectionMeta.textContent =
+        `${job.status} · ${strategy} · base ${base} → melhor ${best} · Δ ${imp}`;
     }
     if (els.compareCorrectionAttempts) {
       const attempts = job.attempts || [];
@@ -6960,6 +6965,7 @@
     const running = job.status === "queued" || job.status === "running";
     els.btnCorrectCancel?.classList.toggle("hidden", !running);
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = running);
+    els.btnMockupToCode && (els.btnMockupToCode.disabled = running);
   }
 
   function stopCorrectionPolling() {
@@ -6994,36 +7000,51 @@
     }
   }
 
-  async function startCorrectionLoop() {
+  async function startCorrectionLoop(strategyOverride) {
     if (!state.current?.id) return;
     const mockup = (els.compareMockupPath?.value || "").trim();
     if (!mockup) {
       showToast("Envie ou informe um mockup antes de corrigir.", "info");
       return;
     }
+    const strategy = strategyOverride || els.correctionStrategy?.value || "agent";
     stopCorrectionPolling();
-    if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
+    if (els.compareStatus) {
+      els.compareStatus.textContent =
+        strategy === "css"
+          ? "Iniciando correction loop (CSS)…"
+          : strategy === "hybrid"
+            ? "Iniciando mockup → código (híbrido)…"
+            : "Iniciando mockup → código → comparar → corrigir…";
+    }
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
+    els.btnMockupToCode && (els.btnMockupToCode.disabled = true);
     try {
       const suite = selectedCompareSuite();
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/start`, {
         method: "POST",
         body: JSON.stringify({
           mockup,
+          strategy,
           preview_mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
           target_similarity: 0.95,
-          max_attempts: 5,
+          max_attempts: strategy === "css" ? 5 : 4,
+          max_agent_steps: 12,
         }),
       });
       state.correctionJob = data.correction;
       renderCorrectionJob(data.correction);
       state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), 1500);
-      showToast("Correction loop em execução…", "info");
+      showToast(
+        strategy === "css" ? "Correction CSS em execução…" : "Mockup → Código em execução…",
+        "info"
+      );
     } catch (e) {
       els.btnCorrectAuto && (els.btnCorrectAuto.disabled = false);
+      els.btnMockupToCode && (els.btnMockupToCode.disabled = false);
       showToast(e.message || "Não foi possível iniciar a correção", "err");
     }
   }
@@ -7457,7 +7478,11 @@
   els.btnCompareNow?.addEventListener("click", runCompareNow);
   els.btnPixelPerfect?.addEventListener("click", runPixelPerfect);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
-  els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
+  els.btnCorrectAuto?.addEventListener("click", () => startCorrectionLoop("css"));
+  els.btnMockupToCode?.addEventListener("click", () => {
+    const strategy = els.correctionStrategy?.value || "agent";
+    startCorrectionLoop(strategy === "css" ? "agent" : strategy);
+  });
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
   els.btnBaselineApprove?.addEventListener("click", approveBaseline);
   els.btnBaselineReject?.addEventListener("click", rejectBaseline);

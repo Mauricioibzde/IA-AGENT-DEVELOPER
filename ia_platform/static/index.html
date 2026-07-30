@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=41" />
+  <link rel="stylesheet" href="/static/app.css?v=42" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -522,7 +522,13 @@
                       <option value="crop">Crop</option>
                     </select>
                     <button type="button" class="btn btn-ghost btn-sm" id="btnPixelPerfect">Pixel Perfect</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto">Corrigir auto</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto" title="Loop CSS heurístico">Corrigir CSS</button>
+                    <button type="button" class="btn btn-primary btn-sm" id="btnMockupToCode" title="Mockup → código → comparar → corrigir com o agente">Mockup → Código</button>
+                    <select id="correctionStrategy" class="control-select" title="Estratégia do loop">
+                      <option value="agent" selected>Agente (código)</option>
+                      <option value="hybrid">Híbrido (agente + CSS)</option>
+                      <option value="css">Só CSS</option>
+                    </select>
                   </div>
                   <div class="compare-baseline-row">
                     <label class="compare-label" for="compareRouteId">Baseline por rota</label>

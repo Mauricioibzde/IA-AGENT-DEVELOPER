@@ -160,12 +160,53 @@ class CorrectionLoop:
 
                 checkpoint_id = f"corr-{job.id}-{attempt_no}"
                 self._emit(job, "correction.patch_created", attempt=attempt_no, patches=len(patches))
-                apply_result = self.apply_fn(patches, checkpoint_id)
+                try:
+                    apply_result = self.apply_fn(patches, checkpoint_id)
+                except Exception as apply_exc:  # noqa: BLE001
+                    attempt = CorrectionAttempt(
+                        attempt=attempt_no,
+                        similarity=prev_sim,
+                        previous_similarity=prev_sim,
+                        status="failed",
+                        patches=len(patches),
+                        checkpoint_id=checkpoint_id,
+                        notes=f"apply failed: {apply_exc}",
+                    )
+                    job.attempts.append(asdict(attempt))
+                    self._emit(job, "comparison.failed", error=str(apply_exc), attempt=attempt_no)
+                    job.status = "failed"
+                    job.error = str(apply_exc)
+                    break
+                if isinstance(apply_result, dict) and apply_result.get("ok") is False:
+                    err = str(apply_result.get("error") or "apply returned ok=false")
+                    attempt = CorrectionAttempt(
+                        attempt=attempt_no,
+                        similarity=prev_sim,
+                        previous_similarity=prev_sim,
+                        status="failed",
+                        patches=len(patches),
+                        checkpoint_id=checkpoint_id,
+                        notes=err,
+                    )
+                    job.attempts.append(asdict(attempt))
+                    self._emit(job, "comparison.failed", error=err, attempt=attempt_no)
+                    # Soft-continue for transient busy; hard-fail otherwise.
+                    if "busy" in err.lower():
+                        stagnant += 1
+                        if stagnant >= cfg.stagnation_limit:
+                            job.status = "completed"
+                            self._emit(job, "correction.completed", reason="stagnation_apply_busy")
+                            break
+                        continue
+                    job.status = "failed"
+                    job.error = err
+                    break
                 self._emit(
                     job,
                     "correction.applied",
                     attempt=attempt_no,
                     written=apply_result.get("written") or [],
+                    kind=(apply_result.get("kind") if isinstance(apply_result, dict) else None),
                 )
 
                 t0 = time.time()
@@ -324,6 +365,10 @@ class CorrectionManager:
         config: Optional[CorrectionConfig] = None,
         meta: Optional[Dict[str, Any]] = None,
         persist_dir: Optional[Path] = None,
+        plan_fn: Optional[PatchPlanFn] = None,
+        apply_fn: Optional[Callable[[List[Dict[str, Any]], str], Dict[str, Any]]] = None,
+        rollback_fn: Optional[Callable[[str], Dict[str, Any]]] = None,
+        on_event: Optional[EventFn] = None,
     ) -> CorrectionJob:
         with self._lock:
             existing_id = self._project_active.get(project_id)
@@ -341,7 +386,22 @@ class CorrectionManager:
             self._project_active[project_id] = job.id
 
         def _worker() -> None:
-            loop = CorrectionLoop(workspace, compare_fn=compare_fn, config=job.config)
+            def _forward(ev: Dict[str, Any]) -> None:
+                if on_event:
+                    try:
+                        on_event(ev)
+                    except Exception:  # noqa: BLE001
+                        pass
+
+            loop = CorrectionLoop(
+                workspace,
+                compare_fn=compare_fn,
+                plan_fn=plan_fn,
+                apply_fn=apply_fn,
+                rollback_fn=rollback_fn,
+                on_event=_forward,
+                config=job.config,
+            )
             try:
                 loop.run(job)
             finally:

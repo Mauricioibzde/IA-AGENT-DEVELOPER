@@ -438,12 +438,17 @@ def handle_correction_start(
         return 404, {"error": f"mockup not found: {mockup}"}
 
     cfg_raw = data.get("config") if isinstance(data.get("config"), dict) else {}
+    strategy_early = str(data.get("strategy") or data.get("correction_strategy") or "css").strip().lower()
+    if strategy_early in {"mockup", "mockup-to-code", "image-to-code", "i2c"}:
+        strategy_early = "agent"
+    default_timeout = 1800 if strategy_early in {"agent", "hybrid"} else 600
+    default_attempts = 4 if strategy_early in {"agent", "hybrid"} else 5
     config = CorrectionConfig(
         target_similarity=float(cfg_raw.get("target_similarity") or data.get("target_similarity") or 0.95),
-        max_attempts=int(cfg_raw.get("max_attempts") or data.get("max_attempts") or 5),
+        max_attempts=int(cfg_raw.get("max_attempts") or data.get("max_attempts") or default_attempts),
         min_improvement=float(cfg_raw.get("min_improvement") or data.get("min_improvement") or 0.005),
         stagnation_limit=int(cfg_raw.get("stagnation_limit") or data.get("stagnation_limit") or 2),
-        timeout_sec=float(cfg_raw.get("timeout_sec") or data.get("timeout_sec") or 600),
+        timeout_sec=float(cfg_raw.get("timeout_sec") or data.get("timeout_sec") or default_timeout),
     )
     viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else {"width": 1366, "height": 768}
     suite = str(data.get("suite") or "").strip() or None
@@ -460,6 +465,13 @@ def handle_correction_start(
     if preview_mode in {"pixel_perfect", "pixel-perfect"}:
         preview_mode = "auto"
     file_path = str(data.get("path") or "index.html")
+    strategy = str(data.get("strategy") or data.get("correction_strategy") or "css").strip().lower()
+    if strategy in {"mockup", "mockup-to-code", "image-to-code", "i2c"}:
+        strategy = "agent"
+    if strategy not in {"css", "agent", "hybrid"}:
+        strategy = "css"
+    max_agent_steps = int(data.get("max_agent_steps") or data.get("agent_max_steps") or 12)
+    stack_hint = str(data.get("stack") or data.get("stack_hint") or "html")
 
     def compare_fn() -> Dict[str, Any]:
         preview_url = engine.resolve_preview_url(
@@ -508,6 +520,30 @@ def handle_correction_start(
         )
         return report.to_dict()
 
+    plan_fn = None
+    apply_fn = None
+    rollback_fn = None
+    job_holder: Dict[str, Any] = {"job": None}
+    if strategy in {"agent", "hybrid"}:
+        from .image_to_code import make_agent_strategy_fns
+
+        def cancel_check() -> bool:
+            job = job_holder.get("job")
+            return bool(job and getattr(job, "cancel_requested", False))
+
+        fns = make_agent_strategy_fns(
+            engine.project_dir,
+            mockup=mockup,
+            strategy=strategy,
+            target_similarity=config.target_similarity,
+            max_agent_steps=max_agent_steps,
+            stack_hint=stack_hint,
+            cancel_check=cancel_check,
+        )
+        plan_fn = fns["plan_fn"]
+        apply_fn = fns["apply_fn"]
+        rollback_fn = fns["rollback_fn"]
+
     try:
         job = correction_manager.start_background(
             project_id=engine.project_id,
@@ -520,9 +556,16 @@ def handle_correction_start(
                 "path": file_path,
                 "viewport": viewport,
                 "suite": suite,
+                "strategy": strategy,
+                "max_agent_steps": max_agent_steps,
+                "stack": stack_hint,
             },
             persist_dir=engine.artifacts_root / "corrections",
+            plan_fn=plan_fn,
+            apply_fn=apply_fn,
+            rollback_fn=rollback_fn,
         )
+        job_holder["job"] = job
     except RuntimeError as exc:
         return 409, {"error": str(exc)}
     except Exception as exc:  # noqa: BLE001
