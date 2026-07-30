@@ -7423,3 +7423,183 @@ button.active-model-badge:hover {
 body.surface-chat .quick-card--mockup {
   display: none !important;
 }
+
+/* ── Lovable shell slice 3: run chrome + hierarchy polish ── */
+body.is-running .composer {
+  outline: 1px solid color-mix(in srgb, #d97706 45%, transparent);
+}
+
+.composer.is-running textarea:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.run-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #d97706 35%, transparent);
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: #b45309;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.run-status-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d97706;
+  box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.55);
+  animation: forge-busy-pulse 1.4s ease-out infinite;
+}
+
+.busy-banner {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #d97706 32%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, #d97706 12%, transparent), color-mix(in srgb, #d97706 4%, transparent));
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.busy-banner-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.busy-pulse {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #d97706;
+  box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5);
+  animation: forge-busy-pulse 1.4s ease-out infinite;
+}
+
+@keyframes forge-busy-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
+}
+
+.busy-banner-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.busy-banner-title {
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  color: #b45309;
+}
+
+#busyBannerText {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.busy-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.composer-toolbar {
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-tool-hint {
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-brand {
+  font-size: clamp(2.4rem, 6vw, 3.4rem);
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  margin-bottom: 0.35rem;
+}
+
+#emptyTitle {
+  font-size: clamp(1.25rem, 2.6vw, 1.65rem);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0.2rem 0 0.45rem;
+}
+
+#emptySub {
+  max-width: 34rem;
+  margin: 0 auto 0.4rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  opacity: 0.82;
+}
+
+.hero-title {
+  letter-spacing: -0.03em;
+}
+
+.hero-sub {
+  max-width: 40rem;
+}
+
+.project-badge {
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+}
+
+.sidebar-tip {
+  opacity: 0.88;
+  font-size: 0.78rem;
+}
+
+.sidebar-tip p {
+  margin: 0.25rem 0 0;
+  line-height: 1.35;
+}
+
+.tools-group {
+  letter-spacing: 0.01em;
+}
+
+.topbar h2 {
+  letter-spacing: -0.02em;
+}
+
+body.is-running .btn-send {
+  opacity: 0.45;
+}

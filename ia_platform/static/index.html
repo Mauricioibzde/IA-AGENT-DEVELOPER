@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=56" />
+  <link rel="stylesheet" href="/static/app.css?v=57" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -356,14 +356,23 @@
                   Projeto
                 </button>
                 <span class="composer-tool muted" id="composerProjectLabel">Nenhum selecionado</span>
-                <span class="composer-tool-hint muted" id="composerToolHint">Chat/Work na barra lateral · Preview e Arquivos à direita</span>
+                <span class="run-status-chip hidden" id="runStatusChip" aria-live="polite">Em execução</span>
+                <span class="composer-tool-hint muted" id="composerToolHint">Chat/Work na lateral · App à direita</span>
               </div>
               <div class="chat-input-actions">
-                <div class="busy-banner hidden" id="busyBanner">
-                  <span id="busyBannerText">Há uma execução em andamento.</span>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnForceCancel">Cancelar e liberar</button>
+                <div class="busy-banner hidden" id="busyBanner" role="status" aria-live="polite">
+                  <div class="busy-banner-main">
+                    <span class="busy-pulse" aria-hidden="true"></span>
+                    <div class="busy-banner-copy">
+                      <strong class="busy-banner-title" id="busyBannerTitle">Executando</strong>
+                      <span id="busyBannerText">Há uma execução em andamento.</span>
+                    </div>
+                  </div>
+                  <div class="busy-banner-actions">
+                    <button type="button" class="btn btn-ghost btn-sm btn-cancel-run" id="btnCancel">Cancelar</button>
+                    <button type="button" class="btn btn-ghost btn-sm" id="btnForceCancel" title="Força liberar o projeto se o cancelamento normal travar">Liberar fila</button>
+                  </div>
                 </div>
-                <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar</button>
               </div>
             </div>
           </div>
@@ -846,6 +855,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=44"></script>
+  <script src="/static/app.js?v=45"></script>
 </body>
 </html>

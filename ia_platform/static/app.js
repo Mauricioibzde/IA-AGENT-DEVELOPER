@@ -16,6 +16,8 @@
     running: false,
     runId: null,
     abortController: null,
+    busyStartedAt: null,
+    busyTimer: null,
     selectedTemplate: "blank",
     models: [],
     modelRecommendations: null,
@@ -279,7 +281,9 @@
     modelActionFeedback: $("modelActionFeedback"),
     toastStack: $("toastStack"),
     busyBanner: $("busyBanner"),
+    busyBannerTitle: $("busyBannerTitle"),
     busyBannerText: $("busyBannerText"),
+    runStatusChip: $("runStatusChip"),
     btnForceCancel: $("btnForceCancel"),
     splitSidebar: $("splitSidebar"),
     splitPanel: $("splitPanel"),
@@ -1758,24 +1762,74 @@
     }, ms);
   }
 
+  function syncRunChrome(opts = {}) {
+    const running = !!state.running || opts.forceBusy;
+    document.body.classList.toggle("is-running", running);
+    els.composer?.classList.toggle("is-running", running);
+    if (els.promptInput) els.promptInput.disabled = running;
+    if (els.btnSend) els.btnSend.disabled = running;
+    if (els.composerModelSelect) els.composerModelSelect.disabled = running;
+    if (els.runStatusChip) {
+      els.runStatusChip.classList.toggle("hidden", !running);
+      if (running) {
+        const label = opts.chip || els.busyBannerTitle?.textContent || "Em execução";
+        els.runStatusChip.textContent = label;
+      }
+    }
+    updateChatHeroVisibility();
+  }
+
   function showBusyBanner(info = {}) {
     if (!els.busyBanner) return;
     const goal = info.goal ? String(info.goal).slice(0, 80) : "";
     const started = info.started_at ? Math.max(0, Math.round(Date.now() / 1000 - Number(info.started_at))) : null;
     const wait = started != null ? ` · ${started}s` : "";
+    if (els.busyBannerTitle) {
+      els.busyBannerTitle.textContent = info.reconnect ? "Reconectando" : "Executando";
+    }
     if (els.busyBannerText) {
       els.busyBannerText.textContent = goal
-        ? `Execução em andamento${wait}: ${goal}`
-        : `Já existe uma execução neste projeto${wait}. Cancele para liberar.`;
+        ? `${goal}${wait}`
+        : `Já existe uma execução neste projeto${wait}. Cancele ou libere a fila.`;
     }
     els.busyBanner.classList.remove("hidden");
-    els.btnCancel?.classList.remove("hidden");
     if (els.btnCancel) els.btnCancel.disabled = false;
     if (info.run_id) state.runId = info.run_id;
+    if (info.started_at) state.busyStartedAt = Number(info.started_at);
+    else if (!state.busyStartedAt) state.busyStartedAt = Date.now() / 1000;
+    startBusyElapsedTimer();
+    syncRunChrome({ forceBusy: true, chip: info.reconnect ? "Reconectando…" : "Em execução" });
   }
 
   function hideBusyBanner() {
     els.busyBanner?.classList.add("hidden");
+    stopBusyElapsedTimer();
+    state.busyStartedAt = null;
+    if (!state.running) syncRunChrome();
+  }
+
+  function startBusyElapsedTimer() {
+    stopBusyElapsedTimer();
+    state.busyTimer = window.setInterval(() => {
+      if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) return;
+      const base = Number(state.busyStartedAt || 0);
+      if (!base) return;
+      const secs = Math.max(0, Math.round(Date.now() / 1000 - base));
+      const text = els.busyBannerText?.textContent || "";
+      const cleaned = text.replace(/\s·\s\d+s$/, "");
+      if (els.busyBannerText) els.busyBannerText.textContent = `${cleaned} · ${secs}s`;
+      if (els.runStatusChip && !els.runStatusChip.classList.contains("hidden")) {
+        const title = els.busyBannerTitle?.textContent || "Em execução";
+        els.runStatusChip.textContent = `${title} · ${secs}s`;
+      }
+    }, 1000);
+  }
+
+  function stopBusyElapsedTimer() {
+    if (state.busyTimer) {
+      window.clearInterval(state.busyTimer);
+      state.busyTimer = null;
+    }
   }
 
   function setPullPhase(phase) {
@@ -2696,7 +2750,7 @@
         hideBusyBanner();
         return;
       }
-      showBusyBanner(info);
+      showBusyBanner({ ...info, reconnect: true });
       addMessage(
         `Reconectando à execução${info.goal ? `: ${info.goal}` : ""}…`,
         "system"
@@ -2710,10 +2764,8 @@
   async function pollActiveRun(runId, goal) {
     state.running = true;
     state.runId = runId;
-    showBusyBanner({ run_id: runId, goal, started_at: Date.now() / 1000 });
-    els.btnSend.disabled = true;
-    els.btnCancel?.classList.remove("hidden");
-    els.btnCancel.disabled = false;
+    showBusyBanner({ run_id: runId, goal, started_at: Date.now() / 1000, reconnect: true });
+    syncRunChrome({ chip: "Reconectando…" });
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(goal);
     startActivityTimer(progressEl, activity);
@@ -2778,8 +2830,7 @@
       state.running = false;
       state.runId = null;
       hideBusyBanner();
-      els.btnSend.disabled = false;
-      els.btnCancel?.classList.add("hidden");
+      syncRunChrome();
       syncWorkRail(null);
       syncModeControls();
     }
@@ -4586,8 +4637,7 @@
     }
     state.running = false;
     hideBusyBanner();
-    els.btnCancel?.classList.add("hidden");
-    els.btnSend.disabled = false;
+    syncRunChrome();
     syncWorkRail(null);
     showToast("Execução cancelada — fila liberada.", "info");
   }
@@ -4917,13 +4967,12 @@
     hideBusyBanner();
     addMessage(prompt, "user");
     els.promptInput.value = "";
-    updateChatHeroVisibility();
     state.running = true;
     state.runId = null;
     state.abortController = new AbortController();
-    els.btnSend.disabled = true;
-    els.btnCancel?.classList.remove("hidden");
-    if (els.btnCancel) els.btnCancel.disabled = false;
+    showBusyBanner({ goal: String(prompt).slice(0, 80), started_at: Date.now() / 1000 });
+    if (els.busyBannerTitle) els.busyBannerTitle.textContent = "Chat";
+    syncRunChrome({ chip: "Chat…" });
 
     const statusEl = addMessage("pensando...", "progress");
     const agentEl = addMessage("", "agent live");
@@ -5101,16 +5150,12 @@
       state.running = false;
       state.runId = null;
       state.abortController = null;
-      els.btnSend.disabled = false;
-      if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) {
-        els.btnCancel?.classList.add("hidden");
-      }
-      if (els.btnCancel) els.btnCancel.disabled = false;
+      hideBusyBanner();
+      syncRunChrome();
       updateActiveModelDisplay(state.activeModel || expectedAutoModel(), {
         source: isAutoModelSelected() ? "auto" : "manual",
         live: false,
       });
-      updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
         await new Promise((r) => setTimeout(r, 400));
@@ -5129,15 +5174,14 @@
     resetLiveCodeViewer();
     addMessage(displayPrompt, "user");
     els.promptInput.value = "";
-    updateChatHeroVisibility();
     state.running = true;
     state.runId = null;
     state.abortController = new AbortController();
     state.llmPreviewChars = 0;
-    els.btnSend.disabled = true;
-    els.btnCancel?.classList.add("hidden");
-    els.btnCancel?.classList.remove("hidden");
-    els.btnCancel.disabled = true;
+    showBusyBanner({ goal: String(displayPrompt).slice(0, 80), started_at: Date.now() / 1000 });
+    if (els.busyBannerTitle) els.busyBannerTitle.textContent = "Work";
+    syncRunChrome({ chip: "Work…" });
+    if (els.btnCancel) els.btnCancel.disabled = false;
 
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(displayPrompt);
@@ -5376,22 +5420,16 @@
       state.abortController = null;
       state.llmPreviewChars = 0;
       if (followBusy?.run_id) {
-        state.running = false;
-        showBusyBanner(followBusy);
-        els.btnCancel?.classList.remove("hidden");
-        if (els.btnCancel) els.btnCancel.disabled = false;
-        els.btnSend.disabled = false;
+        state.running = true;
+        showBusyBanner({ ...followBusy, reconnect: true });
+        syncRunChrome({ chip: "Acompanhando…" });
       } else {
         state.running = false;
         state.runId = null;
-        els.btnSend.disabled = false;
-        if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) {
-          els.btnCancel?.classList.add("hidden");
-        }
-        els.btnCancel.disabled = false;
+        hideBusyBanner();
+        syncRunChrome();
         syncWorkRail(null);
       }
-      updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
         await new Promise((r) => setTimeout(r, 400));
@@ -5402,7 +5440,7 @@
     if (followBusy?.run_id) {
       await followBusyRun(followBusy, {
         systemNote:
-          "Há uma execução ativa neste projeto — acompanhando o progresso. Use «Cancelar e liberar» se estiver travada.",
+          "Há uma execução ativa neste projeto — acompanhando o progresso. Use «Liberar fila» se estiver travada.",
       });
     }
   }
