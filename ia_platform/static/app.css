@@ -3590,6 +3590,43 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
 .compare-region-item.severity-high { border-color: rgba(194, 65, 12, 0.45); }
 .compare-region-item.severity-medium { border-color: rgba(180, 83, 9, 0.4); }
 .compare-region-item .muted { color: var(--muted); }
+.compare-suite {
+  margin: 0.75rem 0 1rem;
+  padding: 0.65rem 0.75rem;
+  border: 1px solid var(--border, rgba(255,255,255,0.08));
+  border-radius: 8px;
+  background: rgba(0, 0, 0, 0.12);
+}
+.compare-suite h4 { font-size: 0.85rem; margin-bottom: 0.25rem; }
+.compare-suite-meta {
+  font-size: 0.78rem;
+  opacity: 0.8;
+  margin-bottom: 0.45rem;
+}
+.compare-suite-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0.35rem;
+}
+.compare-suite-item {
+  display: grid;
+  grid-template-columns: 1fr auto auto;
+  gap: 0.5rem;
+  align-items: center;
+  font-size: 0.8rem;
+}
+.compare-suite-badge {
+  font-size: 0.7rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+  opacity: 0.85;
+}
+.compare-suite-pass .compare-suite-badge { color: #6dca8c; }
+.compare-suite-fail .compare-suite-badge { color: #e08a7a; }
+
 .compare-correction {
   margin: 0.35rem 0.85rem 0.55rem;
   padding: 0.55rem 0.65rem;

@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=23" />
+  <link rel="stylesheet" href="/static/app.css?v=24" />
 </head>
 <body>
   <div class="app">
@@ -339,12 +339,20 @@
                   <option value="768x1024">Tablet</option>
                   <option value="393x852">Mobile</option>
                 </select>
+                <select id="compareSuite" class="control-select" title="Suite Pixel Perfect">
+                  <option value="">Viewport único</option>
+                  <option value="responsive">Suite: Responsivo</option>
+                  <option value="desktop">Suite: Desktop</option>
+                  <option value="mobile">Suite: Mobile</option>
+                  <option value="full">Suite: Completo</option>
+                </select>
                 <select id="compareFit" class="control-select" title="Normalização">
                   <option value="contain">Contain</option>
                   <option value="cover">Cover</option>
                   <option value="crop">Crop</option>
                 </select>
                 <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar agora</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnPixelPerfect">Pixel Perfect</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar preview</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto">Corrigir automaticamente</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnCorrectCancel">Interromper</button>
@@ -359,6 +367,11 @@
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
               <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-suite hidden" id="compareSuitePanel">
+                <h4>Pixel Perfect</h4>
+                <p class="compare-suite-meta" id="compareSuiteMeta"></p>
+                <ul class="compare-suite-list" id="compareSuiteList"></ul>
+              </div>
               <div class="compare-correction hidden" id="compareCorrection">
                 <h4>Correction loop</h4>
                 <p class="compare-correction-meta" id="compareCorrectionMeta"></p>
@@ -644,6 +657,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=23"></script>
+  <script src="/static/app.js?v=24"></script>
 </body>
 </html>

@@ -129,7 +129,21 @@ Atalhos no body de `compare`:
 - `{ "mockup": "mockups/home.png" }` — mockup × preview
 - `{ "preview_vs_url": "https://…" }` — preview × URL
 
-UI: aba **Comparação** no painel direito (`?v=20`).
+UI: aba **Comparação** no painel direito (`?v=24`).
+
+### Correction loop (Fase 5)
+
+Ver `docs/CORRECTION_LOOP.md`.
+
+### Pixel Perfect (Fase 6)
+
+Ver `docs/PIXEL_PERFECT.md`.
+
+| Método | Rota | Função |
+|--------|------|--------|
+| GET | `/api/projects/:id/visual/suites` | Suites multi-viewport |
+| POST | `/api/projects/:id/visual/compare` | Aceita `suite` / `pixel_perfect` |
+| POST | `/api/projects/:id/visual/correction/start` | Loop; opcional `suite` |
 
 ## Fases
 

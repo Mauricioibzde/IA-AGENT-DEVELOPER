@@ -138,8 +138,10 @@
     devStatus: $("devStatus"),
     panelCompare: $("panelCompare"),
     compareViewport: $("compareViewport"),
+    compareSuite: $("compareSuite"),
     compareFit: $("compareFit"),
     btnCompareNow: $("btnCompareNow"),
+    btnPixelPerfect: $("btnPixelPerfect"),
     btnCapturePreview: $("btnCapturePreview"),
     btnCorrectAuto: $("btnCorrectAuto"),
     btnCorrectCancel: $("btnCorrectCancel"),
@@ -152,6 +154,9 @@
     compareTargetUrl: $("compareTargetUrl"),
     compareMockupPath: $("compareMockupPath"),
     compareScore: $("compareScore"),
+    compareSuitePanel: $("compareSuitePanel"),
+    compareSuiteMeta: $("compareSuiteMeta"),
+    compareSuiteList: $("compareSuiteList"),
     compareViewTabs: $("compareViewTabs"),
     compareGallery: $("compareGallery"),
     compareRefImg: $("compareRefImg"),
@@ -5562,6 +5567,45 @@
     return { width: w || 1366, height: h || 768, deviceScaleFactor: 1 };
   }
 
+  function selectedCompareSuite() {
+    return (els.compareSuite?.value || "").trim();
+  }
+
+  function renderSuiteReport(suite) {
+    if (!suite || !els.compareSuitePanel) return;
+    state.lastSuiteReport = suite;
+    els.compareSuitePanel.classList.remove("hidden");
+    const minPct = suite.minSimilarity == null ? "—" : `${(Number(suite.minSimilarity) * 100).toFixed(1)}%`;
+    const avgPct = suite.avgSimilarity == null ? "—" : `${(Number(suite.avgSimilarity) * 100).toFixed(1)}%`;
+    const targetPct = `${(Number(suite.targetSimilarity || 0.95) * 100).toFixed(0)}%`;
+    if (els.compareSuiteMeta) {
+      els.compareSuiteMeta.textContent =
+        `${suite.suiteName || suite.suiteId || "Suite"} · ${suite.status || "?"} · ` +
+        `min ${minPct} · média ${avgPct} · meta ${targetPct} · ` +
+        `${suite.passedCount ?? 0}/${(suite.viewports || []).length} ok`;
+    }
+    if (!els.compareSuiteList) return;
+    const rows = suite.viewports || [];
+    if (!rows.length) {
+      els.compareSuiteList.innerHTML = "<li class='muted'>Sem viewports na suite.</li>";
+      return;
+    }
+    els.compareSuiteList.innerHTML = rows
+      .map((row) => {
+        const vp = row.viewport || {};
+        const name = escapeHtml(vp.name || vp.id || `${vp.width}×${vp.height}`);
+        const sim = row.similarity == null ? "—" : `${(Number(row.similarity) * 100).toFixed(1)}%`;
+        const ok = row.passed ? "pass" : "fail";
+        const err = row.error ? ` · ${escapeHtml(row.error)}` : "";
+        return `<li class="compare-suite-item compare-suite-${ok}" data-cid="${escapeHtml(row.comparison_id || row.comparisonId || "")}">
+          <span class="compare-suite-vp">${name}</span>
+          <span class="compare-suite-sim">${escapeHtml(sim)}</span>
+          <span class="compare-suite-badge">${row.passed ? "ok" : "falhou"}</span>${err}
+        </li>`;
+      })
+      .join("");
+  }
+
   function artifactUrl(comparisonId, file) {
     if (!state.current?.id || !comparisonId) return "";
     return `/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons/${encodeURIComponent(comparisonId)}/${encodeURIComponent(file)}?t=${Date.now()}`;
@@ -5836,12 +5880,14 @@
     if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
     try {
+      const suite = selectedCompareSuite();
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/start`, {
         method: "POST",
         body: JSON.stringify({
           mockup,
-          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+          preview_mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
+          suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
           target_similarity: 0.95,
           max_attempts: 5,
@@ -5872,10 +5918,34 @@
     }
   }
 
-  async function runCompareNow() {
-    if (!state.current?.id) return;
+  function buildCompareBody({ pixelPerfect = false } = {}) {
     const mockup = (els.compareMockupPath?.value || "").trim();
     const targetUrl = (els.compareTargetUrl?.value || "").trim();
+    const fit = els.compareFit?.value || "contain";
+    const suite = selectedCompareSuite();
+    const body = {
+      mode: els.previewMode?.value === "dev" ? "dev" : "auto",
+      viewport: parseCompareViewport(),
+      options: {
+        threshold: 0.1,
+        fit,
+        includeDomDiff: !(pixelPerfect || !!suite),
+        includeLayout: !(pixelPerfect || !!suite),
+      },
+      target_similarity: 0.95,
+    };
+    if (mockup) body.mockup = mockup;
+    else if (targetUrl) body.preview_vs_url = targetUrl;
+    if (pixelPerfect || suite) {
+      body.pixel_perfect = true;
+      body.suite = suite || "responsive";
+    }
+    return { body, mockup, targetUrl };
+  }
+
+  async function runCompareNow() {
+    if (!state.current?.id) return;
+    const { body, mockup, targetUrl } = buildCompareBody({ pixelPerfect: false });
     if (!mockup && !targetUrl) {
       showToast("Informe uma URL alvo ou um caminho de mockup.", "info");
       return;
@@ -5883,34 +5953,49 @@
     if (els.compareStatus) els.compareStatus.textContent = "Comparando…";
     els.btnCompareNow && (els.btnCompareNow.disabled = true);
     try {
-      let body;
-      const fit = els.compareFit?.value || "contain";
-      if (mockup) {
-        body = {
-          mockup,
-          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
-          viewport: parseCompareViewport(),
-          options: { threshold: 0.1, fit, includeDomDiff: true, includeLayout: true },
-        };
-      } else {
-        body = {
-          preview_vs_url: targetUrl,
-          mode: els.previewMode?.value === "dev" ? "dev" : "auto",
-          viewport: parseCompareViewport(),
-          options: { threshold: 0.1, fit, includeDomDiff: true, includeLayout: true },
-        };
-      }
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {
         method: "POST",
         body: JSON.stringify(body),
       });
+      if (data.suite) renderSuiteReport(data.suite);
+      else els.compareSuitePanel?.classList.add("hidden");
       renderCompareReport(data.report);
       await refreshComparePanel();
-      showToast("Comparação concluída.", "ok");
+      showToast(data.suite ? "Suite Pixel Perfect concluída." : "Comparação concluída.", "ok");
     } catch (e) {
       if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha na comparação";
       showToast(e.message || "Falha na comparação", "err");
     } finally {
+      if (els.btnCompareNow) els.btnCompareNow.disabled = false;
+    }
+  }
+
+  async function runPixelPerfect() {
+    if (!state.current?.id) return;
+    if (!selectedCompareSuite() && els.compareSuite) els.compareSuite.value = "responsive";
+    const { body, mockup, targetUrl } = buildCompareBody({ pixelPerfect: true });
+    if (!mockup && !targetUrl) {
+      showToast("Informe uma URL alvo ou um caminho de mockup.", "info");
+      return;
+    }
+    if (els.compareStatus) els.compareStatus.textContent = "Pixel Perfect — multi-viewport…";
+    els.btnPixelPerfect && (els.btnPixelPerfect.disabled = true);
+    els.btnCompareNow && (els.btnCompareNow.disabled = true);
+    try {
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {
+        method: "POST",
+        body: JSON.stringify(body),
+      });
+      if (data.suite) renderSuiteReport(data.suite);
+      renderCompareReport(data.report);
+      await refreshComparePanel();
+      const st = data.suite?.status || "done";
+      showToast(st === "passed" ? "Pixel Perfect: meta atingida." : "Pixel Perfect: há viewports abaixo da meta.", st === "passed" ? "ok" : "info");
+    } catch (e) {
+      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha no Pixel Perfect";
+      showToast(e.message || "Falha no Pixel Perfect", "err");
+    } finally {
+      if (els.btnPixelPerfect) els.btnPixelPerfect.disabled = false;
       if (els.btnCompareNow) els.btnCompareNow.disabled = false;
     }
   }
@@ -6212,6 +6297,7 @@
   });
 
   els.btnCompareNow?.addEventListener("click", runCompareNow);
+  els.btnPixelPerfect?.addEventListener("click", runPixelPerfect);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
   els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);

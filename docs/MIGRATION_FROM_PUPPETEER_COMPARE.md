@@ -1,6 +1,6 @@
 # Migração: Puppeteer Compare → Visual Engine (Forge)
 
-**Status:** Fase 0–4 concluídas · Fase 5 (correction loop) a seguir  
+**Status:** Fase 0–6 concluídas · Fase 7 (baselines) a seguir  
 
 **Branch:** `feature/visual-engine-integration`  
 **Fonte:** https://github.com/Mauricioibzde/puppeteer-compare (branch `master`)  
@@ -158,7 +158,7 @@ Contrato interno (Python ↔ Node CLI JSON):
 | **3** | Mockup×URL + normalização + overlay | Relatório JSON |
 | **4** | DOM/layout + correlação região↔elemento | Diff tipado |
 | **5** | Correction loop + checkpoint/rollback | Piora → rollback |
-| **6** | Pixel Perfect Mode multi-viewport | Metas + estagnação |
+| **6** | Pixel Perfect Mode multi-viewport | Suites + meta por viewport |
 | **7** | Baselines / regressão multi-rota | Approve/reject |
 | **8** | Pool browser, cleanup, telemetria, docs finais | Aceitação §30 |
 

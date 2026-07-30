@@ -296,6 +296,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_project_search(project_id, qs)
         if project_id and sub == "visual/status":
             return self._handle_visual_status(project_id)
+        if project_id and sub == "visual/suites":
+            return self._handle_visual_suites(project_id)
         if project_id and sub == "visual/comparisons":
             return self._handle_visual_list(project_id)
         if project_id and sub == "visual/correction":
@@ -1291,6 +1293,16 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(404, {"error": "project not found"})
         data = self._read_json()
         code, payload = visual_api.handle_capture(engine, data, host_header=self._host_header())
+        return self._send_json(code, payload)
+
+    def _handle_visual_suites(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        code, payload = visual_api.handle_list_suites(engine)
         return self._send_json(code, payload)
 
     def _handle_visual_compare(self, project_id: str) -> None:

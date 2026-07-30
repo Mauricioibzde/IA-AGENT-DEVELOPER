@@ -123,27 +123,24 @@ def handle_compare(engine: VisualEngine, data: Dict[str, Any], *, host_header: s
         source = parse_side(data.get("source"), default_type="url")
         target = parse_side(data.get("target"), default_type="url")
         viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else {"width": 1366, "height": 768}
-        # Multi-viewport: run sequential compares and aggregate (Phase 2 basic)
         viewports = data.get("viewports")
         options = data.get("options") if isinstance(data.get("options"), dict) else {}
-        if isinstance(viewports, list) and len(viewports) > 1:
-            results = []
-            for vp in viewports[:8]:
-                if not isinstance(vp, dict):
-                    continue
-                report = engine.compare(
-                    CompareRequest(
-                        source=source,
-                        target=target,
-                        viewport=vp,
-                        options=options,
-                        comparison_id=data.get("comparisonId"),
-                    )
-                )
-                results.append(report.to_dict())
-            if not results:
-                return 400, {"error": "no valid viewports"}
-            return 200, {"ok": True, "reports": results, "report": results[0]}
+        pixel_perfect = bool(
+            data.get("pixel_perfect")
+            or data.get("pixelPerfect")
+            or str(data.get("mode") or "").lower() in {"pixel_perfect", "pixel-perfect"}
+            or data.get("suite")
+        )
+        if pixel_perfect or (isinstance(viewports, list) and len(viewports) > 1):
+            return handle_pixel_perfect(
+                engine,
+                {
+                    **data,
+                    "source": {"type": source.type, "value": source.value},
+                    "target": {"type": target.type, "value": target.value},
+                    "options": options,
+                },
+            )
 
         report = engine.compare(
             CompareRequest(
@@ -155,6 +152,70 @@ def handle_compare(engine: VisualEngine, data: Dict[str, Any], *, host_header: s
             )
         )
         return 200, {"ok": True, "report": report.to_dict()}
+    except FileNotFoundError as exc:
+        return 404, {"error": str(exc)}
+    except (ValueError, VisualEngineBridgeError) as exc:
+        return 400, {"error": str(exc)}
+    except Exception as exc:  # noqa: BLE001
+        return 500, {"error": str(exc)}
+
+
+def handle_list_suites(_engine: VisualEngine) -> Tuple[int, Dict[str, Any]]:
+    from .pixel_perfect import list_suites
+
+    return 200, {"ok": True, "suites": list_suites()}
+
+
+def handle_pixel_perfect(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    """Run Pixel Perfect multi-viewport suite and persist aggregate report."""
+    from .pixel_perfect import persist_suite_report, run_pixel_perfect
+
+    try:
+        source = parse_side(data.get("source"), default_type="url")
+        target = parse_side(data.get("target"), default_type="url")
+        options = data.get("options") if isinstance(data.get("options"), dict) else {}
+        target_sim = float(data.get("target_similarity") or data.get("targetSimilarity") or 0.95)
+        suite = data.get("suite")
+        viewports = data.get("viewports") if isinstance(data.get("viewports"), list) else None
+
+        def compare_fn(vp: Dict[str, Any]) -> Dict[str, Any]:
+            report = engine.compare(
+                CompareRequest(
+                    source=source,
+                    target=target,
+                    viewport=vp,
+                    options=options,
+                )
+            )
+            return report.to_dict()
+
+        suite_report = run_pixel_perfect(
+            compare_fn=compare_fn,
+            suite=str(suite) if suite else None,
+            viewports=viewports,
+            target_similarity=target_sim,
+            include_reports=True,
+            meta={"source": source.value, "target": target.value},
+        )
+        persist_suite_report(engine.artifacts_root, suite_report)
+        payload = suite_report.to_dict()
+        # Expose first/worst child report for gallery UI.
+        primary = None
+        for vr in suite_report.viewports:
+            if vr.comparison_id == suite_report.primary_comparison_id and vr.report:
+                primary = vr.report
+                break
+        if primary is None:
+            for vr in suite_report.viewports:
+                if vr.report:
+                    primary = vr.report
+                    break
+        return 200, {
+            "ok": True,
+            "suite": payload,
+            "report": primary or payload,
+            "reports": [v.report for v in suite_report.viewports if v.report],
+        }
     except FileNotFoundError as exc:
         return 404, {"error": str(exc)}
     except (ValueError, VisualEngineBridgeError) as exc:
@@ -274,6 +335,8 @@ def handle_correction_start(
         timeout_sec=float(cfg_raw.get("timeout_sec") or data.get("timeout_sec") or 600),
     )
     viewport = data.get("viewport") if isinstance(data.get("viewport"), dict) else {"width": 1366, "height": 768}
+    suite = str(data.get("suite") or "").strip() or None
+    viewports = data.get("viewports") if isinstance(data.get("viewports"), list) else None
     options = data.get("options") if isinstance(data.get("options"), dict) else {}
     options = {
         **options,
@@ -281,15 +344,49 @@ def handle_correction_start(
         "includeDomDiff": True,
         "includeLayout": True,
     }
-    mode = str(data.get("mode") or "auto")
+    # Correction preview mode (auto/dev) — not pixel_perfect suite mode.
+    preview_mode = str(data.get("preview_mode") or data.get("mode") or "auto")
+    if preview_mode in {"pixel_perfect", "pixel-perfect"}:
+        preview_mode = "auto"
     file_path = str(data.get("path") or "index.html")
 
     def compare_fn() -> Dict[str, Any]:
         preview_url = engine.resolve_preview_url(
             host_header=host_header,
-            mode=mode,
+            mode=preview_mode,
             file_path=file_path,
         )
+        if suite or (viewports and len(viewports) > 1):
+            from .pixel_perfect import run_pixel_perfect
+
+            def per_vp(vp: Dict[str, Any]) -> Dict[str, Any]:
+                return engine.compare(
+                    CompareRequest(
+                        source=Side(type="image", value=mockup),
+                        target=Side(type="url", value=preview_url),
+                        viewport=vp,
+                        options=options,
+                    )
+                ).to_dict()
+
+            suite_report = run_pixel_perfect(
+                compare_fn=per_vp,
+                suite=suite,
+                viewports=viewports,
+                target_similarity=config.target_similarity,
+                include_reports=False,
+            )
+            # Drive the loop by the worst viewport score.
+            return {
+                "comparisonId": suite_report.primary_comparison_id,
+                "similarity": suite_report.min_similarity,
+                "status": suite_report.status,
+                "mode": "pixel_perfect",
+                "suite": suite_report.to_dict(),
+                "layoutChanges": [],
+                "regions": [],
+            }
+
         report = engine.compare(
             CompareRequest(
                 source=Side(type="image", value=mockup),
@@ -306,7 +403,13 @@ def handle_correction_start(
             workspace=engine.project_dir,
             compare_fn=compare_fn,
             config=config,
-            meta={"mockup": mockup, "mode": mode, "path": file_path, "viewport": viewport},
+            meta={
+                "mockup": mockup,
+                "mode": preview_mode,
+                "path": file_path,
+                "viewport": viewport,
+                "suite": suite,
+            },
             persist_dir=engine.artifacts_root / "corrections",
         )
     except RuntimeError as exc:
