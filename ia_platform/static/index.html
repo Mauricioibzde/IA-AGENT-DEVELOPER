@@ -7,10 +7,10 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=29" />
+  <link rel="stylesheet" href="/static/app.css?v=30" />
 </head>
 <body>
-  <div class="app">
+  <div class="app" id="appShell">
     <aside class="sidebar" id="sidebar" aria-label="Navegação">
       <div class="sidebar-header">
         <div class="logo" title="Forge">
@@ -124,6 +124,17 @@
           </div>
         </div>
     </aside>
+    <div
+      class="layout-splitter layout-splitter--v layout-splitter--sidebar"
+      id="splitSidebar"
+      role="separator"
+      aria-orientation="vertical"
+      aria-label="Redimensionar menu lateral"
+      aria-valuemin="200"
+      aria-valuemax="440"
+      tabindex="0"
+      title="Arraste para redimensionar · duplo clique restaura"
+    ></div>
     <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
     <div class="main">
@@ -300,7 +311,7 @@
                   Projeto
                 </button>
                 <span class="composer-tool muted" id="composerProjectLabel">Nenhum selecionado</span>
-                <span class="composer-tool-hint muted" id="composerToolHint">Modelo no seletor à direita · Chat/Work no topo</span>
+                <span class="composer-tool-hint muted" id="composerToolHint">Arraste as bordas para redimensionar · Chat/Work no topo</span>
               </div>
               <div class="chat-input-actions">
                 <div class="busy-banner hidden" id="busyBanner">
@@ -312,12 +323,38 @@
             </div>
           </div>
 
+          <div
+            class="layout-splitter layout-splitter--v layout-splitter--panel"
+            id="splitPanel"
+            role="separator"
+            aria-orientation="vertical"
+            aria-label="Redimensionar painel de ferramentas"
+            aria-valuemin="260"
+            aria-valuemax="720"
+            tabindex="0"
+            title="Arraste para redimensionar · duplo clique restaura · clique no botão para recolher"
+          ></div>
+
           <aside class="right-panel" id="rightPanel">
             <nav class="tools-nav" id="toolsNav" aria-label="Ferramentas do projeto">
-              <div class="tools-groups" id="toolsGroups" role="tablist" aria-label="Grupos">
-                <button type="button" class="tools-group active" data-group="app" role="tab" aria-selected="true">App</button>
-                <button type="button" class="tools-group" data-group="agent" role="tab" aria-selected="false">Agente</button>
-                <button type="button" class="tools-group" data-group="visual" role="tab" aria-selected="false">Visual</button>
+              <div class="tools-nav-head">
+                <div class="tools-groups" id="toolsGroups" role="tablist" aria-label="Grupos">
+                  <button type="button" class="tools-group active" data-group="app" role="tab" aria-selected="true">App</button>
+                  <button type="button" class="tools-group" data-group="agent" role="tab" aria-selected="false">Agente</button>
+                  <button type="button" class="tools-group" data-group="visual" role="tab" aria-selected="false">Visual</button>
+                </div>
+                <button
+                  type="button"
+                  class="btn btn-ghost btn-icon btn-collapse-panel"
+                  id="btnCollapsePanel"
+                  title="Recolher painel de ferramentas"
+                  aria-label="Recolher ou expandir painel de ferramentas"
+                  aria-expanded="true"
+                >
+                  <svg width="16" height="16" viewBox="0 0 24 24" fill="none" aria-hidden="true">
+                    <path d="M15 6l-6 6 6 6" stroke="currentColor" stroke-width="1.8" stroke-linecap="round" stroke-linejoin="round"/>
+                  </svg>
+                </button>
               </div>
               <div class="tools-subtabs" id="toolsSubtabs">
                 <div class="tools-subrow" data-group-panel="app">
@@ -741,6 +778,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=29"></script>
+  <script src="/static/app.js?v=30"></script>
 </body>
 </html>

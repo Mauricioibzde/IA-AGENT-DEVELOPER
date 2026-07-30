@@ -262,6 +262,10 @@
     busyBanner: $("busyBanner"),
     busyBannerText: $("busyBannerText"),
     btnForceCancel: $("btnForceCancel"),
+    splitSidebar: $("splitSidebar"),
+    splitPanel: $("splitPanel"),
+    btnCollapsePanel: $("btnCollapsePanel"),
+    appShell: $("appShell"),
     modelHint: $("modelHint"),
     chatHero: $("chatHero"),
     previewViewport: $("previewViewport"),
@@ -2216,6 +2220,7 @@
       el.classList.toggle("hidden", state.surfaceMode === "chat");
     });
     syncComposerProjectLabel();
+    restoreLayoutSizes();
     try {
       localStorage.setItem("forge_surface_mode", state.surfaceMode);
     } catch (_) {
@@ -2783,6 +2788,275 @@
 
   function isMobileLayout() {
     return window.matchMedia("(max-width: 900px)").matches;
+  }
+
+  const LAYOUT_KEYS = {
+    sidebarW: "forge.layout.sidebarW",
+    panelWChat: "forge.layout.panelWChat",
+    panelWWork: "forge.layout.panelWWork",
+    panelCollapsedChat: "forge.layout.panelCollapsedChat",
+    panelCollapsedWork: "forge.layout.panelCollapsedWork",
+  };
+  const LAYOUT_DEFAULTS = {
+    sidebarW: 268,
+    panelWChat: 390,
+    panelWWork: 420,
+  };
+  const LAYOUT_LIMITS = {
+    sidebarMin: 200,
+    sidebarMax: 440,
+    panelMin: 260,
+    panelMaxRatio: 0.62,
+  };
+
+  function readLayoutNumber(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw == null || raw === "") return fallback;
+      const n = Number(raw);
+      return Number.isFinite(n) ? n : fallback;
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeLayoutNumber(key, value) {
+    try {
+      localStorage.setItem(key, String(Math.round(value)));
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function readLayoutFlag(key, fallback) {
+    try {
+      const raw = localStorage.getItem(key);
+      if (raw == null) return fallback;
+      return raw === "1" || raw === "true";
+    } catch {
+      return fallback;
+    }
+  }
+
+  function writeLayoutFlag(key, value) {
+    try {
+      localStorage.setItem(key, value ? "1" : "0");
+    } catch {
+      /* ignore */
+    }
+  }
+
+  function currentPanelWidthKey() {
+    return state.surfaceMode === "work" ? LAYOUT_KEYS.panelWWork : LAYOUT_KEYS.panelWChat;
+  }
+
+  function currentPanelCollapsedKey() {
+    return state.surfaceMode === "work" ? LAYOUT_KEYS.panelCollapsedWork : LAYOUT_KEYS.panelCollapsedChat;
+  }
+
+  function defaultPanelWidth() {
+    return state.surfaceMode === "work" ? LAYOUT_DEFAULTS.panelWWork : LAYOUT_DEFAULTS.panelWChat;
+  }
+
+  function clamp(n, min, max) {
+    return Math.min(max, Math.max(min, n));
+  }
+
+  function applySidebarWidth(px, { persist = false } = {}) {
+    const width = clamp(px, LAYOUT_LIMITS.sidebarMin, LAYOUT_LIMITS.sidebarMax);
+    document.documentElement.style.setProperty("--sidebar-w", `${width}px`);
+    if (els.splitSidebar) {
+      els.splitSidebar.setAttribute("aria-valuenow", String(Math.round(width)));
+    }
+    if (persist) writeLayoutNumber(LAYOUT_KEYS.sidebarW, width);
+    return width;
+  }
+
+  function applyPanelWidth(px, { persist = false } = {}) {
+    const body = document.querySelector(".workspace-body");
+    const avail = body?.clientWidth || window.innerWidth;
+    const max = Math.max(
+      LAYOUT_LIMITS.panelMin,
+      Math.floor(avail * LAYOUT_LIMITS.panelMaxRatio)
+    );
+    const width = clamp(px, LAYOUT_LIMITS.panelMin, max);
+    document.documentElement.style.setProperty("--panel-w", `${width}px`);
+    if (els.splitPanel) {
+      els.splitPanel.setAttribute("aria-valuenow", String(Math.round(width)));
+      els.splitPanel.setAttribute("aria-valuemax", String(max));
+    }
+    if (persist) writeLayoutNumber(currentPanelWidthKey(), width);
+    return width;
+  }
+
+  function isPanelCollapsed() {
+    return !!els.workspaceView?.classList.contains("panel-collapsed");
+  }
+
+  function setPanelCollapsed(collapsed, { persist = true } = {}) {
+    if (!els.workspaceView) return;
+    els.workspaceView.classList.toggle("panel-collapsed", !!collapsed);
+    if (els.btnCollapsePanel) {
+      els.btnCollapsePanel.setAttribute("aria-expanded", collapsed ? "false" : "true");
+      els.btnCollapsePanel.title = collapsed
+        ? "Expandir painel de ferramentas"
+        : "Recolher painel de ferramentas";
+    }
+    if (els.splitPanel) {
+      els.splitPanel.title = collapsed
+        ? "Clique para expandir o painel de ferramentas"
+        : "Arraste para redimensionar · duplo clique restaura";
+      els.splitPanel.setAttribute(
+        "aria-label",
+        collapsed ? "Expandir painel de ferramentas" : "Redimensionar painel de ferramentas"
+      );
+    }
+    if (persist) writeLayoutFlag(currentPanelCollapsedKey(), !!collapsed);
+  }
+
+  function togglePanelCollapsed() {
+    setPanelCollapsed(!isPanelCollapsed());
+  }
+
+  function restoreLayoutSizes() {
+    const sidebarW = readLayoutNumber(LAYOUT_KEYS.sidebarW, LAYOUT_DEFAULTS.sidebarW);
+    applySidebarWidth(sidebarW);
+    const panelKey = currentPanelWidthKey();
+    const panelDefault = defaultPanelWidth();
+    const panelW = readLayoutNumber(panelKey, panelDefault);
+    applyPanelWidth(panelW);
+    const collapsedDefault = state.surfaceMode === "chat";
+    const collapsed = readLayoutFlag(currentPanelCollapsedKey(), collapsedDefault);
+    setPanelCollapsed(collapsed, { persist: false });
+    els.workspaceView?.setAttribute("data-layout-ready", "1");
+  }
+
+  function resetSidebarWidth() {
+    applySidebarWidth(LAYOUT_DEFAULTS.sidebarW, { persist: true });
+    showToast("Largura do menu restaurada.", "info", 2200);
+  }
+
+  function resetPanelWidth() {
+    applyPanelWidth(defaultPanelWidth(), { persist: true });
+    setPanelCollapsed(false);
+    showToast("Largura do painel restaurada.", "info", 2200);
+  }
+
+  function bindVerticalSplitter(el, { onMove, onReset, onActivate, canDrag }) {
+    if (!el) return;
+
+    let dragging = false;
+    let startX = 0;
+    let startValue = 0;
+
+    const endDrag = () => {
+      if (!dragging) return;
+      dragging = false;
+      el.classList.remove("is-dragging", "is-active");
+      els.appShell?.classList.remove("is-layout-resizing");
+      document.removeEventListener("pointermove", onPointerMove);
+      document.removeEventListener("pointerup", endDrag);
+      document.removeEventListener("pointercancel", endDrag);
+    };
+
+    const onPointerMove = (e) => {
+      if (!dragging) return;
+      onMove(e.clientX - startX, startValue, e);
+    };
+
+    el.addEventListener("pointerdown", (e) => {
+      if (e.button !== 0) return;
+      if (isMobileLayout()) return;
+      if (canDrag && !canDrag()) {
+        onActivate?.();
+        return;
+      }
+      dragging = true;
+      startX = e.clientX;
+      const cssVar = el === els.splitSidebar ? "--sidebar-w" : "--panel-w";
+      startValue =
+        Number.parseFloat(getComputedStyle(document.documentElement).getPropertyValue(cssVar)) ||
+        Number(el.getAttribute("aria-valuenow") || 0);
+      el.classList.add("is-dragging", "is-active");
+      els.appShell?.classList.add("is-layout-resizing");
+      try {
+        el.setPointerCapture(e.pointerId);
+      } catch {
+        /* ignore */
+      }
+      document.addEventListener("pointermove", onPointerMove);
+      document.addEventListener("pointerup", endDrag);
+      document.addEventListener("pointercancel", endDrag);
+      e.preventDefault();
+    });
+
+    el.addEventListener("dblclick", (e) => {
+      e.preventDefault();
+      onReset?.();
+    });
+
+    el.addEventListener("keydown", (e) => {
+      if (isMobileLayout()) return;
+      if (canDrag && !canDrag() && (e.key === "Enter" || e.key === " ")) {
+        e.preventDefault();
+        onActivate?.();
+        return;
+      }
+      const step = e.shiftKey ? 24 : 12;
+      if (e.key === "ArrowLeft" || e.key === "ArrowRight") {
+        e.preventDefault();
+        const dir = e.key === "ArrowLeft" ? -1 : 1;
+        const current = Number.parseFloat(
+          getComputedStyle(document.documentElement).getPropertyValue(
+            el === els.splitSidebar ? "--sidebar-w" : "--panel-w"
+          )
+        ) || 0;
+        // Sidebar grows to the right with ArrowRight; panel grows with ArrowLeft (drag from left edge of panel).
+        if (el === els.splitSidebar) {
+          onMove(dir * step, current);
+        } else {
+          onMove(-dir * step, current);
+        }
+      } else if (e.key === "Home") {
+        e.preventDefault();
+        onReset?.();
+      }
+    });
+  }
+
+  function initLayoutSplitters() {
+    restoreLayoutSizes();
+
+    bindVerticalSplitter(els.splitSidebar, {
+      canDrag: () => !isSidebarCollapsed(),
+      onMove: (delta, startW) => {
+        applySidebarWidth(startW + delta, { persist: true });
+      },
+      onReset: resetSidebarWidth,
+    });
+
+    bindVerticalSplitter(els.splitPanel, {
+      canDrag: () => !isPanelCollapsed(),
+      onActivate: () => setPanelCollapsed(false),
+      onMove: (delta, startW) => {
+        // Dragging the left edge of the panel: moving right shrinks the panel.
+        applyPanelWidth(startW - delta, { persist: true });
+      },
+      onReset: resetPanelWidth,
+    });
+
+    els.btnCollapsePanel?.addEventListener("click", () => {
+      togglePanelCollapsed();
+    });
+
+    window.addEventListener("resize", () => {
+      if (isMobileLayout()) return;
+      // Re-clamp panel against new viewport.
+      const current = Number.parseFloat(
+        getComputedStyle(document.documentElement).getPropertyValue("--panel-w")
+      );
+      if (Number.isFinite(current)) applyPanelWidth(current);
+    });
   }
 
   const SIDEBAR_COLLAPSED_KEY = "forge_sidebar_collapsed";
@@ -6914,6 +7188,7 @@
   async function init() {
     restoreSidebarCollapsed();
     syncSidebarToggle();
+    initLayoutSplitters();
     try {
       const savedSurface = localStorage.getItem("forge_surface_mode");
       setSurfaceMode(savedSurface === "work" ? "work" : "chat");

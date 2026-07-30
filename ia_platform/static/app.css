@@ -24,6 +24,7 @@
   --sidebar-w: 268px;
   --sidebar-rail: 56px;
   --panel-w: 390px;
+  --splitter-w: 6px;
   --shadow-glow: 0 18px 50px rgba(28, 28, 28, 0.08);
   --shadow-soft: 0 10px 30px rgba(28, 28, 28, 0.06);
 }
@@ -54,6 +55,17 @@ body.mode-execute-flash #modeSelect {
 
 /* ── Layout ── */
 .app { display: flex; height: 100vh; }
+.app.is-layout-resizing {
+  cursor: col-resize;
+  user-select: none;
+}
+.app.is-layout-resizing iframe,
+.app.is-layout-resizing .preview-frame {
+  pointer-events: none;
+}
+.app.is-layout-resizing .sidebar {
+  transition: none;
+}
 
 .sidebar {
   width: var(--sidebar-w);
@@ -65,6 +77,56 @@ body.mode-execute-flash #modeSelect {
   backdrop-filter: blur(14px);
   overflow: hidden;
   transition: width 0.22s ease;
+}
+
+/* Drag handles between major regions */
+.layout-splitter {
+  flex-shrink: 0;
+  position: relative;
+  z-index: 8;
+  background: transparent;
+  touch-action: none;
+  transition: background 0.15s ease;
+}
+.layout-splitter--v {
+  width: var(--splitter-w);
+  align-self: stretch;
+  cursor: col-resize;
+}
+.layout-splitter--v::before {
+  content: "";
+  position: absolute;
+  top: 50%;
+  left: 50%;
+  width: 2px;
+  height: 28px;
+  transform: translate(-50%, -50%);
+  border-radius: 2px;
+  background: rgba(28, 28, 28, 0.14);
+  transition: background 0.15s ease, height 0.15s ease;
+}
+.layout-splitter--v:hover::before,
+.layout-splitter--v:focus-visible::before,
+.layout-splitter.is-dragging::before,
+.app.is-layout-resizing .layout-splitter.is-active::before {
+  background: var(--accent-2);
+  height: 48px;
+}
+.layout-splitter--v:hover,
+.layout-splitter--v:focus-visible,
+.layout-splitter.is-dragging,
+.app.is-layout-resizing .layout-splitter.is-active {
+  background: rgba(52, 81, 178, 0.06);
+  outline: none;
+}
+.layout-splitter--v::after {
+  content: "";
+  position: absolute;
+  inset: 0 -4px;
+}
+.layout-splitter--panel {
+  border-left: 1px solid var(--border);
+  background: rgba(252, 251, 248, 0.35);
 }
 
 .sidebar-header {
@@ -660,12 +722,70 @@ body.mode-execute-flash #modeSelect {
 .workspace-body {
   flex: 1;
   display: grid;
-  grid-template-columns: 1fr var(--panel-w);
+  grid-template-columns: minmax(0, 1fr) var(--splitter-w) var(--panel-w);
   min-height: 0;
 }
 
-body.surface-work .view-workspace {
+body.surface-work .view-workspace:not([data-layout-ready]) {
   --panel-w: 420px;
+}
+
+.view-workspace.panel-collapsed .workspace-body {
+  grid-template-columns: minmax(0, 1fr) 28px 0fr;
+}
+.view-workspace.panel-collapsed .right-panel {
+  overflow: hidden;
+  border-left: none;
+  min-width: 0;
+  opacity: 0;
+  pointer-events: none;
+}
+.view-workspace.panel-collapsed .layout-splitter--panel {
+  width: 28px;
+  cursor: pointer;
+  background: rgba(252, 251, 248, 0.9);
+  border-left: 1px solid var(--border);
+}
+.view-workspace.panel-collapsed .layout-splitter--panel::before {
+  content: "‹";
+  width: auto;
+  height: auto;
+  font-size: 1rem;
+  font-weight: 700;
+  color: var(--muted);
+  background: none;
+  letter-spacing: 0;
+}
+.view-workspace.panel-collapsed .layout-splitter--panel:hover::before {
+  color: var(--accent-2);
+  height: auto;
+}
+
+.tools-nav-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 4px;
+  padding-right: 6px;
+}
+.tools-nav-head .tools-groups {
+  flex: 1;
+  min-width: 0;
+}
+.btn-collapse-panel {
+  flex-shrink: 0;
+  width: 30px;
+  height: 30px;
+  margin-top: 6px;
+  border-radius: 8px;
+  color: var(--muted);
+}
+.btn-collapse-panel:hover {
+  color: var(--text);
+  background: var(--surface-2);
+}
+.view-workspace.panel-collapsed .btn-collapse-panel svg {
+  transform: rotate(180deg);
 }
 
 /* ── Work rail (engineering stepper + plan) — uses existing tokens ── */
@@ -1760,7 +1880,7 @@ body.surface-chat #workRail { display: none !important; }
 
 /* ── Right panel ── */
 .right-panel {
-  border-left: 1px solid var(--border);
+  border-left: none;
   background: rgba(252, 251, 248, 0.78);
   display: flex;
   flex-direction: column;
@@ -3449,6 +3569,8 @@ body.surface-work .btn-deploy { display: inline-flex; }
   }
   .sidebar.sidebar-open { transform: translateX(0); }
   .workspace-body { grid-template-columns: 1fr; }
+  .layout-splitter { display: none !important; }
+  .btn-collapse-panel { display: none !important; }
   .mobile-tabs { display: flex; }
   .quick-actions { grid-template-columns: 1fr 1fr; }
   .right-panel {
