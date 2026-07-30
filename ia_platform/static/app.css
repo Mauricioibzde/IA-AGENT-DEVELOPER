@@ -4423,3 +4423,183 @@ body.surface-chat .composer-toolbar #btnPickProject { display: none; }
     border-top: 1px solid #1f2b43;
   }
 }
+
+/* ── Final microdetails (1:1 polish) ─────────────────────────────────────── */
+@media (min-width: 901px) {
+  .sidebar {
+    border-radius: 12px;
+  }
+  .sidebar-header {
+    min-height: 52px;
+    padding: 12px 12px 8px;
+  }
+  .logo {
+    gap: 8px;
+    font-size: 1.02rem;
+    letter-spacing: -0.03em;
+  }
+  .logo-icon {
+    width: 24px;
+    height: 24px;
+    border-radius: 8px;
+  }
+  .sidebar-nav {
+    gap: 2px;
+    padding: 6px 8px 8px;
+  }
+  .sidebar-nav-item {
+    min-height: 34px;
+    padding: 8px 10px;
+    border-radius: 9px;
+    font-size: 0.8rem;
+    font-weight: 520;
+  }
+  .project-search-row {
+    padding: 0 10px 6px;
+  }
+  .project-search-row input {
+    height: 32px;
+    padding: 6px 10px;
+    border-radius: 9px;
+    font-size: 0.76rem;
+  }
+  .project-item,
+  .chat-item {
+    min-height: 42px;
+    border-radius: 9px;
+    padding: 7px 9px;
+  }
+  .project-item .name,
+  .chat-item .name {
+    font-size: 0.79rem;
+    font-weight: 560;
+  }
+  .project-item .meta,
+  .chat-item .meta {
+    font-size: 0.67rem;
+    opacity: 0.84;
+  }
+  .resource-meter {
+    grid-template-columns: 1.9rem 1fr 3rem;
+    font-size: 0.64rem;
+  }
+  .resource-track {
+    height: 4px;
+  }
+
+  .topbar {
+    min-height: 50px;
+    padding: 8px 12px;
+  }
+  .topbar h2 {
+    font-size: 0.96rem;
+    font-weight: 590;
+    letter-spacing: -0.025em;
+  }
+  .project-badge {
+    font-size: 0.62rem;
+    padding: 3px 8px;
+  }
+  .topbar-controls {
+    gap: 6px;
+  }
+  .active-model-badge,
+  .topbar-more-btn,
+  .btn-ghost.btn-icon-text {
+    height: 30px;
+    padding: 0 10px;
+    border-radius: 8px;
+    font-size: 0.72rem;
+  }
+  .btn-primary.btn-gradient,
+  .btn-deploy {
+    height: 30px;
+    padding: 0 12px;
+    border-radius: 8px;
+    font-size: 0.72rem;
+  }
+
+  .work-rail {
+    gap: 8px;
+    padding: 7px 10px 9px;
+  }
+  .work-step {
+    min-height: 34px;
+    font-size: 0.68rem;
+    letter-spacing: 0.015em;
+    border-radius: 9px;
+  }
+  .work-step span {
+    width: 1rem;
+    height: 1rem;
+    font-size: 0.6rem;
+  }
+  .work-plan-card {
+    border-radius: 9px;
+    padding: 7px 9px;
+  }
+  .work-plan-head {
+    margin-bottom: 5px;
+    font-size: 0.72rem;
+  }
+  .work-plan-list {
+    font-size: 0.7rem;
+    gap: 3px;
+  }
+
+  .chat-messages {
+    gap: 10px;
+  }
+  .msg {
+    border-radius: 10px;
+    border-width: 1px;
+    box-shadow: 0 1px 0 rgba(255, 255, 255, 0.02);
+  }
+  .composer {
+    border-radius: 12px;
+    min-height: 44px;
+    padding: 8px 10px;
+  }
+  .composer textarea {
+    font-size: 0.84rem;
+    line-height: 1.42;
+  }
+  .composer-model {
+    height: 30px;
+    border-radius: 8px;
+    font-size: 0.7rem;
+  }
+  .btn-send {
+    width: 34px;
+    height: 34px;
+    font-size: 0.9rem;
+    box-shadow: 0 8px 16px rgba(94, 70, 225, 0.36);
+  }
+
+  .tools-nav {
+    border-bottom-color: #24324d;
+  }
+  .tools-group {
+    min-height: 32px;
+    font-size: 0.72rem;
+    border-radius: 8px;
+  }
+  .tools-sub {
+    min-height: 30px;
+    font-size: 0.69rem;
+    padding: 7px 7px 9px;
+  }
+  .panel-content {
+    padding: 10px;
+  }
+  .preview-toolbar {
+    min-height: 34px;
+    gap: 6px;
+    padding: 6px;
+    border-radius: 9px;
+  }
+  .project-changes {
+    padding: 7px 8px;
+    max-height: 6.6rem;
+  }
+}
