@@ -20,15 +20,19 @@ def test_needs_bootstrap_thresholds() -> None:
 
 
 def test_build_bootstrap_goal_mentions_mockup() -> None:
-    goal = build_bootstrap_goal("mockups/home.png")
+    goal = build_bootstrap_goal("mockups/home.png", workspace_files=["index.html", "styles.css"])
     assert "mockups/home.png" in goal
     assert "IMAGE-TO-CODE" in goal
+    assert "index.html" in goal
     assert "pixel" in goal.lower() or "fiel" in goal.lower()
 
 
 def test_build_correction_goal_includes_diff_feedback() -> None:
     report = {
         "similarity": 0.72,
+        "summary": {"diffPercent": 0.18},
+        "comparisonId": "cmp-1",
+        "artifacts": {"diff": "artifacts/cmp-1/diff.png", "actual": "artifacts/cmp-1/actual.png"},
         "layoutChanges": [{"selector": ".hero", "delta": {"width": 20, "height": 0, "x": 0, "y": 0}}],
         "regions": [
             {
@@ -40,11 +44,25 @@ def test_build_correction_goal_includes_diff_feedback() -> None:
     summary = summarize_visual_diff(report)
     assert ".hero" in summary
     assert "h1" in summary
+    assert "cmp-1" in summary
     goal = build_correction_goal("mockups/home.png", report, attempt=2, target_similarity=0.95)
     assert "CORREÇÃO VISUAL" in goal
     assert "mockups/home.png" in goal
     assert ".hero" in goal
     assert "95%" in goal
+    assert "Checklist prioritário" in goal
+    assert "`h1`" in goal
+
+
+def test_detect_stack_and_file_inventory(tmp_path: Path) -> None:
+    (tmp_path / "package.json").write_text('{"dependencies":{"react":"18.0.0"}}', encoding="utf-8")
+    (tmp_path / "src").mkdir()
+    (tmp_path / "src" / "App.tsx").write_text("export default function App(){return null}", encoding="utf-8")
+    from ia_platform.visual_engine.image_to_code import detect_stack_hint, list_workspace_files
+
+    assert detect_stack_hint(tmp_path) == "react"
+    files = list_workspace_files(tmp_path)
+    assert any(f.endswith("App.tsx") for f in files)
 
 
 def test_agent_plan_fn_bootstraps_then_refines(tmp_path: Path) -> None:

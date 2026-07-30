@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=42" />
+  <link rel="stylesheet" href="/static/app.css?v=43" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -525,8 +525,8 @@
                     <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectAuto" title="Loop CSS heurístico">Corrigir CSS</button>
                     <button type="button" class="btn btn-primary btn-sm" id="btnMockupToCode" title="Mockup → código → comparar → corrigir com o agente">Mockup → Código</button>
                     <select id="correctionStrategy" class="control-select" title="Estratégia do loop">
-                      <option value="agent" selected>Agente (código)</option>
-                      <option value="hybrid">Híbrido (agente + CSS)</option>
+                      <option value="hybrid" selected>Híbrido (recomendado)</option>
+                      <option value="agent">Agente (código)</option>
                       <option value="css">Só CSS</option>
                     </select>
                   </div>
@@ -549,7 +549,12 @@
               </div>
               <div class="compare-correction hidden" id="compareCorrection">
                 <h4>Correction loop</h4>
+                <div class="compare-correction-progress">
+                  <div class="compare-correction-progress-track"><i id="compareCorrectionFill"></i></div>
+                  <span id="compareCorrectionProgressLabel">0%</span>
+                </div>
                 <p class="compare-correction-meta" id="compareCorrectionMeta"></p>
+                <p class="compare-correction-live muted" id="compareCorrectionLive">Aguardando eventos…</p>
                 <ol class="compare-correction-attempts" id="compareCorrectionAttempts"></ol>
               </div>
               <div class="compare-view-tabs" id="compareViewTabs">

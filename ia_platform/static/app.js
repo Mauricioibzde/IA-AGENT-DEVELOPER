@@ -156,6 +156,9 @@
     compareCorrection: $("compareCorrection"),
     compareCorrectionMeta: $("compareCorrectionMeta"),
     compareCorrectionAttempts: $("compareCorrectionAttempts"),
+    compareCorrectionFill: $("compareCorrectionFill"),
+    compareCorrectionProgressLabel: $("compareCorrectionProgressLabel"),
+    compareCorrectionLive: $("compareCorrectionLive"),
     btnUploadMockup: $("btnUploadMockup"),
     compareMockupFile: $("compareMockupFile"),
     compareStatus: $("compareStatus"),
@@ -6730,7 +6733,17 @@
       });
       if (els.compareMockupPath) els.compareMockupPath.value = data.path;
       showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
-      if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
+      if (els.compareStatus) {
+        els.compareStatus.textContent = `Mockup pronto: ${data.path} · clique em “Mockup → Código” para iniciar o loop`;
+      }
+      // Jump user to the visual correction controls.
+      try {
+        switchToolGroup("visual", "compare");
+        document.getElementById("compareAdvanced")?.setAttribute("open", "");
+        els.btnMockupToCode?.focus?.();
+      } catch (_) {
+        /* ignore */
+      }
     } catch (e) {
       const msg = visualApiMissingMessage(e);
       showToast(msg, "err");
@@ -6936,6 +6949,36 @@
     }
   }
 
+  function latestCorrectionLiveMessage(job) {
+    const events = Array.isArray(job?.events) ? job.events : [];
+    for (let i = events.length - 1; i >= 0; i -= 1) {
+      const ev = events[i];
+      if (!ev || !ev.type) continue;
+      if (ev.type === "correction.agent_starting") {
+        return `Agente trabalhando (${ev.mode || "refine"})…`;
+      }
+      if (ev.type === "correction.agent_finished") {
+        return `Agente finalizou (${ev.status || "ok"}) · ${ev.summary || "aplicando mudanças"}`;
+      }
+      if (ev.type === "correction.preview_settled") {
+        return "Aguardando preview estabilizar para nova comparação…";
+      }
+      if (ev.type === "correction.planning") return "Planejando próxima correção…";
+      if (ev.type === "correction.retesting") return "Comparando preview × mockup…";
+      if (ev.type === "correction.improved") {
+        const sim = ev.similarity == null ? null : `${(Number(ev.similarity) * 100).toFixed(1)}%`;
+        return sim ? `Melhoria detectada · similaridade ${sim}` : "Melhoria detectada";
+      }
+      if (ev.type === "correction.rolled_back") return "Regressão detectada · rollback aplicado";
+      if (ev.type === "correction.completed") return `Loop concluído (${ev.reason || "done"})`;
+      if (ev.type === "comparison.completed" && ev.phase === "baseline") {
+        const sim = ev.similarity == null ? null : `${(Number(ev.similarity) * 100).toFixed(1)}%`;
+        return sim ? `Baseline: ${sim}` : "Baseline comparado";
+      }
+    }
+    return job?.status === "running" ? "Correction loop em execução…" : "Aguardando eventos…";
+  }
+
   function renderCorrectionJob(job) {
     if (!job) {
       els.compareCorrection?.classList.add("hidden");
@@ -6943,6 +6986,14 @@
       return;
     }
     els.compareCorrection?.classList.remove("hidden");
+    const target = Number(job.config?.target_similarity || 0.95);
+    const bestRaw = job.best_similarity == null ? job.baseline_similarity : job.best_similarity;
+    const progress = bestRaw == null ? 0 : Math.max(0, Math.min(1, Number(bestRaw) / Math.max(target, 0.01)));
+    if (els.compareCorrectionFill) els.compareCorrectionFill.style.width = `${Math.round(progress * 100)}%`;
+    if (els.compareCorrectionProgressLabel) {
+      const bestPct = bestRaw == null ? "—" : `${(Number(bestRaw) * 100).toFixed(1)}%`;
+      els.compareCorrectionProgressLabel.textContent = `${bestPct} / ${(target * 100).toFixed(0)}%`;
+    }
     const base = job.baseline_similarity == null ? "—" : `${(job.baseline_similarity * 100).toFixed(1)}%`;
     const best = job.best_similarity == null ? "—" : `${(job.best_similarity * 100).toFixed(1)}%`;
     const imp = job.improvement == null ? "—" : `${(job.improvement * 100).toFixed(1)} pp`;
@@ -6950,6 +7001,12 @@
       const strategy = job.meta?.strategy || "css";
       els.compareCorrectionMeta.textContent =
         `${job.status} · ${strategy} · base ${base} → melhor ${best} · Δ ${imp}`;
+    }
+    if (els.compareCorrectionLive) {
+      els.compareCorrectionLive.textContent = latestCorrectionLiveMessage(job);
+    }
+    if (els.compareStatus && (job.status === "queued" || job.status === "running")) {
+      els.compareStatus.textContent = latestCorrectionLiveMessage(job);
     }
     if (els.compareCorrectionAttempts) {
       const attempts = job.attempts || [];
@@ -7007,8 +7064,13 @@
       showToast("Envie ou informe um mockup antes de corrigir.", "info");
       return;
     }
-    const strategy = strategyOverride || els.correctionStrategy?.value || "agent";
+    const strategy = strategyOverride || els.correctionStrategy?.value || "hybrid";
     stopCorrectionPolling();
+    try {
+      switchToolGroup("visual", "compare");
+    } catch (_) {
+      /* ignore */
+    }
     if (els.compareStatus) {
       els.compareStatus.textContent =
         strategy === "css"
@@ -7031,13 +7093,15 @@
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
           target_similarity: 0.95,
-          max_attempts: strategy === "css" ? 5 : 4,
-          max_agent_steps: 12,
+          max_attempts: strategy === "css" ? 5 : 5,
+          max_agent_steps: 14,
+          settle_seconds: 1.8,
         }),
       });
       state.correctionJob = data.correction;
       renderCorrectionJob(data.correction);
-      state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), 1500);
+      const pollMs = strategy === "css" ? 1500 : 1200;
+      state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), pollMs);
       showToast(
         strategy === "css" ? "Correction CSS em execução…" : "Mockup → Código em execução…",
         "info"
@@ -7480,8 +7544,8 @@
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
   els.btnCorrectAuto?.addEventListener("click", () => startCorrectionLoop("css"));
   els.btnMockupToCode?.addEventListener("click", () => {
-    const strategy = els.correctionStrategy?.value || "agent";
-    startCorrectionLoop(strategy === "css" ? "agent" : strategy);
+    const strategy = els.correctionStrategy?.value || "hybrid";
+    startCorrectionLoop(strategy === "css" ? "hybrid" : strategy);
   });
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
   els.btnBaselineApprove?.addEventListener("click", approveBaseline);

@@ -3,6 +3,7 @@
 from __future__ import annotations
 
 import mimetypes
+import time
 from pathlib import Path
 from typing import Any, Dict, Optional, Tuple
 
@@ -471,7 +472,8 @@ def handle_correction_start(
     if strategy not in {"css", "agent", "hybrid"}:
         strategy = "css"
     max_agent_steps = int(data.get("max_agent_steps") or data.get("agent_max_steps") or 12)
-    stack_hint = str(data.get("stack") or data.get("stack_hint") or "html")
+    stack_hint = str(data.get("stack") or data.get("stack_hint") or "").strip()
+    settle_seconds = float(data.get("settle_seconds") or data.get("preview_settle_seconds") or 1.6)
 
     def compare_fn() -> Dict[str, Any]:
         preview_url = engine.resolve_preview_url(
@@ -531,6 +533,14 @@ def handle_correction_start(
             job = job_holder.get("job")
             return bool(job and getattr(job, "cancel_requested", False))
 
+        def on_agent_event(ev: Dict[str, Any]) -> None:
+            job = job_holder.get("job")
+            if not job:
+                return
+            payload = dict(ev or {})
+            payload.setdefault("ts", time.time())
+            job.events.append(payload)
+
         fns = make_agent_strategy_fns(
             engine.project_dir,
             mockup=mockup,
@@ -538,7 +548,9 @@ def handle_correction_start(
             target_similarity=config.target_similarity,
             max_agent_steps=max_agent_steps,
             stack_hint=stack_hint,
+            settle_seconds=settle_seconds,
             cancel_check=cancel_check,
+            on_event=on_agent_event,
         )
         plan_fn = fns["plan_fn"]
         apply_fn = fns["apply_fn"]
@@ -558,7 +570,8 @@ def handle_correction_start(
                 "suite": suite,
                 "strategy": strategy,
                 "max_agent_steps": max_agent_steps,
-                "stack": stack_hint,
+                "stack": stack_hint or None,
+                "settle_seconds": settle_seconds,
             },
             persist_dir=engine.artifacts_root / "corrections",
             plan_fn=plan_fn,

@@ -24,9 +24,16 @@ UPLOAD mockup
 5. Use **Interromper** para cancelar
 
 Estratégias:
+- `hybrid` (padrão recomendado) — agente quando longe; CSS fino quando perto; reescala para agente periodicamente
 - `agent` — cada tentativa pede ao CodingAgent gerar/ajustar código
-- `hybrid` — agente quando longe do mockup; CSS fino quando perto
 - `css` — apenas patches heurísticos (botão **Corrigir CSS**)
+
+Melhorias do loop:
+- checklist prioritário a partir de regiões/layout
+- inventário de arquivos + detecção de stack (HTML/React)
+- espera de settle do preview antes de recomparar
+- barra de progresso e status ao vivo na UI
+- após upload do mockup, a UI aponta para **Mockup → Código**
 
 ## API
 
