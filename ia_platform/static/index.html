@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=32" />
+  <link rel="stylesheet" href="/static/app.css?v=33" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -221,6 +221,15 @@
                   <input id="maxStepsInput" type="number" value="20" min="1" max="50" class="control-input steps-input" />
                 </div>
                 <button type="button" class="btn btn-ghost btn-sm topbar-more-action" id="btnClearChat" title="Limpar conversa">Limpar conversa</button>
+                <div class="layout-preset-group" role="group" aria-label="Presets de layout">
+                  <span class="topbar-more-label">Layout da tela</span>
+                  <div class="layout-preset-row">
+                    <button type="button" class="btn btn-ghost btn-sm layout-preset-btn" data-layout-preset="chat" title="Mais espaço para conversa">Foco Chat</button>
+                    <button type="button" class="btn btn-ghost btn-sm layout-preset-btn" data-layout-preset="preview" title="Painel de preview/arquivos maior">Foco Preview</button>
+                    <button type="button" class="btn btn-ghost btn-sm layout-preset-btn" data-layout-preset="balanced" title="Tamanhos equilibrados">Equilibrado</button>
+                  </div>
+                  <button type="button" class="btn btn-ghost btn-sm topbar-more-action" id="btnResetProjectLayout" title="Voltar ao layout padrão deste projeto">Resetar layout deste projeto</button>
+                </div>
               </div>
             </details>
           </div>
@@ -789,6 +798,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=32"></script>
+  <script src="/static/app.js?v=33"></script>
 </body>
 </html>
