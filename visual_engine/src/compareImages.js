@@ -1,29 +1,10 @@
 /**
- * Pixel comparison (adapted from puppeteer-compare services/image.js).
- * Adds explicit resize metadata and refuses silent misleading scores when
- * aspect ratios differ beyond a tolerance.
+ * Pixel comparison with explicit normalization + overlay.
  */
 
 import { PNG } from 'pngjs';
 import pixelmatch from 'pixelmatch';
-
-/**
- * @typedef {'crop'|'none'} FitMode
- */
-
-/**
- * @param {PNG} source
- * @param {number} width
- * @param {number} height
- */
-function cropTo(source, width, height) {
-  if (source.width === width && source.height === height) return source;
-  const output = new PNG({ width, height });
-  const w = Math.min(source.width, width);
-  const h = Math.min(source.height, height);
-  PNG.bitblt(source, output, 0, 0, w, h, 0, 0);
-  return output;
-}
+import { buildOverlay, normalizePair } from './normalize.js';
 
 /**
  * Compare two PNG buffers.
@@ -31,57 +12,77 @@ function cropTo(source, width, height) {
  * @param {Buffer} bufferB
  * @param {object} [options]
  * @param {number} [options.threshold=0.1]
- * @param {number} [options.alpha=0.5]
- * @param {boolean} [options.includeAA=true]
- * @param {FitMode} [options.fit='crop']
- * @param {number} [options.aspectTolerance=0.02]
+ * @param {'crop'|'contain'|'cover'|'fit'|'none'} [options.fit='contain']
+ * @param {boolean} [options.requireCompatibleAspect]
+ * @param {number} [options.aspectTolerance=0.08]
  */
 export function compareImages(bufferA, bufferB, options = {}) {
   const threshold = options.threshold ?? 0.1;
   const alpha = options.alpha ?? 0.5;
   const includeAA = options.includeAA !== false;
-  const fit = options.fit || 'crop';
-  const aspectTolerance = options.aspectTolerance ?? 0.02;
+  const fit = options.fit || 'contain';
+  const aspectTolerance = options.aspectTolerance ?? 0.08;
 
-  const imageA = PNG.sync.read(bufferA);
-  const imageB = PNG.sync.read(bufferB);
+  let imageA;
+  let imageB;
+  try {
+    imageA = PNG.sync.read(bufferA);
+    imageB = PNG.sync.read(bufferB);
+  } catch (err) {
+    throw new Error(`Invalid PNG input: ${err.message || err}`);
+  }
 
   const aspectA = imageA.width / imageA.height;
   const aspectB = imageB.width / imageB.height;
   const aspectDelta = Math.abs(aspectA - aspectB) / Math.max(aspectA, aspectB);
   const warnings = [];
-  let comparable = true;
 
   if (aspectDelta > aspectTolerance) {
     warnings.push(
-      `Aspect ratios differ significantly (${aspectA.toFixed(3)} vs ${aspectB.toFixed(3)}). Score may be misleading.`
+      `Aspect ratios differ (${aspectA.toFixed(3)} vs ${aspectB.toFixed(3)}). Using fit=${fit}; score may be imperfect.`
     );
     if (options.requireCompatibleAspect) {
-      comparable = false;
+      return {
+        width: imageA.width,
+        height: imageA.height,
+        diffPngBuffer: null,
+        overlayPngBuffer: null,
+        normalizedA: null,
+        normalizedB: null,
+        diffPixels: null,
+        totalPixels: imageA.width * imageA.height,
+        diffPercent: null,
+        similarity: null,
+        comparable: false,
+        warnings,
+        normalization: {
+          originalA: { width: imageA.width, height: imageA.height },
+          originalB: { width: imageB.width, height: imageB.height },
+          fit,
+          aspectDelta,
+        },
+      };
     }
   }
 
-  const width = Math.min(imageA.width, imageB.width);
-  const height = Math.min(imageA.height, imageB.height);
-  const resized =
-    imageA.width !== width ||
-    imageA.height !== height ||
-    imageB.width !== width ||
-    imageB.height !== height;
+  const normalized = normalizePair(imageA, imageB, {
+    fit,
+    width: options.width,
+    height: options.height,
+    allowUpscale: options.allowUpscale !== false,
+  });
+  warnings.push(...(normalized.warnings || []));
 
-  if (resized) {
-    warnings.push(
-      `Images resized/cropped to ${width}x${height} (original A=${imageA.width}x${imageA.height}, B=${imageB.width}x${imageB.height}, fit=${fit}).`
-    );
-  }
-
-  if (!comparable) {
+  if (!normalized.comparable) {
     return {
-      width,
-      height,
+      width: normalized.width,
+      height: normalized.height,
       diffPngBuffer: null,
+      overlayPngBuffer: null,
+      normalizedA: null,
+      normalizedB: null,
       diffPixels: null,
-      totalPixels: width * height,
+      totalPixels: normalized.width * normalized.height,
       diffPercent: null,
       similarity: null,
       comparable: false,
@@ -89,17 +90,16 @@ export function compareImages(bufferA, bufferB, options = {}) {
       normalization: {
         originalA: { width: imageA.width, height: imageA.height },
         originalB: { width: imageB.width, height: imageB.height },
-        compared: { width, height },
+        compared: { width: normalized.width, height: normalized.height },
         fit,
         aspectDelta,
+        meta: normalized.meta,
       },
     };
   }
 
-  const croppedA = cropTo(imageA, width, height);
-  const croppedB = cropTo(imageB, width, height);
+  const { a: croppedA, b: croppedB, width, height } = normalized;
   const diffImage = new PNG({ width, height });
-
   const diffPixels = pixelmatch(croppedA.data, croppedB.data, diffImage.data, width, height, {
     threshold,
     alpha,
@@ -109,11 +109,15 @@ export function compareImages(bufferA, bufferB, options = {}) {
   const totalPixels = width * height;
   const diffPercent = totalPixels > 0 ? (diffPixels / totalPixels) * 100 : 0;
   const similarity = totalPixels > 0 ? 1 - diffPixels / totalPixels : 1;
+  const overlay = buildOverlay(croppedA, croppedB, diffImage);
 
   return {
     width,
     height,
     diffPngBuffer: PNG.sync.write(diffImage),
+    overlayPngBuffer: PNG.sync.write(overlay),
+    normalizedA: PNG.sync.write(croppedA),
+    normalizedB: PNG.sync.write(croppedB),
     diffPixels,
     totalPixels,
     diffPercent: Number(diffPercent.toFixed(4)),
@@ -126,6 +130,7 @@ export function compareImages(bufferA, bufferB, options = {}) {
       compared: { width, height },
       fit,
       aspectDelta,
+      meta: normalized.meta,
     },
   };
 }

@@ -5,6 +5,7 @@
 export { createBrowser, closeBrowser, detectChromePath } from './browser.js';
 export { captureScreenshot } from './capture.js';
 export { compareImages } from './compareImages.js';
+export { normalizePair, buildOverlay, scaleNearest } from './normalize.js';
 export { DEVICE_PRESETS, DEFAULT_VIEWPORT, listViewports, resolveViewport } from './viewports.js';
 export {
   ensureDir,
@@ -103,16 +104,26 @@ export async function compare(request) {
 
   const metrics = compareImages(referenceBuf, actualBuf, {
     threshold: options.threshold ?? 0.1,
+    fit: options.fit || 'contain',
     requireCompatibleAspect: options.requireCompatibleAspect === true,
+    width: options.normalizeWidth,
+    height: options.normalizeHeight,
   });
   warnings.push(...(metrics.warnings || []));
 
   const refPath = path.join(dir, 'reference.png');
   const actPath = path.join(dir, 'actual.png');
   const diffPath = path.join(dir, 'diff.png');
+  const overlayPath = path.join(dir, 'overlay.png');
+  const normRefPath = path.join(dir, 'reference-normalized.png');
+  const normActPath = path.join(dir, 'actual-normalized.png');
+  // Keep originals always.
   writePng(referenceBuf, refPath);
   writePng(actualBuf, actPath);
+  if (metrics.normalizedA) writePng(metrics.normalizedA, normRefPath);
+  if (metrics.normalizedB) writePng(metrics.normalizedB, normActPath);
   if (metrics.diffPngBuffer) writePng(metrics.diffPngBuffer, diffPath);
+  if (metrics.overlayPngBuffer) writePng(metrics.overlayPngBuffer, overlayPath);
 
   const report = {
     comparisonId: id,
@@ -131,6 +142,9 @@ export async function compare(request) {
       reference: refPath,
       actual: actPath,
       diff: metrics.diffPngBuffer ? diffPath : null,
+      overlay: metrics.overlayPngBuffer ? overlayPath : null,
+      referenceNormalized: metrics.normalizedA ? normRefPath : null,
+      actualNormalized: metrics.normalizedB ? normActPath : null,
       directory: dir,
     },
     normalization: metrics.normalization,

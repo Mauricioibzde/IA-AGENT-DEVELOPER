@@ -163,6 +163,55 @@ def handle_compare(engine: VisualEngine, data: Dict[str, Any], *, host_header: s
         return 500, {"error": str(exc)}
 
 
+def handle_mockup_upload(engine: VisualEngine, data: Dict[str, Any]) -> Tuple[int, Dict[str, Any]]:
+    """Save a mockup image under mockups/ (PNG preferred, max 5 MB)."""
+    import base64
+    import re
+    import time
+    import unicodedata
+
+    raw_name = str(data.get("name") or data.get("filename") or "mockup.png").strip()
+    raw_name = unicodedata.normalize("NFKD", raw_name)
+    safe = re.sub(r"[^\w.\-]+", "_", raw_name, flags=re.UNICODE).strip("._") or "mockup.png"
+    if not safe.lower().endswith((".png", ".jpg", ".jpeg", ".webp")):
+        safe = f"{Path(safe).stem}.png"
+    mime = str(data.get("mime") or "").lower()
+    b64 = data.get("content_base64")
+    if not isinstance(b64, str) or not b64.strip():
+        return 400, {"error": "content_base64 is required"}
+    try:
+        payload = base64.b64decode(b64, validate=False)
+    except Exception as exc:  # noqa: BLE001
+        return 400, {"error": f"invalid base64: {exc}"}
+    if len(payload) > 5_000_000:
+        return 413, {"error": "mockup muito grande (máx. 5 MB)"}
+    # Magic-byte sniff (reject HTML/JS uploads)
+    head = payload[:16]
+    is_png = head.startswith(b"\x89PNG\r\n\x1a\n")
+    is_jpeg = head[:3] == b"\xff\xd8\xff"
+    is_webp = head[:4] == b"RIFF" and b"WEBP" in payload[:16]
+    if not (is_png or is_jpeg or is_webp):
+        return 400, {"error": "arquivo deve ser PNG, JPEG ou WebP"}
+    if not is_png and "png" in mime:
+        return 400, {"error": "mime indica PNG mas o conteúdo não é PNG"}
+    # Prefer PNG for pixelmatch — still store others, warn.
+    mockups = engine.project_dir / "mockups"
+    mockups.mkdir(parents=True, exist_ok=True)
+    target = mockups / safe
+    if target.exists():
+        stamp = str(int(time.time()))[-6:]
+        target = mockups / f"{Path(safe).stem}_{stamp}{Path(safe).suffix}"
+    target.write_bytes(payload)
+    rel = str(target.relative_to(engine.project_dir)).replace("\\", "/")
+    return 201, {
+        "ok": True,
+        "path": rel,
+        "bytes": len(payload),
+        "format": "png" if is_png else ("jpeg" if is_jpeg else "webp"),
+        "warning": None if is_png else "Comparação pixelmatch funciona melhor com PNG — a UI converte no upload.",
+    }
+
+
 def resolve_artifact_file(engine: VisualEngine, comparison_id: str, filename: str) -> Optional[Path]:
     cid = str(comparison_id or "").strip()
     name = str(filename or "").strip().replace("\\", "/").split("/")[-1]
@@ -173,6 +222,8 @@ def resolve_artifact_file(engine: VisualEngine, comparison_id: str, filename: st
         "actual.png",
         "diff.png",
         "overlay.png",
+        "reference-normalized.png",
+        "actual-normalized.png",
         "report.json",
         "metadata.json",
         "dom-diff.json",

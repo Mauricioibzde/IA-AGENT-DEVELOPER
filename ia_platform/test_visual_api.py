@@ -6,6 +6,7 @@ import importlib.util
 import json
 import struct
 import threading
+import urllib.error
 import zlib
 from http.server import ThreadingHTTPServer
 from pathlib import Path
@@ -119,3 +120,50 @@ def test_validate_security_helpers() -> None:
     assert side.type == "image"
     side2 = parse_side("https://example.com")
     assert side2.type == "url"
+
+
+def test_mockup_upload_png(platform_url: str, tmp_path: Path) -> None:
+    import base64
+    import urllib.request
+
+    from ia_platform.visual_engine.bridge import node_available
+
+    if not node_available():
+        pytest.skip("Node not available")
+
+    pid = _create_project(platform_url, "mockup-upload")
+    png = _png(16, 16, (9, 8, 7))
+    body = json.dumps(
+        {
+            "name": "home.png",
+            "mime": "image/png",
+            "content_base64": base64.b64encode(png).decode("ascii"),
+        }
+    ).encode()
+    req = urllib.request.Request(
+        f"{platform_url}/api/projects/{pid}/visual/mockup",
+        data=body,
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with urllib.request.urlopen(req, timeout=20) as resp:
+        data = json.loads(resp.read().decode())
+    assert resp.status == 201
+    assert data["path"].startswith("mockups/")
+    assert (tmp_path / pid / data["path"]).is_file()
+
+    # Reject non-image payload
+    bad = urllib.request.Request(
+        f"{platform_url}/api/projects/{pid}/visual/mockup",
+        data=json.dumps(
+            {
+                "name": "evil.png",
+                "content_base64": base64.b64encode(b"<script>alert(1)</script>").decode(),
+            }
+        ).encode(),
+        headers={"Content-Type": "application/json"},
+        method="POST",
+    )
+    with pytest.raises(urllib.error.HTTPError) as exc:
+        urllib.request.urlopen(bad, timeout=10)
+    assert exc.value.code == 400

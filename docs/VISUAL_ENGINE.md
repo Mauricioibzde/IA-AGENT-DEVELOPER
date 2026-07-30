@@ -100,7 +100,16 @@ Ver também: `docs/SECURITY.md` (evolutivo), `docs/ARTIFACTS.md`.
 | GET | `/api/projects/:id/visual/comparisons/:cid/:file` | Artefato PNG/JSON |
 | POST | `/api/projects/:id/visual/capture` | Captura preview ou URL |
 | POST | `/api/projects/:id/visual/compare` | Compare unificado |
+| POST | `/api/projects/:id/visual/mockup` | Upload de mockup → `mockups/` |
 | DELETE | `/api/projects/:id/visual/comparisons/:cid` | Remove comparação |
+
+### Normalização (Fase 3)
+
+`options.fit`: `contain` (padrão) · `cover` · `crop` · `none`
+
+Artefatos extras: `overlay.png`, `reference-normalized.png`, `actual-normalized.png`.
+
+UI: upload de mockup (converte para PNG no browser), views lado a lado / diff / overlay / slider.
 
 Atalhos no body de `compare`:
 

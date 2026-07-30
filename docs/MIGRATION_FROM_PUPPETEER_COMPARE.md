@@ -1,6 +1,6 @@
 # Migração: Puppeteer Compare → Visual Engine (Forge)
 
-**Status:** Fase 0–2 concluídas · Fase 3 a seguir  
+**Status:** Fase 0–3 concluídas · Fase 4 (DOM/layout) a seguir  
 
 **Branch:** `feature/visual-engine-integration`  
 **Fonte:** https://github.com/Mauricioibzde/puppeteer-compare (branch `master`)  

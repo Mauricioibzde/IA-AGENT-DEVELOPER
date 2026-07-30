@@ -369,6 +369,8 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._handle_visual_capture(project_id)
         if project_id and sub == "visual/compare":
             return self._handle_visual_compare(project_id)
+        if project_id and sub == "visual/mockup":
+            return self._handle_visual_mockup_upload(project_id)
         if project_id and sub.startswith("visual/comparisons/") and sub.endswith("/delete"):
             cid = sub[len("visual/comparisons/") : -len("/delete")]
             return self._handle_visual_delete(project_id, cid)
@@ -1289,6 +1291,17 @@ class PlatformHandler(BaseHTTPRequestHandler):
             return self._send_json(404, {"error": "project not found"})
         data = self._read_json()
         code, payload = visual_api.handle_compare(engine, data, host_header=self._host_header())
+        return self._send_json(code, payload)
+
+    def _handle_visual_mockup_upload(self, project_id: str) -> None:
+        try:
+            engine = self._visual_engine(project_id)
+        except ValueError as exc:
+            return self._send_json(400, {"error": str(exc)})
+        except FileNotFoundError:
+            return self._send_json(404, {"error": "project not found"})
+        data = self._read_json()
+        code, payload = visual_api.handle_mockup_upload(engine, data)
         return self._send_json(code, payload)
 
     def _handle_visual_artifact(self, project_id: str, comparison_id: str, filename: str) -> None:

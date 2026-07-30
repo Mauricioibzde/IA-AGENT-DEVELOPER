@@ -138,15 +138,26 @@
     devStatus: $("devStatus"),
     panelCompare: $("panelCompare"),
     compareViewport: $("compareViewport"),
+    compareFit: $("compareFit"),
     btnCompareNow: $("btnCompareNow"),
     btnCapturePreview: $("btnCapturePreview"),
+    btnUploadMockup: $("btnUploadMockup"),
+    compareMockupFile: $("compareMockupFile"),
     compareStatus: $("compareStatus"),
     compareTargetUrl: $("compareTargetUrl"),
     compareMockupPath: $("compareMockupPath"),
     compareScore: $("compareScore"),
+    compareViewTabs: $("compareViewTabs"),
+    compareGallery: $("compareGallery"),
     compareRefImg: $("compareRefImg"),
     compareActImg: $("compareActImg"),
     compareDiffImg: $("compareDiffImg"),
+    compareOverlayImg: $("compareOverlayImg"),
+    compareSliderWrap: $("compareSliderWrap"),
+    compareSliderTop: $("compareSliderTop"),
+    compareSliderRange: $("compareSliderRange"),
+    compareSliderBack: $("compareSliderBack"),
+    compareSliderFront: $("compareSliderFront"),
     compareHistoryList: $("compareHistoryList"),
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
@@ -5549,20 +5560,113 @@
     return `/api/projects/${encodeURIComponent(state.current.id)}/visual/comparisons/${encodeURIComponent(comparisonId)}/${encodeURIComponent(file)}?t=${Date.now()}`;
   }
 
+  function setCompareView(view) {
+    state.compareView = view || "side";
+    els.compareViewTabs?.querySelectorAll(".compare-view-btn").forEach((btn) => {
+      btn.classList.toggle("active", btn.dataset.view === state.compareView);
+    });
+    const gallery = els.compareGallery;
+    const slider = els.compareSliderWrap;
+    if (!gallery || !slider) return;
+    const mode = state.compareView;
+    gallery.classList.toggle("hidden", mode === "slider");
+    slider.classList.toggle("hidden", mode !== "slider");
+    gallery.querySelectorAll(".compare-fig").forEach((fig) => {
+      const isDiff = fig.classList.contains("compare-fig-diff");
+      const isOverlay = fig.classList.contains("compare-fig-overlay");
+      if (mode === "side") fig.classList.toggle("hidden", isDiff || isOverlay);
+      else if (mode === "diff") fig.classList.toggle("hidden", !isDiff);
+      else if (mode === "overlay") fig.classList.toggle("hidden", !isOverlay);
+      else fig.classList.add("hidden");
+    });
+    if (mode === "slider") syncCompareSlider();
+  }
+
+  function syncCompareSlider() {
+    const wrap = els.compareSlider;
+    const top = els.compareSliderTop;
+    const front = els.compareSliderFront;
+    const range = els.compareSliderRange;
+    if (!wrap || !top || !front || !range) return;
+    const v = Number(range.value || 50);
+    top.style.width = `${v}%`;
+    const full = wrap.clientWidth || 1;
+    front.style.width = `${full}px`;
+    front.style.height = "100%";
+  }
+
   function renderCompareReport(report) {
     if (!report) return;
+    state.lastCompareReport = report;
     const pct = report.similarity == null ? "—" : `${(Number(report.similarity) * 100).toFixed(1)}%`;
+    const fit = report.normalization?.fit || "";
     if (els.compareScore) {
       els.compareScore.classList.remove("hidden");
-      els.compareScore.innerHTML = `<strong>${escapeHtml(pct)}</strong> similar · ${escapeHtml(report.mode || "")} · ${escapeHtml(report.status || "")}`;
+      els.compareScore.innerHTML = `<strong>${escapeHtml(pct)}</strong> similar · ${escapeHtml(report.mode || "")} · ${escapeHtml(fit)} · ${escapeHtml(report.status || "")}`;
     }
     const id = report.comparisonId || report.comparison_id;
-    if (els.compareRefImg) els.compareRefImg.src = artifactUrl(id, "reference.png");
-    if (els.compareActImg) els.compareActImg.src = artifactUrl(id, "actual.png");
+    const refFile = report.artifacts?.referenceNormalized ? "reference-normalized.png" : "reference.png";
+    const actFile = report.artifacts?.actualNormalized ? "actual-normalized.png" : "actual.png";
+    if (els.compareRefImg) els.compareRefImg.src = artifactUrl(id, refFile);
+    if (els.compareActImg) els.compareActImg.src = artifactUrl(id, actFile);
     if (els.compareDiffImg) els.compareDiffImg.src = artifactUrl(id, "diff.png");
+    if (els.compareOverlayImg) els.compareOverlayImg.src = artifactUrl(id, "overlay.png");
+    if (els.compareSliderBack) els.compareSliderBack.src = artifactUrl(id, actFile);
+    if (els.compareSliderFront) els.compareSliderFront.src = artifactUrl(id, refFile);
     if (els.compareStatus) {
       const warns = (report.warnings || []).slice(0, 2).join(" · ");
       els.compareStatus.textContent = warns || `Comparação ${id} pronta.`;
+    }
+    setCompareView(state.compareView || "side");
+  }
+
+  function fileToPngBase64(file) {
+    return new Promise((resolve, reject) => {
+      const url = URL.createObjectURL(file);
+      const img = new Image();
+      img.onload = () => {
+        try {
+          const canvas = document.createElement("canvas");
+          canvas.width = img.naturalWidth || img.width;
+          canvas.height = img.naturalHeight || img.height;
+          const ctx = canvas.getContext("2d");
+          ctx.drawImage(img, 0, 0);
+          const dataUrl = canvas.toDataURL("image/png");
+          URL.revokeObjectURL(url);
+          resolve(dataUrl.split(",")[1] || "");
+        } catch (err) {
+          URL.revokeObjectURL(url);
+          reject(err);
+        }
+      };
+      img.onerror = () => {
+        URL.revokeObjectURL(url);
+        reject(new Error("Não foi possível ler a imagem"));
+      };
+      img.src = url;
+    });
+  }
+
+  async function uploadMockupFile(file) {
+    if (!state.current?.id || !file) return;
+    if (els.compareStatus) els.compareStatus.textContent = "Enviando mockup…";
+    try {
+      const b64 = await fileToPngBase64(file);
+      const stem = (file.name || "mockup").replace(/\.[^.]+$/, "");
+      const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/mockup`, {
+        method: "POST",
+        body: JSON.stringify({
+          name: `${stem}.png`,
+          mime: "image/png",
+          content_base64: b64,
+        }),
+      });
+      if (els.compareMockupPath) els.compareMockupPath.value = data.path;
+      showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
+      if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
+    } catch (e) {
+      showToast(e.message || "Falha no upload do mockup", "err");
+      if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha no upload";
     }
   }
 
@@ -5635,19 +5739,20 @@
     els.btnCompareNow && (els.btnCompareNow.disabled = true);
     try {
       let body;
+      const fit = els.compareFit?.value || "contain";
       if (mockup) {
         body = {
           mockup,
           mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
-          options: { threshold: 0.1 },
+          options: { threshold: 0.1, fit },
         };
       } else {
         body = {
           preview_vs_url: targetUrl,
           mode: els.previewMode?.value === "dev" ? "dev" : "auto",
           viewport: parseCompareViewport(),
-          options: { threshold: 0.1 },
+          options: { threshold: 0.1, fit },
         };
       }
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {
@@ -5963,6 +6068,21 @@
 
   els.btnCompareNow?.addEventListener("click", runCompareNow);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
+  els.btnUploadMockup?.addEventListener("click", () => els.compareMockupFile?.click());
+  els.compareMockupFile?.addEventListener("change", () => {
+    const file = els.compareMockupFile.files?.[0];
+    if (file) uploadMockupFile(file);
+    els.compareMockupFile.value = "";
+  });
+  els.compareViewTabs?.addEventListener("click", (e) => {
+    const btn = e.target.closest(".compare-view-btn");
+    if (!btn?.dataset.view) return;
+    setCompareView(btn.dataset.view);
+  });
+  els.compareSliderRange?.addEventListener("input", syncCompareSlider);
+  window.addEventListener("resize", () => {
+    if (state.compareView === "slider") syncCompareSlider();
+  });
   els.compareHistoryList?.addEventListener("click", async (e) => {
     const btn = e.target.closest(".compare-hist-btn");
     if (!btn?.dataset.id || !state.current?.id) return;

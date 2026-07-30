@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=20" />
+  <link rel="stylesheet" href="/static/app.css?v=21" />
 </head>
 <body>
   <div class="app">
@@ -339,15 +339,30 @@
                   <option value="768x1024">Tablet</option>
                   <option value="393x852">Mobile</option>
                 </select>
+                <select id="compareFit" class="control-select" title="Normalização">
+                  <option value="contain">Contain</option>
+                  <option value="cover">Cover</option>
+                  <option value="crop">Crop</option>
+                </select>
                 <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar agora</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar preview</button>
               </div>
               <p class="compare-status" id="compareStatus">Visual Engine — compare o preview com uma URL ou mockup.</p>
               <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
               <input id="compareTargetUrl" type="url" placeholder="https://… ou deixe vazio para só capturar" class="compare-input" />
-              <label class="compare-label" for="compareMockupPath">Mockup no projeto (opcional)</label>
-              <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input" />
+              <label class="compare-label" for="compareMockupPath">Mockup no projeto</label>
+              <div class="compare-mockup-row">
+                <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input compare-input-inline" />
+                <button type="button" class="btn btn-ghost btn-sm" id="btnUploadMockup">Enviar mockup</button>
+                <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
+              </div>
               <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-view-tabs" id="compareViewTabs">
+                <button type="button" class="compare-view-btn active" data-view="side">Lado a lado</button>
+                <button type="button" class="compare-view-btn" data-view="diff">Diff</button>
+                <button type="button" class="compare-view-btn" data-view="overlay">Overlay</button>
+                <button type="button" class="compare-view-btn" data-view="slider">Slider</button>
+              </div>
               <div class="compare-gallery" id="compareGallery">
                 <figure class="compare-fig">
                   <figcaption>Referência</figcaption>
@@ -357,10 +372,23 @@
                   <figcaption>Atual</figcaption>
                   <img id="compareActImg" alt="Atual" />
                 </figure>
-                <figure class="compare-fig">
+                <figure class="compare-fig compare-fig-diff">
                   <figcaption>Diff</figcaption>
                   <img id="compareDiffImg" alt="Diff" />
                 </figure>
+                <figure class="compare-fig compare-fig-overlay hidden">
+                  <figcaption>Overlay</figcaption>
+                  <img id="compareOverlayImg" alt="Overlay" />
+                </figure>
+              </div>
+              <div class="compare-slider-wrap hidden" id="compareSliderWrap">
+                <div class="compare-slider" id="compareSlider">
+                  <img id="compareSliderBack" alt="Atual" />
+                  <div class="compare-slider-top" id="compareSliderTop">
+                    <img id="compareSliderFront" alt="Referência" />
+                  </div>
+                  <input type="range" id="compareSliderRange" min="0" max="100" value="50" aria-label="Slider comparação" />
+                </div>
               </div>
               <div class="compare-history">
                 <h4>Histórico visual</h4>
@@ -604,6 +632,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=20"></script>
+  <script src="/static/app.js?v=21"></script>
 </body>
 </html>
