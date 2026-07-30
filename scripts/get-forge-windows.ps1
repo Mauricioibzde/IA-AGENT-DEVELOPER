@@ -19,7 +19,7 @@ Write-Host ("Forge local Windows -> " + $TargetDir + " (branch " + $Branch + ")"
 if (-not (Get-Command git -ErrorAction SilentlyContinue)) {
     if (Get-Command winget -ErrorAction SilentlyContinue) {
         Write-Host "Installing Git with winget..."
-        winget install -e --id Git.Git --accept-package-agreements --accept-source-agreements
+        & winget.exe install -e --id Git.Git --accept-package-agreements --accept-source-agreements | Out-Host
         $env:Path = [System.Environment]::GetEnvironmentVariable("Path", "Machine") + ";" +
                     [System.Environment]::GetEnvironmentVariable("Path", "User")
     }

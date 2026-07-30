@@ -61,7 +61,7 @@ function Ensure-OllamaInstalled {
 
     Write-Host "Ollama not found. Trying winget install..."
     if (Get-Command winget -ErrorAction SilentlyContinue) {
-        winget install --id Ollama.Ollama -e --accept-package-agreements --accept-source-agreements
+        & winget.exe install --id Ollama.Ollama -e --accept-package-agreements --accept-source-agreements | Out-Host
     } else {
         $installer = Join-Path $env:TEMP "OllamaSetup.exe"
         Write-Host "Downloading Ollama installer..."
@@ -111,8 +111,13 @@ if ($SkipPythonInstall) {
         throw "Python 3.10+ not found. Install from https://www.python.org/downloads/ (check Add python.exe to PATH) and re-run setup."
     }
 } else {
-    $Python = Ensure-PythonInstalled -AutoInstall
+    # Select-Object -Last 1 guards against accidental pipeline pollution.
+    $Python = Ensure-PythonInstalled -AutoInstall | Select-Object -Last 1
 }
+if (-not $Python -or -not (Test-Path -LiteralPath ([string]$Python))) {
+    throw ("Python path invalid after discovery: " + $Python)
+}
+$Python = [string]$Python
 Write-Host ("Using: " + $Python)
 & $Python --version
 

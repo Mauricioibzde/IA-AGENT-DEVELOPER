@@ -44,7 +44,7 @@ function Ensure-CommandOrWinget {
     if (-not (Get-Command winget -ErrorAction SilentlyContinue)) {
         throw ($Name + " not found. " + $Hint)
     }
-    winget install -e --id $WingetId --accept-package-agreements --accept-source-agreements
+    & winget.exe install -e --id $WingetId --accept-package-agreements --accept-source-agreements | Out-Host
     Refresh-ProcessPath
     if (-not (Get-Command $Name -ErrorAction SilentlyContinue)) {
         throw ($Name + " installed but not on PATH yet. Open a NEW PowerShell and re-run bootstrap. Hint: " + $Hint)

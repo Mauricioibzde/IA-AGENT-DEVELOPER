@@ -98,12 +98,26 @@ function Ensure-PythonInstalled {
         throw "winget not found. Install Python 3.12 from https://www.python.org/downloads/ (check Add python.exe to PATH), open a NEW PowerShell, and re-run setup."
     }
 
-    winget install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements
+    # Out-Host keeps winget logs off the function return pipeline (critical in Windows PowerShell).
+    & winget.exe install -e --id Python.Python.3.12 --accept-package-agreements --accept-source-agreements | Out-Host
     Refresh-ProcessPath
     Start-Sleep -Seconds 2
     Refresh-ProcessPath
 
     $python = Get-PythonCommand
+    if (-not $python) {
+        # winget just installed; probe the usual path even if PATH is stale in this shell.
+        foreach ($guess in @(
+            (Join-Path $env:LOCALAPPDATA "Programs\Python\Python312\python.exe"),
+            (Join-Path $env:LOCALAPPDATA "Programs\Python\Python311\python.exe"),
+            (Join-Path $env:LOCALAPPDATA "Programs\Python\Python310\python.exe")
+        )) {
+            if (Test-PythonExecutable -ExePath $guess) {
+                $python = $guess
+                break
+            }
+        }
+    }
     if (-not $python) {
         throw "Python was installed but is not visible yet. Close this terminal, open a NEW PowerShell, cd to the repo, and re-run setup."
     }
