@@ -7797,10 +7797,211 @@ body.surface-chat #splitWorkRail {
   display: none !important;
 }
 
-/* Kill decorative "Aplicar sugestão" residue on plan cards */
-.work-plan-card::after {
-  content: none !important;
+/* ── Compact modern workspace dock (bottom strip) ── */
+.workspace-dock.hidden,
+.workspace-dock[hidden] {
   display: none !important;
+}
+
+.workspace-dock:not(.hidden):not([hidden]) {
+  display: block !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-top: 1px solid color-mix(in srgb, var(--border, #253047) 85%, transparent) !important;
+  background: color-mix(in srgb, var(--surface, #111827) 92%, #000) !important;
+  grid-template-columns: none !important;
+  align-items: stretch !important;
+  z-index: 4;
+}
+
+.workspace-dock .dock-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  gap: 0;
+  align-items: stretch;
+  min-height: 52px;
+  max-height: 64px;
+}
+
+.workspace-dock .dock-seg {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  padding: 8px 12px;
+  min-width: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border, #253047) 70%, transparent);
+}
+
+.workspace-dock .dock-seg:last-child {
+  border-right: 0;
+}
+
+.workspace-dock .dock-kicker {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  font-weight: 700;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.9;
+}
+
+.workspace-dock .dock-seg-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 1px;
+}
+
+.workspace-dock .dock-main {
+  margin: 0;
+  font-size: 0.8rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-dock .dock-meta {
+  margin: 0;
+  font-size: 0.68rem;
+  line-height: 1.2;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-dock .dock-seg-actions {
+  display: flex;
+  gap: 6px;
+  flex: 0 0 auto;
+}
+
+.workspace-dock .dock-open-btn {
+  height: 28px;
+  padding: 0 10px;
+  border-radius: 8px;
+  font-size: 0.7rem;
+  font-weight: 600;
+}
+
+.workspace-dock .dock-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 2px;
+  font-size: 0.68rem;
+}
+
+.workspace-dock .dock-run-list li {
+  display: flex;
+  justify-content: space-between;
+  gap: 8px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.workspace-dock .dock-run-list li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dock .dock-run-list .ok { color: var(--ok); }
+.workspace-dock .dock-run-list .err { color: var(--err); }
+.workspace-dock .dock-run-list .warn { color: var(--warn); }
+
+.workspace-dock .dock-seg-stats {
+  gap: 12px;
+  padding-right: 14px;
+}
+
+.workspace-dock .dock-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+  min-width: 0;
+}
+
+.workspace-dock .dock-stat b {
+  font-size: 0.88rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  border: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: inline !important;
+  padding: 0 !important;
+  order: 0 !important;
+  background: transparent !important;
+}
+
+.workspace-dock .dock-stat em {
+  font-style: normal;
+  font-size: 0.62rem;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
+.workspace-dock .dock-stat.ok b { color: var(--ok); }
+.workspace-dock .dock-stat.err b { color: var(--err); }
+
+.workspace-dock .dock-live-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.workspace-dock .dock-live-dot {
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: var(--ok, #21c787);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #21c787) 22%, transparent);
+}
+
+.workspace-dock .dock-card,
+.workspace-dock .dock-metric,
+.workspace-dock .dock-metric-grid,
+.workspace-dock .dock-head {
+  /* neutralize legacy tall-card chrome if any residual markup appears */
+  min-height: 0 !important;
+  height: auto !important;
+  background: transparent !important;
+  border: 0 !important;
+  box-shadow: none !important;
+  padding: 0 !important;
+}
+
+body.surface-chat .workspace-dock {
+  display: none !important;
+}
+
+@media (max-width: 1100px) {
+  .workspace-dock .dock-strip {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .workspace-dock .dock-seg-runs {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .workspace-dock {
+    display: none !important;
+  }
 }
 
 .active-model-badge.is-offline {

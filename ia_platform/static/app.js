@@ -228,6 +228,8 @@
     dockMetricTotal: $("dockMetricTotal"),
     dockMetricSuccess: $("dockMetricSuccess"),
     dockMetricFail: $("dockMetricFail"),
+    dockBtnReach: $("dockBtnReach"),
+    dockBtnVisual: $("dockBtnVisual"),
     projectChanges: $("projectChanges"),
     projectChangesList: $("projectChangesList"),
     projectChangesMeta: $("projectChangesMeta"),
@@ -2413,6 +2415,7 @@
     }
     syncComposerToolHint();
     syncCompareEmptyState();
+    renderWorkspaceDock();
   }
 
   function setSurfaceMode(mode) {
@@ -2464,6 +2467,7 @@
     syncSidebarNavState();
     syncWorkbenchForSurface();
     syncComposerProjectLabel();
+    renderWorkspaceDock();
     restoreLayoutSizes();
     try {
       localStorage.setItem("forge_surface_mode", state.surfaceMode);
@@ -3699,11 +3703,79 @@
   }
 
   function renderWorkspaceDock() {
-    // Dock chrome removed in Lovable shell; keep IDs for callers but never show.
     if (!els.workspaceDock) return;
-    els.workspaceDock.classList.add("hidden");
-    els.workspaceDock.setAttribute("hidden", "");
-    els.workspaceDock.setAttribute("aria-hidden", "true");
+    const show = !!state.current && state.surfaceMode === "work" && !isMobileLayout();
+    els.workspaceDock.classList.toggle("hidden", !show);
+    if (show) {
+      els.workspaceDock.removeAttribute("hidden");
+      els.workspaceDock.setAttribute("aria-hidden", "false");
+    } else {
+      els.workspaceDock.setAttribute("hidden", "");
+      els.workspaceDock.setAttribute("aria-hidden", "true");
+      return;
+    }
+
+    const report = state.lastCompareReport;
+    const sim = reportSimilarity(report);
+    const mockup = (els.compareMockupPath?.value || "").trim() || findProjectMockupPath();
+    const compareText = (els.compareStatus?.textContent || "").trim();
+
+    if (els.dockCompareStatus) {
+      if (sim != null) {
+        els.dockCompareStatus.textContent = `${(sim * 100).toFixed(1)}% similar`;
+      } else if (mockup) {
+        els.dockCompareStatus.textContent = "Mockup pronto";
+      } else if (compareText && !/enviando|comparando/i.test(compareText)) {
+        els.dockCompareStatus.textContent = compareText.slice(0, 48);
+      } else {
+        els.dockCompareStatus.textContent = "Sem comparações";
+      }
+    }
+    if (els.dockCompareMeta) {
+      const project = state.current?.name || "projeto";
+      if (sim != null && !visualTargetReached(sim)) {
+        els.dockCompareMeta.textContent = `Abaixo da meta · ${project}`;
+      } else if (sim != null) {
+        els.dockCompareMeta.textContent = `Meta ok · ${project}`;
+      } else if (mockup) {
+        els.dockCompareMeta.textContent = `${mockup.split("/").pop()} · ${project}`;
+      } else {
+        els.dockCompareMeta.textContent = `Envie um mockup · ${project}`;
+      }
+    }
+
+    const canReach = !!mockup && visualEngineAvailable();
+    els.dockBtnReach?.classList.toggle("hidden", !canReach);
+    if (els.dockBtnVisual) {
+      els.dockBtnVisual.textContent = mockup ? "Visual" : "Enviar";
+    }
+
+    const runs = state.runs || [];
+    if (els.dockRunList) {
+      if (!runs.length) {
+        els.dockRunList.innerHTML = "<li class='muted'>Nenhuma execução</li>";
+      } else {
+        els.dockRunList.innerHTML = runs
+          .slice(0, 2)
+          .map((run) => {
+            const label = String(run.status || "RUN").toUpperCase();
+            const cls = runStatusClass(run.status);
+            const goal = (run.goal || run.summary || "Execução").slice(0, 22);
+            return `<li><span>${escapeHtml(goal)}</span><strong class="${cls}">${escapeHtml(label)}</strong></li>`;
+          })
+          .join("");
+      }
+    }
+
+    const total = runs.length;
+    const success = runs.filter((r) => String(r.status || "").toUpperCase() === "SUCCESS").length;
+    const fail = runs.filter((r) => {
+      const s = String(r.status || "").toUpperCase();
+      return s === "FAILED" || s === "ERROR" || s === "FAIL";
+    }).length;
+    if (els.dockMetricTotal) els.dockMetricTotal.textContent = String(total);
+    if (els.dockMetricSuccess) els.dockMetricSuccess.textContent = String(success);
+    if (els.dockMetricFail) els.dockMetricFail.textContent = String(fail);
   }
 
   function formatRunTime(ts) {
@@ -7794,11 +7866,23 @@
 
   els.btnSend.addEventListener("click", sendPrompt);
   els.workspaceDock?.addEventListener("click", (e) => {
+    const reach = e.target.closest("[data-dock-action='reach']");
+    if (reach) {
+      setSurfaceMode("work");
+      switchToolGroup("visual", "compare");
+      startReachResultFlow({ autoCorrect: true });
+      return;
+    }
     const btn = e.target.closest(".dock-open-btn");
     if (!btn) return;
     const group = btn.dataset.openGroup;
     const tab = btn.dataset.openTab;
     if (!group || !tab) return;
+    setSurfaceMode("work");
+    if (group === "visual" && !(els.compareMockupPath?.value || "").trim() && !state.lastCompareReport) {
+      openVisualMockupFlow();
+      return;
+    }
     switchToolGroup(group, tab);
   });
   els.mobileTabs?.addEventListener("click", (e) => {

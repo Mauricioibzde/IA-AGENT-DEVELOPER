@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=61" />
+  <link rel="stylesheet" href="/static/app.css?v=62" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -631,13 +631,35 @@
             </div>
           </aside>
         </div>
-        <section class="workspace-dock hidden" id="workspaceDock" hidden aria-hidden="true" aria-label="Painéis inferiores">
-          <p class="dock-main" id="dockCompareStatus" hidden>Sem comparações recentes.</p>
-          <p class="dock-meta muted" id="dockCompareMeta" hidden></p>
-          <ul class="dock-run-list" id="dockRunList" hidden></ul>
-          <b id="dockMetricTotal" hidden>0</b>
-          <b id="dockMetricFail" hidden>0</b>
-          <b id="dockMetricSuccess" hidden>0</b>
+        <section class="workspace-dock hidden" id="workspaceDock" aria-label="Resumo inferior" hidden>
+          <div class="dock-strip">
+            <div class="dock-seg dock-seg-visual">
+              <span class="dock-kicker">Visual</span>
+              <div class="dock-seg-body">
+                <strong class="dock-main" id="dockCompareStatus">Sem comparações</strong>
+                <span class="dock-meta muted" id="dockCompareMeta">Envie um mockup para comparar com o Preview</span>
+              </div>
+              <div class="dock-seg-actions">
+                <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="visual" data-open-tab="compare" id="dockBtnVisual">Abrir</button>
+                <button type="button" class="btn btn-primary btn-sm dock-open-btn hidden" data-dock-action="reach" id="dockBtnReach">Alcançar</button>
+              </div>
+            </div>
+            <div class="dock-seg dock-seg-runs">
+              <span class="dock-kicker">Runs</span>
+              <ul class="dock-run-list" id="dockRunList">
+                <li class="muted">Nenhuma execução</li>
+              </ul>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Histórico</button>
+            </div>
+            <div class="dock-seg dock-seg-stats">
+              <span class="dock-stat" title="Total de execuções"><b id="dockMetricTotal">0</b><em>total</em></span>
+              <span class="dock-stat ok" title="Sucessos"><b id="dockMetricSuccess">0</b><em>ok</em></span>
+              <span class="dock-stat err" title="Falhas"><b id="dockMetricFail">0</b><em>erro</em></span>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn dock-live-btn" data-open-group="agent" data-open-tab="live">
+                <i class="dock-live-dot" aria-hidden="true"></i> Ao vivo
+              </button>
+            </div>
+          </div>
         </section>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
           <button type="button" class="mobile-tab mobile-tab-chat" data-surface="chat" id="mobileTabChat">Conversa</button>
@@ -867,6 +889,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=49"></script>
+  <script src="/static/app.js?v=50"></script>
 </body>
 </html>
