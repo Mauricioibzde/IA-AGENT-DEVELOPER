@@ -7797,6 +7797,32 @@ body.surface-chat #splitWorkRail {
   display: none !important;
 }
 
+/* Sidebar hardware meters removed */
+.sidebar-resources,
+.resource-meter,
+.resource-track {
+  display: none !important;
+}
+
+.sidebar-bottom {
+  gap: 8px;
+}
+
+.sidebar-tip {
+  margin: 0 10px 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border, #253047) 80%, transparent);
+  background: color-mix(in srgb, var(--surface, #111827) 88%, transparent);
+  font-size: 0.74rem;
+}
+
+.sidebar-tip p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
 /* ── Compact modern workspace dock (bottom strip) ── */
 .workspace-dock.hidden,
 .workspace-dock[hidden] {
@@ -7810,29 +7836,45 @@ body.surface-chat #splitWorkRail {
   max-height: none !important;
   padding: 0 !important;
   margin: 0 !important;
-  border-top: 1px solid color-mix(in srgb, var(--border, #253047) 85%, transparent) !important;
-  background: color-mix(in srgb, var(--surface, #111827) 92%, #000) !important;
+  border-top: 1px solid color-mix(in srgb, var(--border, #253047) 70%, transparent) !important;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface, #111827) 96%, #000), color-mix(in srgb, #0a0f18 90%, #000)) !important;
   grid-template-columns: none !important;
   align-items: stretch !important;
   z-index: 4;
 }
 
+/* Kill legacy tall dock cards completely */
+.workspace-dock .dock-card,
+.workspace-dock article.dock-card,
+.workspace-dock .dock-metric-grid,
+.workspace-dock .dock-head {
+  display: contents !important;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
 .workspace-dock .dock-strip {
   display: grid;
-  grid-template-columns: minmax(0, 1.4fr) minmax(0, 1fr) auto;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1.05fr) auto;
   gap: 0;
-  align-items: stretch;
-  min-height: 52px;
-  max-height: 64px;
+  align-items: center;
+  min-height: 44px;
+  max-height: 48px;
 }
 
 .workspace-dock .dock-seg {
   display: flex;
   align-items: center;
-  gap: 10px;
-  padding: 8px 12px;
+  gap: 8px;
+  padding: 6px 12px;
   min-width: 0;
-  border-right: 1px solid color-mix(in srgb, var(--border, #253047) 70%, transparent);
+  border-right: 1px solid color-mix(in srgb, var(--border, #253047) 55%, transparent);
 }
 
 .workspace-dock .dock-seg:last-child {
@@ -7841,27 +7883,27 @@ body.surface-chat #splitWorkRail {
 
 .workspace-dock .dock-kicker {
   flex: 0 0 auto;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   font-weight: 700;
-  letter-spacing: 0.06em;
+  letter-spacing: 0.07em;
   text-transform: uppercase;
   color: var(--muted);
-  opacity: 0.9;
+  opacity: 0.85;
 }
 
 .workspace-dock .dock-seg-body {
   flex: 1 1 auto;
   min-width: 0;
   display: grid;
-  gap: 1px;
+  gap: 0;
 }
 
 .workspace-dock .dock-main {
   margin: 0;
-  font-size: 0.8rem;
+  font-size: 0.76rem;
   font-weight: 650;
   color: var(--text);
-  line-height: 1.2;
+  line-height: 1.15;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
@@ -7869,24 +7911,25 @@ body.surface-chat #splitWorkRail {
 
 .workspace-dock .dock-meta {
   margin: 0;
-  font-size: 0.68rem;
-  line-height: 1.2;
+  font-size: 0.64rem;
+  line-height: 1.15;
   white-space: nowrap;
   overflow: hidden;
   text-overflow: ellipsis;
+  opacity: 0.85;
 }
 
 .workspace-dock .dock-seg-actions {
   display: flex;
-  gap: 6px;
+  gap: 5px;
   flex: 0 0 auto;
 }
 
 .workspace-dock .dock-open-btn {
-  height: 28px;
-  padding: 0 10px;
-  border-radius: 8px;
-  font-size: 0.7rem;
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 0.68rem;
   font-weight: 600;
 }
 
@@ -7898,13 +7941,14 @@ body.surface-chat #splitWorkRail {
   min-width: 0;
   display: flex;
   flex-direction: column;
-  gap: 2px;
+  gap: 0;
   font-size: 0.68rem;
 }
 
 .workspace-dock .dock-run-list li {
   display: flex;
   justify-content: space-between;
+  align-items: center;
   gap: 8px;
   color: var(--muted);
   min-width: 0;
@@ -7916,24 +7960,31 @@ body.surface-chat #splitWorkRail {
   white-space: nowrap;
 }
 
+.workspace-dock .dock-run-list strong {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+}
+
 .workspace-dock .dock-run-list .ok { color: var(--ok); }
 .workspace-dock .dock-run-list .err { color: var(--err); }
 .workspace-dock .dock-run-list .warn { color: var(--warn); }
 
 .workspace-dock .dock-seg-stats {
-  gap: 12px;
-  padding-right: 14px;
+  gap: 10px;
+  padding-right: 12px;
 }
 
 .workspace-dock .dock-stat {
   display: inline-flex;
   align-items: baseline;
-  gap: 4px;
+  gap: 3px;
   min-width: 0;
+  padding: 2px 0;
 }
 
 .workspace-dock .dock-stat b {
-  font-size: 0.88rem;
+  font-size: 0.8rem;
   font-weight: 700;
   color: var(--text);
   line-height: 1;
@@ -7950,7 +8001,7 @@ body.surface-chat #splitWorkRail {
 
 .workspace-dock .dock-stat em {
   font-style: normal;
-  font-size: 0.62rem;
+  font-size: 0.58rem;
   color: var(--muted);
   text-transform: lowercase;
 }
@@ -7961,27 +8012,27 @@ body.surface-chat #splitWorkRail {
 .workspace-dock .dock-live-btn {
   display: inline-flex;
   align-items: center;
-  gap: 6px;
+  gap: 5px;
 }
 
 .workspace-dock .dock-live-dot {
-  width: 7px;
-  height: 7px;
+  width: 6px;
+  height: 6px;
   border-radius: 50%;
   background: var(--ok, #21c787);
-  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #21c787) 22%, transparent);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #21c787) 20%, transparent);
 }
 
-.workspace-dock .dock-card,
 .workspace-dock .dock-metric,
-.workspace-dock .dock-metric-grid,
-.workspace-dock .dock-head {
-  /* neutralize legacy tall-card chrome if any residual markup appears */
-  min-height: 0 !important;
-  height: auto !important;
-  background: transparent !important;
+.workspace-dock .dock-metric b {
+  /* neutralize legacy circular metric badges */
   border: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  border-radius: 0 !important;
   box-shadow: none !important;
+  background: transparent !important;
   padding: 0 !important;
 }
 

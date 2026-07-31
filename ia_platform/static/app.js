@@ -234,14 +234,14 @@
     projectChanges: $("projectChanges"),
     projectChangesList: $("projectChangesList"),
     projectChangesMeta: $("projectChangesMeta"),
-    sidebarResources: $("sidebarResources"),
-    resCpuFill: $("resCpuFill"),
-    resRamFill: $("resRamFill"),
-    resGpuFill: $("resGpuFill"),
-    resCpuLabel: $("resCpuLabel"),
-    resRamLabel: $("resRamLabel"),
-    resGpuLabel: $("resGpuLabel"),
-    sidebarResourceHint: $("sidebarResourceHint"),
+    sidebarResources: null,
+    resCpuFill: null,
+    resRamFill: null,
+    resGpuFill: null,
+    resCpuLabel: null,
+    resRamLabel: null,
+    resGpuLabel: null,
+    sidebarResourceHint: null,
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
@@ -3757,11 +3757,11 @@
         els.dockRunList.innerHTML = "<li class='muted'>Nenhuma execução</li>";
       } else {
         els.dockRunList.innerHTML = runs
-          .slice(0, 2)
+          .slice(0, 1)
           .map((run) => {
             const label = String(run.status || "RUN").toUpperCase();
             const cls = runStatusClass(run.status);
-            const goal = (run.goal || run.summary || "Execução").slice(0, 22);
+            const goal = (run.goal || run.summary || "Execução").slice(0, 28);
             return `<li><span>${escapeHtml(goal)}</span><strong class="${cls}">${escapeHtml(label)}</strong></li>`;
           })
           .join("");
@@ -4608,93 +4608,13 @@
       .join("");
   }
 
-  function updateSidebarResources(payload) {
-    if (!els.sidebarResources) return;
-    // Live meters must use detected machine stats, not the manual "Meu PC" profile.
-    const hw = payload?.detected || payload?.hardware || payload || {};
-    const ramTotal = Number(hw.ram_total_gb ?? 0);
-    const ramAvail = Number(hw.ram_available_gb ?? ramTotal);
-    const ramUsed = Number(
-      hw.ram_used_gb != null ? hw.ram_used_gb : ramTotal > 0 ? Math.max(0, ramTotal - ramAvail) : 0
-    );
-    const ramPct = Number(
-      hw.ram_percent != null
-        ? hw.ram_percent
-        : ramTotal > 0
-          ? (ramUsed / ramTotal) * 100
-          : 0
-    );
-    const vramTotal = Number(hw.vram_total_gb ?? 0);
-    const vramFree = Number(hw.vram_free_gb ?? vramTotal);
-    const vramUsed = Number(
-      hw.vram_used_gb != null ? hw.vram_used_gb : vramTotal > 0 ? Math.max(0, vramTotal - vramFree) : 0
-    );
-    const vramPct = Number(
-      hw.vram_percent != null
-        ? hw.vram_percent
-        : vramTotal > 0
-          ? (vramUsed / vramTotal) * 100
-          : 0
-    );
-    const cores = Number(hw.cpu_cores ?? 0);
-    const cpuPct =
-      hw.cpu_percent != null && Number.isFinite(Number(hw.cpu_percent))
-        ? Number(hw.cpu_percent)
-        : null;
-    const gpuUtil =
-      hw.gpu_utilization_percent != null && Number.isFinite(Number(hw.gpu_utilization_percent))
-        ? Number(hw.gpu_utilization_percent)
-        : null;
-    const gpuFill = gpuUtil != null ? gpuUtil : vramPct;
-
-    if (els.resCpuFill) els.resCpuFill.style.width = `${Math.min(100, Math.max(0, cpuPct ?? 0))}%`;
-    if (els.resCpuLabel) {
-      if (cpuPct != null && cores) els.resCpuLabel.textContent = `${Math.round(cpuPct)}% · ${cores}c`;
-      else if (cpuPct != null) els.resCpuLabel.textContent = `${Math.round(cpuPct)}%`;
-      else if (cores) els.resCpuLabel.textContent = `${cores}c`;
-      else els.resCpuLabel.textContent = "—";
-    }
-    if (els.resRamFill) els.resRamFill.style.width = `${Math.min(100, Math.max(0, ramPct))}%`;
-    if (els.resRamLabel) {
-      els.resRamLabel.textContent = ramTotal
-        ? `${ramUsed.toFixed(1)}/${ramTotal.toFixed(1)}`
-        : "—";
-    }
-    if (els.resGpuFill) els.resGpuFill.style.width = `${Math.min(100, Math.max(0, gpuFill))}%`;
-    if (els.resGpuLabel) {
-      if (vramTotal > 0) {
-        els.resGpuLabel.textContent =
-          gpuUtil != null
-            ? `${Math.round(gpuUtil)}% · ${vramUsed.toFixed(1)}/${vramTotal.toFixed(1)}`
-            : `${vramUsed.toFixed(1)}/${vramTotal.toFixed(1)}`;
-      } else if (hw.has_gpu) {
-        els.resGpuLabel.textContent = gpuUtil != null ? `${Math.round(gpuUtil)}%` : "GPU";
-      } else {
-        els.resGpuLabel.textContent = "CPU";
-      }
-    }
-    if (els.sidebarResourceHint) {
-      const gpuName = Array.isArray(hw.gpus) && hw.gpus[0]?.name ? hw.gpus[0].name : "";
-      const host = hw.hostname ? String(hw.hostname) : "";
-      const src = hw.source === "container" ? "container" : hw.source === "wsl" ? "WSL" : "";
-      const bits = [gpuName || (hw.has_gpu ? "GPU" : "CPU"), host, src].filter(Boolean);
-      els.sidebarResourceHint.textContent = bits.slice(0, 2).join(" · ") || "Ollama";
-    }
+  function updateSidebarResources(_payload) {
+    // Hardware meters removed from the sidebar (CPU/RAM/GPU) — keep no-op for callers.
+    return;
   }
 
   async function refreshSidebarResources() {
-    try {
-      // Always refresh so RAM/CPU meters stay live (server cache is short).
-      const data = await api("/api/system/hardware?refresh=1");
-      updateSidebarResources(data);
-    } catch {
-      try {
-        const data = await api("/api/hardware?refresh=1");
-        updateSidebarResources(data);
-      } catch {
-        /* optional widget */
-      }
-    }
+    return;
   }
 
   function scheduleFileRefresh(activity) {
@@ -4871,6 +4791,8 @@
     }
 
     if (!prompt || state.running || !state.current) return;
+
+    state.lastUserPrompt = prompt;
 
     // Capture model once and keep selectors in sync before any routing.
     syncModelSelectorsFromCanonical();
@@ -6509,6 +6431,7 @@
       } else if (action === "prompt" && btn.dataset.prompt) {
         els.promptInput.value = btn.dataset.prompt;
         els.promptInput.focus();
+        if (!state.running) sendPrompt();
       }
     });
 
@@ -8485,8 +8408,6 @@
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);
-    refreshSidebarResources();
-    setInterval(refreshSidebarResources, 15000);
     syncWorkRailVisibility();
     checkHealth().then(async () => {
       try {

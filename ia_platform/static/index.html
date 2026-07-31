@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=63" />
+  <link rel="stylesheet" href="/static/app.css?v=64" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -88,27 +88,6 @@
       </div>
 
         <div class="sidebar-bottom">
-          <div class="sidebar-resources" id="sidebarResources" aria-label="Recursos locais">
-            <div class="sidebar-resources-head">
-              <strong>Forge local</strong>
-              <span id="sidebarResourceHint">Ollama</span>
-            </div>
-            <div class="resource-meter" data-res="cpu">
-              <span>CPU</span>
-              <div class="resource-track"><i id="resCpuFill"></i></div>
-              <em id="resCpuLabel">—</em>
-            </div>
-            <div class="resource-meter" data-res="ram">
-              <span>RAM</span>
-              <div class="resource-track"><i id="resRamFill"></i></div>
-              <em id="resRamLabel">—</em>
-            </div>
-            <div class="resource-meter" data-res="gpu">
-              <span>GPU</span>
-              <div class="resource-track"><i id="resGpuFill"></i></div>
-              <em id="resGpuLabel">—</em>
-            </div>
-          </div>
           <div class="sidebar-tip" id="sidebarTip">
             <strong>Caminho rápido</strong>
             <p><b>1</b> Chat · <b>2</b> Work · <b>3</b> Preview · <b>4</b> Visual (mockup).</p>
@@ -632,12 +611,12 @@
           </aside>
         </div>
         <section class="workspace-dock hidden" id="workspaceDock" aria-label="Resumo inferior" hidden>
-          <div class="dock-strip">
+          <div class="dock-strip" role="group" aria-label="Status do workspace">
             <div class="dock-seg dock-seg-visual">
               <span class="dock-kicker">Visual</span>
               <div class="dock-seg-body">
                 <strong class="dock-main" id="dockCompareStatus">Sem comparações</strong>
-                <span class="dock-meta muted" id="dockCompareMeta">Envie um mockup para comparar com o Preview</span>
+                <span class="dock-meta muted" id="dockCompareMeta">Mockup → Preview</span>
               </div>
               <div class="dock-seg-actions">
                 <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="visual" data-open-tab="compare" id="dockBtnVisual">Abrir</button>
@@ -645,11 +624,11 @@
               </div>
             </div>
             <div class="dock-seg dock-seg-runs">
-              <span class="dock-kicker">Runs</span>
+              <span class="dock-kicker">Último run</span>
               <ul class="dock-run-list" id="dockRunList">
                 <li class="muted">Nenhuma execução</li>
               </ul>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Histórico</button>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Runs</button>
             </div>
             <div class="dock-seg dock-seg-stats">
               <span class="dock-stat" title="Total de execuções"><b id="dockMetricTotal">0</b><em>total</em></span>
@@ -889,6 +868,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=50"></script>
+  <script src="/static/app.js?v=52"></script>
 </body>
 </html>
