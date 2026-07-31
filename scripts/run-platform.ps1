@@ -10,6 +10,8 @@ $Root = Resolve-Path (Join-Path $PSScriptRoot "..")
 Set-Location $Root
 $Port = 8787
 
+. (Join-Path $PSScriptRoot "python-windows.ps1")
+
 function Stop-ListenerOnPort {
     param([int]$ListenPort)
     $stopped = $false
@@ -18,24 +20,29 @@ function Stop-ListenerOnPort {
         foreach ($conn in $connections) {
             $procId = $conn.OwningProcess
             if ($procId -and $procId -ne 0) {
-                Write-Host "Stopping old platform on port $ListenPort (PID $procId)..." -ForegroundColor Yellow
+                Write-Host ("Stopping old platform on port " + $ListenPort + " (PID " + $procId + ")...") -ForegroundColor Yellow
                 Stop-Process -Id $procId -Force -ErrorAction SilentlyContinue
                 $stopped = $true
             }
         }
     } catch {
-        $lines = netstat -ano | Select-String ":$ListenPort\s" | Select-String "LISTENING"
+        $lines = netstat -ano | Select-String (":" + $ListenPort + "\s") | Select-String "LISTENING"
         foreach ($line in $lines) {
             $parts = ($line -replace '\s+', ' ').ToString().Trim().Split(' ')
             $procId = $parts[-1]
             if ($procId -match '^\d+$') {
-                Write-Host "Stopping old platform on port $ListenPort (PID $procId)..." -ForegroundColor Yellow
+                Write-Host ("Stopping old platform on port " + $ListenPort + " (PID " + $procId + ")...") -ForegroundColor Yellow
                 taskkill /PID $procId /F 2>$null | Out-Null
                 $stopped = $true
             }
         }
     }
     if ($stopped) { Start-Sleep -Seconds 1 }
+}
+
+$Python = Get-PythonCommand
+if (-not $Python) {
+    throw "Python 3.10+ not found. Run: powershell -ExecutionPolicy Bypass -File .\scripts\setup.ps1 -SkipSmoke"
 }
 
 Stop-ListenerOnPort -ListenPort $Port
@@ -49,7 +56,8 @@ try {
 }
 
 New-Item -ItemType Directory -Force -Path (Join-Path $Root "sandbox") | Out-Null
-Write-Host "Starting Forge Platform v2 at http://127.0.0.1:$Port" -ForegroundColor Green
-Write-Host "Verify setup API: http://127.0.0.1:$Port/api/health -> full_setup_stream: true" -ForegroundColor DarkGray
+Write-Host ("Starting Forge Platform v3 at http://127.0.0.1:" + $Port) -ForegroundColor Green
+Write-Host ("Using Python: " + $Python) -ForegroundColor DarkGray
+Write-Host ("Browser: open http://127.0.0.1:" + $Port + " on THIS Windows PC.") -ForegroundColor Yellow
 $env:PYTHONPATH = $Root
-python "$Root\ia_platform\server.py" --host 127.0.0.1 --port $Port
+& $Python (Join-Path $Root "ia_platform\server.py") --host 127.0.0.1 --port $Port
