@@ -57,6 +57,7 @@
     healthInFlight: false,
     setupInFlight: null,
     pendingPrompt: null,
+    lastUserPrompt: null,
     ollamaInstalled: true,
     setupPlatform: null,
     setupInstallUrl: null,
@@ -4515,14 +4516,15 @@
 
   function syncWorkRailVisibility() {
     if (!els.workRail) return;
-    const hasActivity = !!state.running || !!(state.runActivity && !state.runActivity.finished);
+    const activity = state.runActivity;
+    const activeRun = !!state.running || !!(activity && !activity.finished);
     const show =
       state.surfaceMode === "work" &&
       !!state.current &&
-      hasActivity &&
+      activeRun &&
       !isMobileLayout();
     els.workRail.classList.toggle("hidden", !show);
-    els.workRail?.classList.toggle("is-idle", !hasActivity);
+    els.workRail?.classList.toggle("is-idle", !activeRun);
     syncWorkRailSplitter();
   }
 
@@ -4800,6 +4802,12 @@
       source: isAutoModelSelected() ? "auto" : "manual",
       live: false,
     });
+    // Collapse the work rail right after finish/cancel — keep focus on Preview/next steps.
+    window.setTimeout(() => {
+      if (state.runActivity === activity) state.runActivity = { ...activity, finished: true };
+      syncWorkRailVisibility();
+      renderWorkspaceDock();
+    }, 900);
   }
 
   async function cancelRun() {
@@ -6353,9 +6361,31 @@
     const devRunning = !!state.devStatus?.running;
     const hasMockupHint = !!(ensureMockupPath() || "").trim();
     const failed = status && status !== "SUCCESS" && status !== "CANCELLED";
+    const cancelled = status === "CANCELLED";
+    const retryPrompt = (state.lastUserPrompt || "").trim();
 
     // Cap: 1 primary + 2 secondary (golden path).
-    if (failed) {
+    if (cancelled) {
+      if (retryPrompt) {
+        actions.push({ action: "prompt", label: "Tentar de novo", primary: true, prompt: retryPrompt });
+      }
+      if (!uiTouched && !findPreviewPath()) {
+        actions.push({
+          action: "prompt",
+          label: "Criar landing",
+          primary: !retryPrompt,
+          prompt: "Crie um index.html moderno com CSS embutido e uma hero section.",
+        });
+      } else if (uiTouched || findPreviewPath()) {
+        actions.push({ action: "preview", label: "Ver preview", primary: !retryPrompt });
+      }
+      if (visualEngineAvailable()) {
+        actions.push({
+          action: hasMockupHint ? "reach-result" : "visual",
+          label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        });
+      }
+    } else if (failed) {
       actions.push({
         action: "prompt",
         label: "Corrigir o erro",
@@ -6378,11 +6408,25 @@
       }
       if (changed.length) actions.push({ action: "files", label: "Arquivos" });
     } else {
-      if (changed[0]) actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0], primary: true });
-      else actions.push({ action: "files", label: "Ver arquivos", primary: true });
-      if (visualEngineAvailable() && hasMockupHint) {
-        actions.push({ action: "reach-result", label: "Alcançar resultado" });
+      if (!findPreviewPath()) {
+        actions.push({
+          action: "prompt",
+          label: "Criar landing",
+          primary: true,
+          prompt: "Crie um index.html moderno com CSS embutido e uma hero section.",
+        });
+      } else if (changed[0]) {
+        actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0], primary: true });
+      } else {
+        actions.push({ action: "preview", label: "Ver preview", primary: true });
       }
+      if (visualEngineAvailable()) {
+        actions.push({
+          action: hasMockupHint ? "reach-result" : "visual",
+          label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        });
+      }
+      if (changed.length) actions.push({ action: "files", label: "Arquivos" });
     }
     const capped = actions.slice(0, 3);
 
@@ -6393,7 +6437,7 @@
     if (editedN) summaryBits.push(`${editedN} editado(s)`);
     const title =
       status === "CANCELLED"
-        ? "Execução cancelada"
+        ? "Execução cancelada — próximo passo"
         : changed.length
           ? `Pronto · ${summaryBits.join(" · ") || `${changed.length} arquivo(s)`}`
           : "Pronto para o próximo passo";
@@ -6699,7 +6743,18 @@
     }
 
     if (donePayload?.status === "CANCELLED") {
-      switchToolGroup("agent", "report");
+      // Keep the user on Preview with a clear recovery path (don't dump into Relatório).
+      if (state.surfaceMode !== "work") setSurfaceMode("work");
+      switchToolGroup("app", "preview");
+      const previewPath = htmlChanged || findPreviewPath();
+      if (previewPath) {
+        updatePreview(previewPath);
+      } else {
+        setPreviewEmptyVisible(
+          true,
+          "Execução cancelada — ainda sem HTML. Use “Tentar de novo” ou “Criar landing”."
+        );
+      }
     } else if (hasDev || uiChanged || htmlChanged) {
       if (state.surfaceMode !== "work") setSurfaceMode("work");
       switchToolGroup("app", "preview");
@@ -6708,11 +6763,13 @@
       if (state.surfaceMode !== "work") setSurfaceMode("work");
       await openFile(changed[0], { switchToFiles: true, preferPreview: false });
     } else {
-      switchToolGroup("agent", "report");
+      switchToolGroup("app", "preview");
       updatePreview();
     }
 
     addNextStepActions(changed, donePayload);
+    renderWorkspaceDock();
+    syncWorkRailVisibility();
     await suggestVisualIfMockupPresent({
       autoCompare: success && !!(uiChanged || htmlChanged),
       uiChanged: !!(uiChanged || htmlChanged),
