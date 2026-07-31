@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=59" />
+  <link rel="stylesheet" href="/static/app.css?v=60" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -53,12 +53,11 @@
           </svg>
           <span class="nav-label">Arquivos</span>
         </button>
-        <button type="button" class="sidebar-nav-item" id="btnNewProject" title="Novo projeto">
+        <button type="button" class="sidebar-nav-item" id="btnNewProject" title="Criar novo projeto">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 8h16v10H4z" stroke="currentColor" stroke-width="1.7"/>
-            <path d="M8 8V6h8v2" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
           </svg>
-          <span class="nav-label">Projetos</span>
+          <span class="nav-label">Novo</span>
         </button>
         <button type="button" class="sidebar-nav-item" id="btnModels" title="Modelos IA">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -159,12 +158,14 @@
         <div class="aurora-band" aria-hidden="true"></div>
         <div class="empty-brand">Forge</div>
         <h3 id="emptyTitle">No que você está pensando hoje?</h3>
-        <p id="emptySub">Converse no Chat ou mude para Work para criar e editar apps no projeto.</p>
+        <p id="emptySub">Converse no Chat ou escolha um template para construir no Work.</p>
         <div class="empty-chat-actions" id="emptyChatActions">
-          <button type="button" class="btn btn-primary btn-gradient" id="btnEmptyGoWork">Começar a construir (Work)</button>
-          <p class="empty-chat-hint muted">No Chat você explora ideias. No Work o agente edita o projeto e o preview atualiza.</p>
+          <button type="button" class="btn btn-primary btn-gradient" id="btnEmptyNewProject">Criar projeto e construir</button>
+          <button type="button" class="btn btn-ghost" id="btnEmptyGoWork">Só abrir Work</button>
+          <p class="empty-chat-hint muted">Chat explora ideias. Work edita o projeto e atualiza o Preview.</p>
         </div>
         <div class="template-grid hidden" id="templateGrid">
+          <p class="empty-templates-lead muted" id="emptyTemplatesLead">Escolha um ponto de partida</p>
           <button type="button" class="template-card" data-template="landing">
             <h4>Landing Page</h4>
             <p>Site de apresentação HTML/CSS</p>
@@ -187,8 +188,8 @@
           </button>
         </div>
         <div class="work-home-actions hidden" id="workHomeActions">
-          <button type="button" class="btn btn-primary btn-gradient" id="btnChooseProjectEmpty">Escolher projeto</button>
-          <button type="button" class="btn btn-ghost" id="btnNewProjectEmpty">Novo projeto</button>
+          <button type="button" class="btn btn-ghost" id="btnChooseProjectEmpty">Escolher na lista</button>
+          <button type="button" class="btn btn-primary btn-gradient" id="btnNewProjectEmpty">Novo projeto</button>
         </div>
       </section>
 
@@ -260,10 +261,10 @@
 
         <div class="work-rail hidden" id="workRail" aria-label="Fluxo de execução">
           <ol class="work-stepper" id="workStepper">
-            <li class="work-step" data-step="plan"><span>1</span><b>Planejar</b><small>Entender o que sera construido</small></li>
-            <li class="work-step" data-step="work"><span>2</span><b>Executar</b><small>Gerar codigo e executar</small></li>
-            <li class="work-step" data-step="check"><span>3</span><b>Validar</b><small>Testar e comparar resultados</small></li>
-            <li class="work-step" data-step="done"><span>4</span><b>Finalizar</b><small>Ajustar e concluir entrega</small></li>
+            <li class="work-step" data-step="plan"><span>1</span><b>Planejar</b><small>Entender o que será construído</small></li>
+            <li class="work-step" data-step="work"><span>2</span><b>Executar</b><small>Gerar código e aplicar</small></li>
+            <li class="work-step" data-step="check"><span>3</span><b>Validar</b><small>Preview e mockup</small></li>
+            <li class="work-step" data-step="done"><span>4</span><b>Finalizar</b><small>Ajustar e entregar</small></li>
           </ol>
           <div class="work-plan-card" id="workPlanCard">
             <div class="work-plan-head">
@@ -359,7 +360,7 @@
                 </button>
                 <span class="composer-tool muted" id="composerProjectLabel">Nenhum selecionado</span>
                 <span class="run-status-chip hidden" id="runStatusChip" aria-live="polite">Em execução</span>
-                <span class="composer-tool-hint muted" id="composerToolHint">Chat/Work na lateral · App à direita</span>
+                <span class="composer-tool-hint muted" id="composerToolHint">Chat conversa · Work constrói · Preview à direita</span>
               </div>
               <div class="chat-input-actions">
                 <div class="busy-banner hidden" id="busyBanner" role="status" aria-live="polite">
@@ -372,7 +373,7 @@
                   </div>
                   <div class="busy-banner-actions">
                     <button type="button" class="btn btn-ghost btn-sm btn-cancel-run" id="btnCancel">Cancelar</button>
-                    <button type="button" class="btn btn-ghost btn-sm" id="btnForceCancel" title="Força liberar o projeto se o cancelamento normal travar">Liberar fila</button>
+                    <button type="button" class="btn btn-ghost btn-sm hidden" id="btnForceCancel" title="Força liberar o projeto se o cancelamento normal travar">Liberar fila</button>
                   </div>
                 </div>
               </div>
@@ -510,8 +511,13 @@
               <ol class="compare-flow" id="compareFlow" aria-label="Fluxo visual">
                 <li class="compare-flow-step is-current" data-flow="mockup"><span>1</span><b>Mockup</b></li>
                 <li class="compare-flow-step" data-flow="compare"><span>2</span><b>Comparar</b></li>
-                <li class="compare-flow-step" data-flow="correct"><span>3</span><b>Corrigir</b></li>
+                <li class="compare-flow-step" data-flow="correct"><span>3</span><b>Alcançar</b></li>
               </ol>
+              <div class="compare-dropzone" id="compareDropzone">
+                <strong>Envie o mockup de referência</strong>
+                <p class="muted">PNG, JPG ou WebP — o motor compara com o Preview e guia as correções.</p>
+                <button type="button" class="btn btn-primary btn-sm" id="btnUploadMockupPrimary">Enviar mockup</button>
+              </div>
               <div class="compare-toolbar">
                 <select id="compareViewport" class="control-select" title="Viewport">
                   <option value="1366x768">Desktop 1366</option>
@@ -519,28 +525,28 @@
                   <option value="768x1024">Tablet</option>
                   <option value="393x852">Mobile</option>
                 </select>
-                <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnCompareNow">Comparar</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnCorrectCancel">Interromper</button>
               </div>
-              <p class="compare-status" id="compareStatus">Envie um mockup, compare com o preview e corrija no Work.</p>
+              <p class="compare-status" id="compareStatus">Envie um mockup, compare com o preview e alcance o resultado.</p>
               <label class="compare-label" for="compareMockupPath">Mockup no projeto</label>
               <div class="compare-mockup-row">
                 <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input compare-input-inline" />
                 <button type="button" class="btn btn-ghost btn-sm" id="btnUploadMockup">Enviar</button>
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
-              <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
+              <label class="compare-label compare-label-advanced" for="compareTargetUrl">URL alvo (opcional)</label>
               <input id="compareTargetUrl" type="url" placeholder="https://…" class="compare-input" />
               <div class="compare-score hidden" id="compareScore"></div>
               <div class="compare-primary-cta hidden" id="comparePrimaryCta">
                 <div class="compare-primary-actions">
-                  <button type="button" class="btn btn-primary btn-sm" id="btnCorrectPrimary">Corrigir para ficar parecido</button>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnReachResult">Alcançar resultado</button>
+                  <button type="button" class="btn btn-primary btn-sm" id="btnReachResult">Alcançar resultado</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectPrimary">Só corrigir CSS</button>
                   <button type="button" class="btn btn-ghost btn-sm hidden" id="btnVisualAgentBrief">Pedir ao agente</button>
                 </div>
                 <p class="muted compare-primary-hint" id="comparePrimaryHint">
-                  Compare → corrige CSS → se ainda ficar longe, o agente recebe o brief visual.
+                  Um clique: compara → corrige CSS → se ainda ficar longe, prepara o brief para o agente.
                 </p>
               </div>
               <details class="compare-advanced" id="compareAdvanced">
@@ -645,6 +651,7 @@
           <b id="dockMetricSuccess" hidden>0</b>
         </section>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
+          <button type="button" class="mobile-tab mobile-tab-chat" data-surface="chat" id="mobileTabChat">Conversa</button>
           <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">Preview</button>
           <button type="button" class="mobile-tab" data-group="app" data-tab="files">Arquivos</button>
           <button type="button" class="mobile-tab" data-group="agent" data-tab="live">Agente</button>
@@ -871,6 +878,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=47"></script>
+  <script src="/static/app.js?v=48"></script>
 </body>
 </html>

@@ -110,8 +110,13 @@
     workHomeActions: $("workHomeActions"),
     emptyChatActions: $("emptyChatActions"),
     btnEmptyGoWork: $("btnEmptyGoWork"),
+    btnEmptyNewProject: $("btnEmptyNewProject"),
     btnChooseProjectEmpty: $("btnChooseProjectEmpty"),
     btnNewProjectEmpty: $("btnNewProjectEmpty"),
+    compareDropzone: $("compareDropzone"),
+    btnUploadMockupPrimary: $("btnUploadMockupPrimary"),
+    composerToolHint: $("composerToolHint"),
+    mobileTabChat: $("mobileTabChat"),
     btnQuickMockup: $("btnQuickMockup"),
     btnPreviewOpenFiles: $("btnPreviewOpenFiles"),
     btnPreviewGoVisual: $("btnPreviewGoVisual"),
@@ -1799,7 +1804,10 @@
         els.runStatusChip.textContent = label;
       }
     }
+    if (!running) els.btnForceCancel?.classList.add("hidden");
     updateChatHeroVisibility();
+    syncWorkRailVisibility();
+    syncComposerToolHint();
   }
 
   function showBusyBanner(info = {}) {
@@ -1813,10 +1821,11 @@
     if (els.busyBannerText) {
       els.busyBannerText.textContent = goal
         ? `${goal}${wait}`
-        : `Já existe uma execução neste projeto${wait}. Cancele ou libere a fila.`;
+        : `Já existe uma execução neste projeto${wait}. Cancele se precisar.`;
     }
     els.busyBanner.classList.remove("hidden");
     if (els.btnCancel) els.btnCancel.disabled = false;
+    els.btnForceCancel?.classList.add("hidden");
     if (info.run_id) state.runId = info.run_id;
     if (info.started_at) state.busyStartedAt = Number(info.started_at);
     else if (!state.busyStartedAt) state.busyStartedAt = Date.now() / 1000;
@@ -1845,6 +1854,8 @@
         const title = els.busyBannerTitle?.textContent || "Em execução";
         els.runStatusChip.textContent = `${title} · ${secs}s`;
       }
+      // Liberar fila só após ~25s — evita competir com Cancelar no início.
+      if (secs >= 25) els.btnForceCancel?.classList.remove("hidden");
     }, 1000);
   }
 
@@ -2323,13 +2334,55 @@
     requestAnimationFrame(() => els.compareMockupFile?.click());
   }
 
+  function syncComposerToolHint() {
+    if (!els.composerToolHint) return;
+    if (state.running) {
+      els.composerToolHint.textContent = "Executando — Preview e Arquivos atualizam ao concluir";
+      return;
+    }
+    if (state.surfaceMode === "work") {
+      els.composerToolHint.textContent = "Work: o agente edita o projeto · Preview à direita";
+    } else {
+      els.composerToolHint.textContent = "Chat: ideias e dúvidas · Work para construir";
+    }
+  }
+
+  function syncCompareEmptyState() {
+    const hasMockup = !!(els.compareMockupPath?.value || "").trim() || !!state.lastCompareReport;
+    els.compareDropzone?.classList.toggle("hidden", hasMockup);
+    if (hasMockup && !state.lastCompareReport) {
+      els.comparePrimaryCta?.classList.remove("hidden");
+      if (els.comparePrimaryHint) {
+        els.comparePrimaryHint.textContent =
+          "Mockup pronto. Alcançar resultado compara e corrige até a meta.";
+      }
+    } else if (!hasMockup) {
+      els.comparePrimaryCta?.classList.add("hidden");
+    }
+  }
+
+  function applySurfacePlaceholder() {
+    if (!els.promptInput || state.running) return;
+    els.promptInput.placeholder =
+      state.surfaceMode === "work"
+        ? "Peça uma mudança, um componente ou uma correção…"
+        : "Pergunte ou converse sobre qualquer coisa…";
+  }
+
   function syncWorkbenchForSurface() {
     const work = state.surfaceMode === "work";
     const visualOk = visualEngineAvailable();
+    const hasProject = !!state.current;
 
-    els.templateGrid?.classList.toggle("hidden", !work);
-    els.workHomeActions?.classList.toggle("hidden", !work);
-    els.emptyChatActions?.classList.toggle("hidden", work);
+    if (!hasProject) {
+      els.templateGrid?.classList.remove("hidden");
+      els.workHomeActions?.classList.toggle("hidden", !work);
+      els.emptyChatActions?.classList.toggle("hidden", work);
+    } else {
+      els.templateGrid?.classList.add("hidden");
+      els.workHomeActions?.classList.add("hidden");
+      els.emptyChatActions?.classList.add("hidden");
+    }
 
     if (els.projectBadge) {
       els.projectBadge.textContent = work ? "Work" : "Chat";
@@ -2343,10 +2396,11 @@
     });
     $("mobileTabVisual")?.classList.toggle("hidden", !work || !visualOk);
 
-    // Chat stays on App evidence; Visual is a Work-stage tool.
     if (!work && state.activeToolGroup === "visual") {
       switchToolGroup("app", "preview");
     }
+    syncComposerToolHint();
+    syncCompareEmptyState();
   }
 
   function setSurfaceMode(mode) {
@@ -2365,7 +2419,7 @@
       } else if (state.surfaceMode === "chat" && els.modeSelect.value === "execute") {
         els.modeSelect.value = "chat";
       }
-      syncModeControls();
+      syncModeControls({ preservePlaceholder: true });
     }
 
     if (els.emptyTitle) {
@@ -2375,13 +2429,10 @@
     if (els.emptySub) {
       els.emptySub.textContent =
         state.surfaceMode === "work"
-          ? "Escolha um template ou projeto. Fluxo: pedir → preview → arquivos → visual (mockup)."
-          : "Chat livre para ideias e dúvidas. Quando for construir, vá para Work.";
+          ? "Escolha um template. Depois: pedir → Preview → Visual (mockup)."
+          : "Chat livre para ideias. Quando for construir, crie um projeto e vá para Work.";
     }
-    if (els.promptInput) {
-      els.promptInput.placeholder =
-        state.surfaceMode === "work" ? "Trabalhe no que quiser…" : "Pergunte ou converse sobre qualquer coisa…";
-    }
+    applySurfacePlaceholder();
     if (els.heroTitle) {
       els.heroTitle.textContent =
         state.surfaceMode === "work" ? "No que vamos trabalhar?" : "No que você está pensando?";
@@ -2913,12 +2964,15 @@
     els.workspaceView.classList.add("hidden");
     renderWorkspaceDock();
     renderProjectList();
+    syncWorkbenchForSurface();
+    syncWorkRailVisibility();
   }
 
   function showWorkspace() {
     els.emptyView?.classList.add("hidden");
     els.workspaceView?.classList.remove("hidden");
     restoreLayoutSizes();
+    syncWorkbenchForSurface();
     syncWorkRailVisibility();
   }
 
@@ -3846,9 +3900,13 @@
     const g = group || TAB_TO_GROUP[name] || state.activeToolGroup || "app";
     const tabName = name || state.lastToolTab?.[g] || TOOL_GROUP_DEFAULT[g];
     document.querySelectorAll(".mobile-tab").forEach((tab) => {
+      if (tab.dataset.surface === "chat") {
+        tab.classList.toggle("active", !state.mobilePanelOpen && state.surfaceMode === "chat");
+        return;
+      }
       const sameGroup = tab.dataset.group === g;
       const sameTab = !tab.dataset.tab || tab.dataset.tab === tabName;
-      tab.classList.toggle("active", sameGroup && sameTab);
+      tab.classList.toggle("active", state.mobilePanelOpen && sameGroup && sameTab);
     });
   }
 
@@ -4367,8 +4425,14 @@
 
   function syncWorkRailVisibility() {
     if (!els.workRail) return;
-    const show = state.surfaceMode === "work" && !!state.current;
+    const hasActivity = !!state.running || !!(state.runActivity && !state.runActivity.finished);
+    const show =
+      state.surfaceMode === "work" &&
+      !!state.current &&
+      hasActivity &&
+      !isMobileLayout();
     els.workRail.classList.toggle("hidden", !show);
+    els.workRail?.classList.toggle("is-idle", !hasActivity);
     syncWorkRailSplitter();
   }
 
@@ -4688,15 +4752,9 @@
     if ((!prompt && !state.attachments.length) || state.running) return;
 
     if (!state.current) {
-      if (state.surfaceMode === "work" || state.attachments.length) {
-        showToast("Escolha ou crie um projeto para continuar no Work / anexos.", "info");
-        openNewProjectModal(state.selectedTemplate || "blank");
-        return;
-      }
-      // Chat without project: create a quick inbox-style project.
-      const name = `chat-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
-      await createProject(name, "blank");
-      if (!state.current) return;
+      showToast("Crie ou escolha um projeto para continuar.", "info", 4500);
+      openNewProjectModal(state.selectedTemplate || (state.surfaceMode === "work" ? "landing" : "blank"));
+      return;
     }
 
     let uploaded = [];
@@ -6195,48 +6253,44 @@
     const status = donePayload?.status || "";
     const created = donePayload?.created_files || [];
     const htmlPath = changed.find((p) => /\.html?$/i.test(p));
+    const uiTouched = !!(htmlPath || changed.some(isUiPath));
     const actions = [];
     const hasDev = !!state.devStatus?.has_dev_script;
     const devRunning = !!state.devStatus?.running;
-    const hasMockupHint = !!(els.compareMockupPath?.value || "").trim();
+    const hasMockupHint = !!(ensureMockupPath() || "").trim();
+    const failed = status && status !== "SUCCESS" && status !== "CANCELLED";
 
-    if (htmlPath || changed.some(isUiPath)) {
-      actions.push({ action: "preview", label: "Ver preview", primary: true });
-    }
-    if (hasDev && !devRunning) {
-      actions.push({ action: "start-dev", label: "Iniciar preview ao vivo", primary: !htmlPath });
-    }
-    if (changed[0]) {
-      actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0] });
-    }
-    if (changed.length) {
-      actions.push({ action: "files", label: `Ver arquivos (${changed.length})` });
-    }
-    if (visualEngineAvailable() && (hasMockupHint || htmlPath || changed.some(isUiPath))) {
-      actions.push({
-        action: hasMockupHint ? "reach-result" : "visual",
-        label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
-        primary: hasMockupHint && !(htmlPath || changed.some(isUiPath)),
-      });
-      if (hasMockupHint) {
-        actions.push({ action: "visual", label: "Comparar mockup" });
-      }
-    }
-    if (status && status !== "SUCCESS" && status !== "CANCELLED") {
+    // Cap: 1 primary + 2 secondary (golden path).
+    if (failed) {
       actions.push({
         action: "prompt",
         label: "Corrigir o erro",
+        primary: true,
         prompt:
           "Corrija o erro da última execução neste projeto. Leia o relatório e os logs, identifique a causa e aplique a correção mínima necessária.",
       });
-    } else if (!hasMockupHint) {
-      actions.push({
-        action: "prompt",
-        label: "Melhorar visual",
-        prompt: "Melhore o visual desta página: tipografia, espaçamento, cores e responsividade, sem quebrar a estrutura.",
-      });
+      if (changed.length) actions.push({ action: "files", label: "Ver arquivos" });
+      if (uiTouched) actions.push({ action: "preview", label: "Ver preview" });
+    } else if (uiTouched || hasDev) {
+      if (uiTouched) actions.push({ action: "preview", label: "Ver preview", primary: true });
+      else if (hasDev && !devRunning) {
+        actions.push({ action: "start-dev", label: "Iniciar preview ao vivo", primary: true });
+      }
+      if (visualEngineAvailable()) {
+        actions.push({
+          action: hasMockupHint ? "reach-result" : "visual",
+          label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        });
+      }
+      if (changed.length) actions.push({ action: "files", label: "Arquivos" });
+    } else {
+      if (changed[0]) actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0], primary: true });
+      else actions.push({ action: "files", label: "Ver arquivos", primary: true });
+      if (visualEngineAvailable() && hasMockupHint) {
+        actions.push({ action: "reach-result", label: "Alcançar resultado" });
+      }
     }
-    actions.push({ action: "deploy", label: "Deploy" });
+    const capped = actions.slice(0, 3);
 
     const createdN = created.length;
     const editedN = Math.max(0, changed.length - createdN);
@@ -6258,7 +6312,7 @@
           return `<button type="button" class="next-file" data-path="${escapeHtml(p)}"><span>${escapeHtml(p)}</span><em>${tag}</em></button>`;
         }).join("")}</div>` : ""}
         <div class="next-steps-actions">
-          ${actions
+          ${capped
             .map(
               (item) =>
                 `<button type="button" class="btn ${item.primary ? "btn-primary btn-gradient" : "btn-ghost"} btn-sm next-action" data-action="${item.action}" ${
@@ -6411,18 +6465,30 @@
   function updateVisualPrimaryCta(report) {
     const sim = reportSimilarity(report);
     const reached = visualTargetReached(sim);
-    els.comparePrimaryCta?.classList.toggle("hidden", !report);
+    const hasMockup = !!(ensureMockupPath() || "").trim();
+    els.comparePrimaryCta?.classList.toggle("hidden", !report && !hasMockup);
     els.btnVisualAgentBrief?.classList.toggle("hidden", !report || reached);
+    els.btnCorrectPrimary?.classList.toggle("hidden", !report || reached);
+    // Alcançar = primary; Só corrigir CSS = secondary after a score exists.
+    if (els.btnReachResult) {
+      els.btnReachResult.classList.toggle("btn-primary", !reached);
+      els.btnReachResult.classList.toggle("btn-ghost", !!reached);
+      els.btnReachResult.textContent = reached ? "Revalidar" : "Alcançar resultado";
+    }
     if (els.comparePrimaryHint) {
-      if (!report) {
+      if (!report && hasMockup) {
         els.comparePrimaryHint.textContent =
-          "Compare → corrige CSS → se ainda ficar longe, o agente recebe o brief visual.";
+          "Mockup pronto. Alcançar resultado compara e corrige até a meta.";
+      } else if (!report) {
+        els.comparePrimaryHint.textContent =
+          "Um clique: compara → corrige CSS → se ainda ficar longe, prepara o brief para o agente.";
       } else if (reached) {
         els.comparePrimaryHint.textContent = `Meta atingida (${(sim * 100).toFixed(1)}%). Pode aprovar baseline ou pedir refinamentos.`;
       } else {
-        els.comparePrimaryHint.textContent = `Ainda em ${(sim * 100).toFixed(1)}%. Corrija via CSS ou peça ao agente com o brief do compare.`;
+        els.comparePrimaryHint.textContent = `Ainda em ${(sim * 100).toFixed(1)}%. Alcançar fecha o loop; Pedir ao agente usa o brief do compare.`;
       }
     }
+    syncCompareEmptyState();
   }
 
   function addVisualOutcomeCard(report, job) {
@@ -6437,11 +6503,12 @@
       : `Visual ainda longe do mockup · ${pct}`;
     const actions = [];
     if (!reached) {
-      actions.push({ action: "correct", label: "Corrigir CSS", primary: true });
+      actions.push({ action: "reach", label: "Alcançar resultado", primary: true });
       actions.push({ action: "agent", label: "Pedir ao agente" });
+    } else {
+      actions.push({ action: "preview", label: "Ver preview", primary: true });
+      actions.push({ action: "compare", label: "Ver comparação" });
     }
-    actions.push({ action: "compare", label: "Ver comparação" });
-    if (reached) actions.push({ action: "preview", label: "Ver preview", primary: true });
 
     el.innerHTML = `
       <div class="next-steps-card visual-outcome-card">
@@ -6449,7 +6516,7 @@
         <p class="muted visual-outcome-copy">${
           reached
             ? "O motor de comparação indica que o resultado está na meta."
-            : "Use o loop CSS ou envie o brief visual ao agente para fechar as diferenças restantes."
+            : "Alcançar resultado fecha o loop CSS; se estabilizar abaixo da meta, use o brief no agente."
         }</p>
         <div class="next-steps-actions">
           ${actions
@@ -6465,10 +6532,10 @@
       const btn = event.target.closest(".visual-outcome-action");
       if (!btn) return;
       const action = btn.dataset.action;
-      if (action === "correct") {
+      if (action === "reach" || action === "correct") {
         setSurfaceMode("work");
         switchToolGroup("visual", "compare");
-        startCorrectionLoop({ fromSmartFlow: true });
+        startReachResultFlow({ autoCorrect: true });
       } else if (action === "agent") {
         fillVisualAgentBrief(report, job, { send: false });
       } else if (action === "compare") {
@@ -6964,11 +7031,14 @@
     workbench?.classList.toggle("workbench-focus-preview", isAppPreview);
     els.btnSidebarSearch?.classList.toggle("is-active", isAppFiles);
     syncMobileTabs(tab, group);
-    if (isMobileLayout()) openMobilePanel();
-    else closeMobilePanel();
+    if (opts.fromMobile && isMobileLayout()) openMobilePanel();
+    else if (!isMobileLayout()) closeMobilePanel();
     if (tab === "preview" || tab === "files") updatePreview();
     else stopPreviewPolling();
-    if (tab === "compare") refreshComparePanel();
+    if (tab === "compare") {
+      refreshComparePanel();
+      syncCompareEmptyState();
+    }
   }
 
   function parseCompareViewport() {
@@ -7169,11 +7239,8 @@
       });
       if (els.compareMockupPath) els.compareMockupPath.value = data.path;
       setCompareFlowStep("compare");
-      els.comparePrimaryCta?.classList.remove("hidden");
-      if (els.comparePrimaryHint) {
-        els.comparePrimaryHint.textContent =
-          "Mockup pronto. Use “Alcançar resultado” para comparar e corrigir até a meta.";
-      }
+      syncCompareEmptyState();
+      updateVisualPrimaryCta(null);
       showToast(`Mockup salvo. Use “Alcançar resultado” para fechar o loop.`, "ok", 5500);
       if (els.compareStatus) {
         els.compareStatus.textContent = `Mockup pronto: ${data.path}. Clique em Alcançar resultado.`;
@@ -7714,11 +7781,21 @@
   els.mobileTabs?.addEventListener("click", (e) => {
     const btn = e.target.closest(".mobile-tab");
     if (!btn) return;
-    if (btn.dataset.group) {
-      switchToolGroup(btn.dataset.group, btn.dataset.tab);
+    if (btn.dataset.surface === "chat") {
+      closeMobilePanel();
+      setSurfaceMode("chat");
+      syncMobileTabs();
       return;
     }
-    if (btn.dataset.tab) switchTab(btn.dataset.tab);
+    if (btn.dataset.group) {
+      setSurfaceMode("work");
+      switchToolGroup(btn.dataset.group, btn.dataset.tab);
+      // switchToolGroup → switchTab: mark as mobile intent
+      if (isMobileLayout()) openMobilePanel();
+      syncMobileTabs(btn.dataset.tab, btn.dataset.group);
+      return;
+    }
+    if (btn.dataset.tab) switchTab(btn.dataset.tab, { fromMobile: true });
   });
 
   document.getElementById("toolsGroups")?.addEventListener("click", (e) => {
@@ -7872,6 +7949,10 @@
   els.btnSurfaceChat?.addEventListener("click", () => setSurfaceMode("chat"));
   els.btnSurfaceWork?.addEventListener("click", () => setSurfaceMode("work"));
   els.btnEmptyGoWork?.addEventListener("click", () => setSurfaceMode("work"));
+  els.btnEmptyNewProject?.addEventListener("click", () => {
+    setSurfaceMode("work");
+    openNewProjectModal(state.selectedTemplate || "landing");
+  });
   els.btnChooseProjectEmpty?.addEventListener("click", () => {
     setSurfaceMode("work");
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
@@ -7879,6 +7960,23 @@
     els.projectSearch?.focus();
   });
   els.btnNewProjectEmpty?.addEventListener("click", () => openNewProjectModal("blank"));
+  els.btnUploadMockupPrimary?.addEventListener("click", () => els.compareMockupFile?.click());
+  els.workStepper?.addEventListener("click", (e) => {
+    const step = e.target.closest(".work-step")?.dataset?.step;
+    if (!step || !state.current) return;
+    setSurfaceMode("work");
+    if (step === "check") {
+      if (visualEngineAvailable() && (ensureMockupPath() || "").trim()) {
+        switchToolGroup("visual", "compare");
+      } else {
+        switchToolGroup("app", "preview");
+      }
+    } else if (step === "work") {
+      switchToolGroup("agent", "live");
+    } else if (step === "done") {
+      switchToolGroup("app", "preview");
+    }
+  });
   els.btnQuickMockup?.addEventListener("click", (e) => {
     e.preventDefault();
     openVisualMockupFlow();
@@ -8053,6 +8151,10 @@
     if (!btn?.dataset.route || !els.compareRouteId) return;
     els.compareRouteId.value = btn.dataset.route;
   });
+  els.compareMockupPath?.addEventListener("input", () => {
+    syncCompareEmptyState();
+    if ((els.compareMockupPath.value || "").trim()) updateVisualPrimaryCta(state.lastCompareReport);
+  });
   els.btnUploadMockup?.addEventListener("click", () => els.compareMockupFile?.click());
   els.compareMockupFile?.addEventListener("change", () => {
     const file = els.compareMockupFile.files?.[0];
@@ -8102,7 +8204,7 @@
   els.btnDevRestart?.addEventListener("click", startDevServer);
   const MODE_PREF_KEY = "forge.mode";
 
-  function syncModeControls() {
+  function syncModeControls(opts = {}) {
     const mode = els.modeSelect?.value || "chat";
     const isChat = mode === "chat";
     const isExecute = mode === "execute";
@@ -8115,11 +8217,10 @@
         ? "Modo Executar — altera arquivos no projeto (usa o contexto do Chat)"
         : "Modo Chat — conversa livre sobre qualquer assunto";
     }
-    if (els.promptInput) {
-      els.promptInput.placeholder = isChat
-        ? "Converse sobre qualquer assunto… (para alterar código, use Executar)"
-        : "Peça uma mudança, um componente ou uma correção…";
-    }
+    // Placeholders follow Chat|Work surface, not the buried modeSelect.
+    if (!opts.preservePlaceholder) applySurfacePlaceholder();
+    else applySurfacePlaceholder();
+    syncComposerToolHint();
     try {
       localStorage.setItem(MODE_PREF_KEY, mode);
     } catch (_) {
@@ -8202,9 +8303,10 @@
     syncSidebarToggle();
     try {
       const savedSurface = localStorage.getItem("forge_surface_mode");
-      setSurfaceMode(savedSurface === "chat" ? "chat" : "work");
+      // Sem projeto, Chat é a entrada mais clara; Work fica após criar template.
+      setSurfaceMode(savedSurface === "work" ? "work" : "chat");
     } catch (_) {
-      setSurfaceMode("work");
+      setSurfaceMode("chat");
     }
     initLayoutSplitters();
     initLayoutPresets();
