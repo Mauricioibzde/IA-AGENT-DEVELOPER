@@ -416,6 +416,40 @@ def guess_content_type(path: Path) -> str:
     return ctype or "application/octet-stream"
 
 
+def _worst_viewport_patch_signal(suite_report: Any) -> Dict[str, Any]:
+    """Pick layout/region signals from the worst viewport so suite correction can patch."""
+    viewports = list(getattr(suite_report, "viewports", None) or [])
+    if not viewports:
+        return {"layoutChanges": [], "regions": [], "layoutDiff": {}}
+
+    def _score(vr: Any) -> float:
+        sim = getattr(vr, "similarity", None)
+        return float(sim) if isinstance(sim, (int, float)) else 2.0
+
+    worst = min(viewports, key=_score)
+    report = getattr(worst, "report", None) or {}
+    if not isinstance(report, dict):
+        report = {}
+    raw = report.get("raw") if isinstance(report.get("raw"), dict) else {}
+    layout_changes = report.get("layoutChanges") or raw.get("layoutChanges") or []
+    regions = report.get("regions") or raw.get("regions") or []
+    layout_diff = report.get("layoutDiff") or raw.get("layoutDiff") or {}
+    if not layout_changes and isinstance(layout_diff, dict):
+        layout_changes = layout_diff.get("layoutChanges") or []
+    return {
+        "layoutChanges": layout_changes if isinstance(layout_changes, list) else [],
+        "regions": regions if isinstance(regions, list) else [],
+        "layoutDiff": layout_diff if isinstance(layout_diff, dict) else {},
+        "comparisonId": str(
+            getattr(worst, "comparison_id", None)
+            or report.get("comparisonId")
+            or report.get("comparison_id")
+            or ""
+        ),
+        "viewport": getattr(worst, "viewport", None) or report.get("viewport") or {},
+    }
+
+
 def handle_correction_start(
     engine: VisualEngine,
     data: Dict[str, Any],
@@ -485,17 +519,20 @@ def handle_correction_start(
                 suite=suite,
                 viewports=viewports,
                 target_similarity=config.target_similarity,
-                include_reports=False,
+                include_reports=True,
             )
-            # Drive the loop by the worst viewport score.
+            # Drive the loop by the worst viewport score, keep its layout/region signals.
+            signal = _worst_viewport_patch_signal(suite_report)
             return {
-                "comparisonId": suite_report.primary_comparison_id,
+                "comparisonId": signal.get("comparisonId") or suite_report.primary_comparison_id,
                 "similarity": suite_report.min_similarity,
                 "status": suite_report.status,
                 "mode": "pixel_perfect",
                 "suite": suite_report.to_dict(),
-                "layoutChanges": [],
-                "regions": [],
+                "viewport": signal.get("viewport") or {},
+                "layoutChanges": signal.get("layoutChanges") or [],
+                "regions": signal.get("regions") or [],
+                "layoutDiff": signal.get("layoutDiff") or {},
             }
 
         report = engine.compare(

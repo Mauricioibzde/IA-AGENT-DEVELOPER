@@ -16,6 +16,8 @@
     running: false,
     runId: null,
     abortController: null,
+    busyStartedAt: null,
+    busyTimer: null,
     selectedTemplate: "blank",
     models: [],
     modelRecommendations: null,
@@ -55,6 +57,7 @@
     healthInFlight: false,
     setupInFlight: null,
     pendingPrompt: null,
+    lastUserPrompt: null,
     ollamaInstalled: true,
     setupPlatform: null,
     setupInstallUrl: null,
@@ -73,6 +76,14 @@
       history: [],
       autoOpened: false,
     },
+    lastCompareReport: null,
+    lastSuiteReport: null,
+    visualTargetSimilarity: 0.92,
+    visualAutoCompare: false,
+    visualReachInFlight: false,
+    correctionJob: null,
+    correctionTimer: null,
+    compareView: "side",
   };
 
   const $ = (id) => document.getElementById(id);
@@ -98,8 +109,20 @@
     emptyTitle: $("emptyTitle"),
     emptySub: $("emptySub"),
     workHomeActions: $("workHomeActions"),
+    emptyChatActions: $("emptyChatActions"),
+    btnEmptyGoWork: $("btnEmptyGoWork"),
+    btnEmptyNewProject: $("btnEmptyNewProject"),
     btnChooseProjectEmpty: $("btnChooseProjectEmpty"),
     btnNewProjectEmpty: $("btnNewProjectEmpty"),
+    compareDropzone: $("compareDropzone"),
+    btnUploadMockupPrimary: $("btnUploadMockupPrimary"),
+    composerToolHint: $("composerToolHint"),
+    mobileTabChat: $("mobileTabChat"),
+    btnQuickMockup: $("btnQuickMockup"),
+    btnPreviewOpenFiles: $("btnPreviewOpenFiles"),
+    btnPreviewGoVisual: $("btnPreviewGoVisual"),
+    compareFlow: $("compareFlow"),
+    projectBadge: $("projectBadge"),
     heroKicker: $("heroKicker"),
     heroTitle: $("heroTitle"),
     heroSub: $("heroSub"),
@@ -128,6 +151,8 @@
     btnResetProjectLayout: $("btnResetProjectLayout"),
     layoutPresetStatus: $("layoutPresetStatus"),
     btnDeploy: $("btnDeploy"),
+    compareResults: $("compareResults"),
+    fileEditorSaved: $("fileEditorSaved"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
     fileEditorShell: $("fileEditorShell"),
@@ -152,6 +177,15 @@
     btnPixelPerfect: $("btnPixelPerfect"),
     btnCapturePreview: $("btnCapturePreview"),
     btnCorrectAuto: $("btnCorrectAuto"),
+    btnCorrectPrimary: $("btnCorrectPrimary"),
+    btnReachResult: $("btnReachResult"),
+    btnVisualAgentBrief: $("btnVisualAgentBrief"),
+    comparePrimaryCta: $("comparePrimaryCta"),
+    comparePrimaryHint: $("comparePrimaryHint"),
+    compareAdvanced: $("compareAdvanced"),
+    devErrorPanel: $("devErrorPanel"),
+    devErrorSummary: $("devErrorSummary"),
+    btnDevErrorRestart: $("btnDevErrorRestart"),
     btnCorrectCancel: $("btnCorrectCancel"),
     compareCorrection: $("compareCorrection"),
     compareCorrectionMeta: $("compareCorrectionMeta"),
@@ -195,17 +229,19 @@
     dockMetricTotal: $("dockMetricTotal"),
     dockMetricSuccess: $("dockMetricSuccess"),
     dockMetricFail: $("dockMetricFail"),
+    dockBtnReach: $("dockBtnReach"),
+    dockBtnVisual: $("dockBtnVisual"),
     projectChanges: $("projectChanges"),
     projectChangesList: $("projectChangesList"),
     projectChangesMeta: $("projectChangesMeta"),
-    sidebarResources: $("sidebarResources"),
-    resCpuFill: $("resCpuFill"),
-    resRamFill: $("resRamFill"),
-    resGpuFill: $("resGpuFill"),
-    resCpuLabel: $("resCpuLabel"),
-    resRamLabel: $("resRamLabel"),
-    resGpuLabel: $("resGpuLabel"),
-    sidebarResourceHint: $("sidebarResourceHint"),
+    sidebarResources: null,
+    resCpuFill: null,
+    resRamFill: null,
+    resGpuFill: null,
+    resCpuLabel: null,
+    resRamLabel: null,
+    resGpuLabel: null,
+    sidebarResourceHint: null,
     reportViewer: $("reportViewer"),
     healthStatus: $("healthStatus"),
     newProjectModal: $("newProjectModal"),
@@ -272,7 +308,9 @@
     modelActionFeedback: $("modelActionFeedback"),
     toastStack: $("toastStack"),
     busyBanner: $("busyBanner"),
+    busyBannerTitle: $("busyBannerTitle"),
     busyBannerText: $("busyBannerText"),
+    runStatusChip: $("runStatusChip"),
     btnForceCancel: $("btnForceCancel"),
     splitSidebar: $("splitSidebar"),
     splitPanel: $("splitPanel"),
@@ -748,12 +786,18 @@
 
     const shown = state.activeModel;
     const auto = isAutoModelSelected() || source === "auto";
+    const offline = state.ollamaOk === false;
 
     if (els.activeModelBadge) {
-      if (!shown) {
+      els.activeModelBadge.classList.toggle("is-offline", offline);
+      if (offline) {
+        els.activeModelBadge.textContent = "Ollama offline";
+        els.activeModelBadge.classList.remove("is-live", "is-manual");
+        els.activeModelBadge.title = "Ollama offline · clique para configurar";
+      } else if (!shown) {
         els.activeModelBadge.textContent = "Auto";
         els.activeModelBadge.classList.remove("is-live", "is-manual");
-        els.activeModelBadge.title = "Auto: o Forge escolhe o modelo na hora da execução";
+        els.activeModelBadge.title = "Auto · clique para abrir Modelos IA";
       } else if (auto) {
         els.activeModelBadge.textContent = live ? `Usando ${shown}` : `Auto → ${shown}`;
         els.activeModelBadge.classList.toggle("is-live", live);
@@ -788,6 +832,8 @@
       const serverOld = !state.platformVersion && !state.serverFeatures?.full_setup_stream;
       const serverHint = serverOld ? ' · <span class="status-warn">backend v1</span>' : "";
       els.healthStatus.innerHTML = `<span class="status-dot ok"></span>Ollama pronto${escapeHtml(modelLabel)}${liveMark}${serverHint}`;
+      els.healthStatus.title = "Ollama ok · clique para abrir Modelos";
+      els.healthStatus.classList.remove("is-offline");
     }
   }
 
@@ -825,13 +871,13 @@
   function syncModelSelectorsFromCanonical() {
     const top = topBarModelValue();
     const composerVal = els.composerModelSelect?.value || "";
-    // If they diverge, top bar wins (Work toolbar); mirror into composer.
-    if (top && els.composerModelSelect) {
+    // Composer is the primary picker (Lovable shell); keep hidden top select in sync.
+    if (composerVal) {
+      setModelSelection(composerVal, { skipComposer: true });
+    } else if (top && els.composerModelSelect) {
       const opts = Array.from(els.composerModelSelect.options).map((o) => o.value);
       if (opts.includes(top)) els.composerModelSelect.value = top;
-    } else if (!top && composerVal) {
-      // Composer had a model while top was Auto — promote composer to top.
-      setModelSelection(composerVal, { skipComposer: true });
+      else els.composerModelSelect.value = "";
     } else if (!top && els.composerModelSelect) {
       els.composerModelSelect.value = "";
     }
@@ -1543,7 +1589,10 @@
       updateModelOptions(state.models);
       applyRecommendedModel(d.recommended_model || d.auto_model, state.models);
       if (!state.ollamaOk) {
-        els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline?';
+        els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline · configurar';
+        els.healthStatus.title = "Clique para configurar Ollama";
+        els.healthStatus.classList.add("is-offline");
+        updateActiveModelDisplay(null, { source: "auto", live: false });
       } else {
         updateActiveModelDisplay(getSelectedModel() || expectedAutoModel(), {
           source: isAutoModelSelected() ? "auto" : "manual",
@@ -1551,10 +1600,15 @@
         });
       }
       updateOllamaOfflineUI();
+      syncWorkbenchForSurface();
     } catch {
       state.ollamaOk = false;
-      els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline';
+      els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline · configurar';
+      els.healthStatus.title = "Clique para configurar Ollama";
+      els.healthStatus.classList.add("is-offline");
+      updateActiveModelDisplay(null, { source: "auto", live: false });
       updateOllamaOfflineUI();
+      syncWorkbenchForSurface();
     } finally {
       state.healthInFlight = false;
     }
@@ -1749,24 +1803,80 @@
     }, ms);
   }
 
+  function syncRunChrome(opts = {}) {
+    const running = !!state.running || opts.forceBusy;
+    document.body.classList.toggle("is-running", running);
+    els.composer?.classList.toggle("is-running", running);
+    if (els.promptInput) els.promptInput.disabled = running;
+    if (els.btnSend) els.btnSend.disabled = running;
+    if (els.composerModelSelect) els.composerModelSelect.disabled = running;
+    if (els.runStatusChip) {
+      els.runStatusChip.classList.toggle("hidden", !running);
+      if (running) {
+        const label = opts.chip || els.busyBannerTitle?.textContent || "Em execução";
+        els.runStatusChip.textContent = label;
+      }
+    }
+    if (!running) els.btnForceCancel?.classList.add("hidden");
+    updateChatHeroVisibility();
+    syncWorkRailVisibility();
+    syncComposerToolHint();
+  }
+
   function showBusyBanner(info = {}) {
     if (!els.busyBanner) return;
     const goal = info.goal ? String(info.goal).slice(0, 80) : "";
     const started = info.started_at ? Math.max(0, Math.round(Date.now() / 1000 - Number(info.started_at))) : null;
     const wait = started != null ? ` · ${started}s` : "";
+    if (els.busyBannerTitle) {
+      els.busyBannerTitle.textContent = info.reconnect ? "Reconectando" : "Executando";
+    }
     if (els.busyBannerText) {
       els.busyBannerText.textContent = goal
-        ? `Execução em andamento${wait}: ${goal}`
-        : `Já existe uma execução neste projeto${wait}. Cancele para liberar.`;
+        ? `${goal}${wait}`
+        : `Já existe uma execução neste projeto${wait}. Cancele se precisar.`;
     }
     els.busyBanner.classList.remove("hidden");
-    els.btnCancel?.classList.remove("hidden");
     if (els.btnCancel) els.btnCancel.disabled = false;
+    els.btnForceCancel?.classList.add("hidden");
     if (info.run_id) state.runId = info.run_id;
+    if (info.started_at) state.busyStartedAt = Number(info.started_at);
+    else if (!state.busyStartedAt) state.busyStartedAt = Date.now() / 1000;
+    startBusyElapsedTimer();
+    syncRunChrome({ forceBusy: true, chip: info.reconnect ? "Reconectando…" : "Em execução" });
   }
 
   function hideBusyBanner() {
     els.busyBanner?.classList.add("hidden");
+    stopBusyElapsedTimer();
+    state.busyStartedAt = null;
+    if (!state.running) syncRunChrome();
+  }
+
+  function startBusyElapsedTimer() {
+    stopBusyElapsedTimer();
+    state.busyTimer = window.setInterval(() => {
+      if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) return;
+      const base = Number(state.busyStartedAt || 0);
+      if (!base) return;
+      const secs = Math.max(0, Math.round(Date.now() / 1000 - base));
+      const text = els.busyBannerText?.textContent || "";
+      const cleaned = text.replace(/\s·\s\d+s$/, "");
+      if (els.busyBannerText) els.busyBannerText.textContent = `${cleaned} · ${secs}s`;
+      if (els.runStatusChip && !els.runStatusChip.classList.contains("hidden")) {
+        const title = els.busyBannerTitle?.textContent || "Em execução";
+        els.runStatusChip.textContent = `${title} · ${secs}s`;
+      }
+      // Liberar fila só após ~25s — evita competir com Cancelar no início.
+      if (secs >= 25) els.btnForceCancel?.classList.remove("hidden");
+    }, 1000);
+  }
+
+  function stopBusyElapsedTimer() {
+    if (state.busyTimer) {
+      window.clearInterval(state.busyTimer);
+      state.busyTimer = null;
+    }
   }
 
   function setPullPhase(phase) {
@@ -2207,6 +2317,108 @@
     return new Date(ts * 1000).toLocaleDateString("pt-BR", { day: "2-digit", month: "short" });
   }
 
+  function visualEngineAvailable() {
+    if (state.serverFeatures && state.serverFeatures.visual_engine === false) return false;
+    return state.visualApiOk !== false;
+  }
+
+  function setCompareFlowStep(step) {
+    if (!els.compareFlow) return;
+    const order = ["mockup", "compare", "correct"];
+    const idx = order.indexOf(step);
+    els.compareFlow.querySelectorAll(".compare-flow-step").forEach((el) => {
+      const key = el.dataset.flow;
+      const at = order.indexOf(key);
+      el.classList.toggle("is-current", key === step);
+      el.classList.toggle("is-done", idx >= 0 && at >= 0 && at < idx);
+    });
+  }
+
+  function openVisualMockupFlow() {
+    if (!state.current) {
+      showToast("Escolha um projeto para enviar mockup.", "info", 4000);
+      openNewProjectModal(state.selectedTemplate || "blank");
+      return;
+    }
+    setSurfaceMode("work");
+    showWorkspace();
+    switchToolGroup("visual", "compare");
+    setCompareFlowStep("mockup");
+    requestAnimationFrame(() => els.compareMockupFile?.click());
+  }
+
+  function syncComposerToolHint() {
+    if (!els.composerToolHint) return;
+    if (state.running) {
+      els.composerToolHint.textContent = "Executando — Preview e Arquivos atualizam ao concluir";
+      return;
+    }
+    if (state.surfaceMode === "work") {
+      els.composerToolHint.textContent = "Work: o agente edita o projeto · Preview à direita";
+    } else {
+      els.composerToolHint.textContent = "Chat: ideias e dúvidas · Work para construir";
+    }
+  }
+
+  function syncCompareEmptyState() {
+    const hasMockup = !!(els.compareMockupPath?.value || "").trim() || !!state.lastCompareReport;
+    const hasReport = !!state.lastCompareReport;
+    els.compareDropzone?.classList.toggle("hidden", hasMockup);
+    els.compareResults?.classList.toggle("hidden", !hasReport);
+    if (hasMockup && !hasReport) {
+      els.comparePrimaryCta?.classList.remove("hidden");
+      if (els.comparePrimaryHint) {
+        els.comparePrimaryHint.textContent =
+          "Mockup pronto. Alcançar resultado compara e corrige até a meta.";
+      }
+    } else if (!hasMockup) {
+      els.comparePrimaryCta?.classList.add("hidden");
+    }
+  }
+
+  function applySurfacePlaceholder() {
+    if (!els.promptInput || state.running) return;
+    els.promptInput.placeholder =
+      state.surfaceMode === "work"
+        ? "Peça uma mudança, um componente ou uma correção…"
+        : "Pergunte ou converse sobre qualquer coisa…";
+  }
+
+  function syncWorkbenchForSurface() {
+    const work = state.surfaceMode === "work";
+    const visualOk = visualEngineAvailable();
+    const hasProject = !!state.current;
+
+    if (!hasProject) {
+      els.templateGrid?.classList.remove("hidden");
+      els.workHomeActions?.classList.toggle("hidden", !work);
+      els.emptyChatActions?.classList.toggle("hidden", work);
+    } else {
+      els.templateGrid?.classList.add("hidden");
+      els.workHomeActions?.classList.add("hidden");
+      els.emptyChatActions?.classList.add("hidden");
+    }
+
+    if (els.projectBadge) {
+      els.projectBadge.textContent = work ? "Work" : "Chat";
+      els.projectBadge.dataset.surface = state.surfaceMode;
+      els.projectBadge.title = work ? "Modo Work · clique para Chat" : "Modo Chat · clique para Work";
+    }
+
+    document.querySelectorAll('.tools-group[data-group="visual"]').forEach((btn) => {
+      btn.classList.toggle("hidden", !work || !visualOk);
+      btn.disabled = !work || !visualOk;
+    });
+    $("mobileTabVisual")?.classList.toggle("hidden", !work || !visualOk);
+
+    if (!work && state.activeToolGroup === "visual") {
+      switchToolGroup("app", "preview");
+    }
+    syncComposerToolHint();
+    syncCompareEmptyState();
+    renderWorkspaceDock();
+  }
+
   function setSurfaceMode(mode) {
     state.surfaceMode = mode === "work" ? "work" : "chat";
     document.body.classList.toggle("surface-work", state.surfaceMode === "work");
@@ -2223,7 +2435,7 @@
       } else if (state.surfaceMode === "chat" && els.modeSelect.value === "execute") {
         els.modeSelect.value = "chat";
       }
-      syncModeControls();
+      syncModeControls({ preservePlaceholder: true });
     }
 
     if (els.emptyTitle) {
@@ -2233,13 +2445,10 @@
     if (els.emptySub) {
       els.emptySub.textContent =
         state.surfaceMode === "work"
-          ? "Escolha um projeto ou template. No Work o agente edita código e o preview atualiza."
-          : "Chat livre: qualquer assunto. Quando for construir, mude para Work — o contexto segue junto.";
+          ? "Escolha um template. Depois: pedir → Preview → Visual (mockup)."
+          : "Chat livre para ideias. Quando for construir, crie um projeto e vá para Work.";
     }
-    if (els.promptInput) {
-      els.promptInput.placeholder =
-        state.surfaceMode === "work" ? "Trabalhe no que quiser…" : "Pergunte ou converse sobre qualquer coisa…";
-    }
+    applySurfacePlaceholder();
     if (els.heroTitle) {
       els.heroTitle.textContent =
         state.surfaceMode === "work" ? "No que vamos trabalhar?" : "No que você está pensando?";
@@ -2247,8 +2456,8 @@
     if (els.heroSub) {
       els.heroSub.textContent =
         state.surfaceMode === "work"
-          ? "Peça mudanças no código — o histórico do Chat vira contexto para implementar."
-          : "Converse sobre qualquer assunto. Para criar/editar o app, use Work / Executar.";
+          ? "Peça mudanças no código. Use Preview, Arquivos ou Visual (mockup) à direita."
+          : "Converse sobre qualquer assunto. Para criar/editar o app, use Work.";
     }
     document.querySelectorAll(".quick-card--chat").forEach((el) => {
       el.classList.toggle("hidden", state.surfaceMode === "work");
@@ -2257,7 +2466,9 @@
       el.classList.toggle("hidden", state.surfaceMode === "chat");
     });
     syncSidebarNavState();
+    syncWorkbenchForSurface();
     syncComposerProjectLabel();
+    renderWorkspaceDock();
     restoreLayoutSizes();
     try {
       localStorage.setItem("forge_surface_mode", state.surfaceMode);
@@ -2418,10 +2629,16 @@
 
   function closeComposerMenu() {
     els.composerMenu?.classList.add("hidden");
+    els.btnComposerPlus?.setAttribute("aria-expanded", "false");
   }
 
   function toggleComposerMenu() {
-    els.composerMenu?.classList.toggle("hidden");
+    const isOpen = !els.composerMenu?.classList.contains("hidden");
+    if (isOpen) closeComposerMenu();
+    else {
+      els.composerMenu?.classList.remove("hidden");
+      els.btnComposerPlus?.setAttribute("aria-expanded", "true");
+    }
   }
 
   function renderProjectList() {
@@ -2631,7 +2848,7 @@
         hideBusyBanner();
         return;
       }
-      showBusyBanner(info);
+      showBusyBanner({ ...info, reconnect: true });
       addMessage(
         `Reconectando à execução${info.goal ? `: ${info.goal}` : ""}…`,
         "system"
@@ -2645,10 +2862,8 @@
   async function pollActiveRun(runId, goal) {
     state.running = true;
     state.runId = runId;
-    showBusyBanner({ run_id: runId, goal, started_at: Date.now() / 1000 });
-    els.btnSend.disabled = true;
-    els.btnCancel?.classList.remove("hidden");
-    els.btnCancel.disabled = false;
+    showBusyBanner({ run_id: runId, goal, started_at: Date.now() / 1000, reconnect: true });
+    syncRunChrome({ chip: "Reconectando…" });
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(goal);
     startActivityTimer(progressEl, activity);
@@ -2713,8 +2928,7 @@
       state.running = false;
       state.runId = null;
       hideBusyBanner();
-      els.btnSend.disabled = false;
-      els.btnCancel?.classList.add("hidden");
+      syncRunChrome();
       syncWorkRail(null);
       syncModeControls();
     }
@@ -2773,6 +2987,16 @@
     els.workspaceView.classList.add("hidden");
     renderWorkspaceDock();
     renderProjectList();
+    syncWorkbenchForSurface();
+    syncWorkRailVisibility();
+  }
+
+  function showWorkspace() {
+    els.emptyView?.classList.add("hidden");
+    els.workspaceView?.classList.remove("hidden");
+    restoreLayoutSizes();
+    syncWorkbenchForSurface();
+    syncWorkRailVisibility();
   }
 
   // ── Chat history ──
@@ -3481,26 +3705,59 @@
 
   function renderWorkspaceDock() {
     if (!els.workspaceDock) return;
-    const hasProject = !!state.current;
-    els.workspaceDock.classList.toggle("hidden", !hasProject);
-    if (!hasProject) return;
+    const show = !!state.current && state.surfaceMode === "work" && !isMobileLayout();
+    els.workspaceDock.classList.toggle("hidden", !show);
+    if (show) {
+      els.workspaceDock.removeAttribute("hidden");
+      els.workspaceDock.setAttribute("aria-hidden", "false");
+    } else {
+      els.workspaceDock.setAttribute("hidden", "");
+      els.workspaceDock.setAttribute("aria-hidden", "true");
+      return;
+    }
 
+    const report = state.lastCompareReport;
+    const sim = reportSimilarity(report);
+    const mockup = (els.compareMockupPath?.value || "").trim() || findProjectMockupPath();
     const compareText = (els.compareStatus?.textContent || "").trim();
+
     if (els.dockCompareStatus) {
-      els.dockCompareStatus.textContent = compareText || "Sem comparações recentes.";
+      if (sim != null) {
+        els.dockCompareStatus.textContent = `${(sim * 100).toFixed(1)}% similar`;
+      } else if (mockup) {
+        els.dockCompareStatus.textContent = "Mockup pronto";
+      } else if (compareText && !/enviando|comparando/i.test(compareText)) {
+        els.dockCompareStatus.textContent = compareText.slice(0, 48);
+      } else {
+        els.dockCompareStatus.textContent = "Sem comparações";
+      }
     }
     if (els.dockCompareMeta) {
       const project = state.current?.name || "projeto";
-      els.dockCompareMeta.textContent = `Dados de visual do ${project}.`;
+      if (sim != null && !visualTargetReached(sim)) {
+        els.dockCompareMeta.textContent = `Abaixo da meta · ${project}`;
+      } else if (sim != null) {
+        els.dockCompareMeta.textContent = `Meta ok · ${project}`;
+      } else if (mockup) {
+        els.dockCompareMeta.textContent = `${mockup.split("/").pop()} · ${project}`;
+      } else {
+        els.dockCompareMeta.textContent = `Envie um mockup · ${project}`;
+      }
+    }
+
+    const canReach = !!mockup && visualEngineAvailable();
+    els.dockBtnReach?.classList.toggle("hidden", !canReach);
+    if (els.dockBtnVisual) {
+      els.dockBtnVisual.textContent = mockup ? "Visual" : "Enviar";
     }
 
     const runs = state.runs || [];
     if (els.dockRunList) {
       if (!runs.length) {
-        els.dockRunList.innerHTML = "<li class='muted'>Nenhuma execução registrada.</li>";
+        els.dockRunList.innerHTML = "<li class='muted'>Nenhuma execução</li>";
       } else {
         els.dockRunList.innerHTML = runs
-          .slice(0, 3)
+          .slice(0, 1)
           .map((run) => {
             const label = String(run.status || "RUN").toUpperCase();
             const cls = runStatusClass(run.status);
@@ -3732,8 +3989,15 @@
 
   function syncMobileTabs(name, group) {
     const g = group || TAB_TO_GROUP[name] || state.activeToolGroup || "app";
+    const tabName = name || state.lastToolTab?.[g] || TOOL_GROUP_DEFAULT[g];
     document.querySelectorAll(".mobile-tab").forEach((tab) => {
-      tab.classList.toggle("active", tab.dataset.group === g);
+      if (tab.dataset.surface === "chat") {
+        tab.classList.toggle("active", !state.mobilePanelOpen && state.surfaceMode === "chat");
+        return;
+      }
+      const sameGroup = tab.dataset.group === g;
+      const sameTab = !tab.dataset.tab || tab.dataset.tab === tabName;
+      tab.classList.toggle("active", state.mobilePanelOpen && sameGroup && sameTab);
     });
   }
 
@@ -4190,15 +4454,24 @@
 
   function activityPhaseMeta(activity) {
     const stage = String(activity?.stage || "").toLowerCase();
-    if (activity?.finished || /conclu|finaliz/.test(stage)) return { cls: "ok", label: "concluído", phaseId: "done" };
-    if (/erro|falha/.test(stage)) return { cls: "err", label: "precisa de atenção", phaseId: activity?.phaseId || "work" };
+    if (activity?.finished || /conclu|finaliz|pronto/.test(stage)) return { cls: "ok", label: "pronto", phaseId: "done" };
+    if (/erro|falha|ollama/.test(stage)) return { cls: "err", label: "precisa de atenção", phaseId: activity?.phaseId || "work" };
     if (/cancel/.test(stage)) return { cls: "warn", label: "cancelando", phaseId: "done" };
-    if (/plano|planej|criando plano/.test(stage)) return { cls: "think", label: "planejando", phaseId: "plan" };
-    if (/modelo|gerando/.test(stage)) return { cls: "think", label: "modelo pensando", phaseId: "think" };
-    if (/ferrament/.test(stage)) return { cls: "work", label: "executando", phaseId: "work" };
-    if (/valid|avaliando|reflet/.test(stage)) return { cls: "check", label: "checando", phaseId: "check" };
-    if (/iniciado|prepar/.test(stage)) return { cls: "work", label: "preparando", phaseId: "prepare" };
-    return { cls: "work", label: "trabalhando", phaseId: activity?.phaseId || "work" };
+    if (/plano|planej|criando plano|estratégia/.test(stage)) return { cls: "think", label: "entendendo o pedido", phaseId: "plan" };
+    if (/modelo|decidindo|gerando|pensando/.test(stage)) return { cls: "think", label: "pensando na próxima edição", phaseId: "think" };
+    if (/lendo|leitura/.test(stage)) return { cls: "work", label: "lendo arquivos", phaseId: "work" };
+    if (/edit|escrev|arquivo|ferrament/.test(stage)) return { cls: "work", label: "editando o projeto", phaseId: "work" };
+    if (/valid|avaliando|reflet|chec/.test(stage)) return { cls: "check", label: "conferindo o resultado", phaseId: "check" };
+    if (/iniciado|prepar|trocando/.test(stage)) return { cls: "work", label: "preparando", phaseId: "prepare" };
+    return { cls: "work", label: "trabalhando no projeto", phaseId: activity?.phaseId || "work" };
+  }
+
+  function humanToolLabel(name) {
+    const n = String(name || "").toLowerCase();
+    if (/read|ler|list|glob|search/.test(n)) return "lendo arquivos";
+    if (/write|edit|patch|create/.test(n)) return "editando arquivos";
+    if (/run|shell|command|npm|test/.test(n)) return "rodando comando";
+    return name || "ferramenta";
   }
 
   function renderActivityPhases(phaseId) {
@@ -4243,8 +4516,15 @@
 
   function syncWorkRailVisibility() {
     if (!els.workRail) return;
-    const show = state.surfaceMode === "work" && !!state.current;
+    const activity = state.runActivity;
+    const activeRun = !!state.running || !!(activity && !activity.finished);
+    const show =
+      state.surfaceMode === "work" &&
+      !!state.current &&
+      activeRun &&
+      !isMobileLayout();
     els.workRail.classList.toggle("hidden", !show);
+    els.workRail?.classList.toggle("is-idle", !activeRun);
     syncWorkRailSplitter();
   }
 
@@ -4328,93 +4608,13 @@
       .join("");
   }
 
-  function updateSidebarResources(payload) {
-    if (!els.sidebarResources) return;
-    // Live meters must use detected machine stats, not the manual "Meu PC" profile.
-    const hw = payload?.detected || payload?.hardware || payload || {};
-    const ramTotal = Number(hw.ram_total_gb ?? 0);
-    const ramAvail = Number(hw.ram_available_gb ?? ramTotal);
-    const ramUsed = Number(
-      hw.ram_used_gb != null ? hw.ram_used_gb : ramTotal > 0 ? Math.max(0, ramTotal - ramAvail) : 0
-    );
-    const ramPct = Number(
-      hw.ram_percent != null
-        ? hw.ram_percent
-        : ramTotal > 0
-          ? (ramUsed / ramTotal) * 100
-          : 0
-    );
-    const vramTotal = Number(hw.vram_total_gb ?? 0);
-    const vramFree = Number(hw.vram_free_gb ?? vramTotal);
-    const vramUsed = Number(
-      hw.vram_used_gb != null ? hw.vram_used_gb : vramTotal > 0 ? Math.max(0, vramTotal - vramFree) : 0
-    );
-    const vramPct = Number(
-      hw.vram_percent != null
-        ? hw.vram_percent
-        : vramTotal > 0
-          ? (vramUsed / vramTotal) * 100
-          : 0
-    );
-    const cores = Number(hw.cpu_cores ?? 0);
-    const cpuPct =
-      hw.cpu_percent != null && Number.isFinite(Number(hw.cpu_percent))
-        ? Number(hw.cpu_percent)
-        : null;
-    const gpuUtil =
-      hw.gpu_utilization_percent != null && Number.isFinite(Number(hw.gpu_utilization_percent))
-        ? Number(hw.gpu_utilization_percent)
-        : null;
-    const gpuFill = gpuUtil != null ? gpuUtil : vramPct;
-
-    if (els.resCpuFill) els.resCpuFill.style.width = `${Math.min(100, Math.max(0, cpuPct ?? 0))}%`;
-    if (els.resCpuLabel) {
-      if (cpuPct != null && cores) els.resCpuLabel.textContent = `${Math.round(cpuPct)}% · ${cores}c`;
-      else if (cpuPct != null) els.resCpuLabel.textContent = `${Math.round(cpuPct)}%`;
-      else if (cores) els.resCpuLabel.textContent = `${cores}c`;
-      else els.resCpuLabel.textContent = "—";
-    }
-    if (els.resRamFill) els.resRamFill.style.width = `${Math.min(100, Math.max(0, ramPct))}%`;
-    if (els.resRamLabel) {
-      els.resRamLabel.textContent = ramTotal
-        ? `${ramUsed.toFixed(1)}/${ramTotal.toFixed(1)}`
-        : "—";
-    }
-    if (els.resGpuFill) els.resGpuFill.style.width = `${Math.min(100, Math.max(0, gpuFill))}%`;
-    if (els.resGpuLabel) {
-      if (vramTotal > 0) {
-        els.resGpuLabel.textContent =
-          gpuUtil != null
-            ? `${Math.round(gpuUtil)}% · ${vramUsed.toFixed(1)}/${vramTotal.toFixed(1)}`
-            : `${vramUsed.toFixed(1)}/${vramTotal.toFixed(1)}`;
-      } else if (hw.has_gpu) {
-        els.resGpuLabel.textContent = gpuUtil != null ? `${Math.round(gpuUtil)}%` : "GPU";
-      } else {
-        els.resGpuLabel.textContent = "CPU";
-      }
-    }
-    if (els.sidebarResourceHint) {
-      const gpuName = Array.isArray(hw.gpus) && hw.gpus[0]?.name ? hw.gpus[0].name : "";
-      const host = hw.hostname ? String(hw.hostname) : "";
-      const src = hw.source === "container" ? "container" : hw.source === "wsl" ? "WSL" : "";
-      const bits = [gpuName || (hw.has_gpu ? "GPU" : "CPU"), host, src].filter(Boolean);
-      els.sidebarResourceHint.textContent = bits.slice(0, 2).join(" · ") || "Ollama";
-    }
+  function updateSidebarResources(_payload) {
+    // Hardware meters removed from the sidebar (CPU/RAM/GPU) — keep no-op for callers.
+    return;
   }
 
   async function refreshSidebarResources() {
-    try {
-      // Always refresh so RAM/CPU meters stay live (server cache is short).
-      const data = await api("/api/system/hardware?refresh=1");
-      updateSidebarResources(data);
-    } catch {
-      try {
-        const data = await api("/api/hardware?refresh=1");
-        updateSidebarResources(data);
-      } catch {
-        /* optional widget */
-      }
-    }
+    return;
   }
 
   function scheduleFileRefresh(activity) {
@@ -4510,10 +4710,10 @@
       phaseId: "done",
       stage: cancelled ? "Execução cancelada" : "Execução concluída",
       detail: cancelled
-        ? "O agente parou a pedido do usuário."
+        ? "Parou a pedido. Nada mais será editado."
         : changed.length
-          ? `Pronto. ${changed.length} arquivo(s) alterado(s).${usedModel ? ` Modelo: ${usedModel}.` : ""}`
-          : `Pronto. Relatório final disponível abaixo.${usedModel ? ` Modelo: ${usedModel}.` : ""}`,
+          ? `Pronto · ${changed.slice(0, 3).join(", ")}${changed.length > 3 ? "…" : ""}${usedModel ? ` · ${usedModel}` : ""}`
+          : `Pronto.${usedModel ? ` · ${usedModel}` : ""}`,
       step: activity.maxSteps || activity.step,
       model: usedModel || activity.model,
     });
@@ -4522,6 +4722,12 @@
       source: isAutoModelSelected() ? "auto" : "manual",
       live: false,
     });
+    // Collapse the work rail right after finish/cancel — keep focus on Preview/next steps.
+    window.setTimeout(() => {
+      if (state.runActivity === activity) state.runActivity = { ...activity, finished: true };
+      syncWorkRailVisibility();
+      renderWorkspaceDock();
+    }, 900);
   }
 
   async function cancelRun() {
@@ -4546,26 +4752,27 @@
     }
     state.running = false;
     hideBusyBanner();
-    els.btnCancel?.classList.add("hidden");
-    els.btnSend.disabled = false;
+    syncRunChrome();
     syncWorkRail(null);
     showToast("Execução cancelada — fila liberada.", "info");
   }
 
   async function sendPrompt() {
     let prompt = els.promptInput.value.trim();
+    if (/^voltar\s+ao\s+chat\.?$/i.test(prompt)) {
+      setSurfaceMode("chat");
+      if (els.modeSelect) els.modeSelect.value = "chat";
+      syncModeControls();
+      els.promptInput.value = "";
+      addMessage("Voltei para Chat.", "system");
+      return;
+    }
     if ((!prompt && !state.attachments.length) || state.running) return;
 
     if (!state.current) {
-      if (state.surfaceMode === "work" || state.attachments.length) {
-        showToast("Escolha ou crie um projeto para continuar no Work / anexos.", "info");
-        openNewProjectModal(state.selectedTemplate || "blank");
-        return;
-      }
-      // Chat without project: create a quick inbox-style project.
-      const name = `chat-${new Date().toISOString().slice(0, 10).replace(/-/g, "")}-${Math.random().toString(36).slice(2, 6)}`;
-      await createProject(name, "blank");
-      if (!state.current) return;
+      showToast("Crie ou escolha um projeto para continuar.", "info", 4500);
+      openNewProjectModal(state.selectedTemplate || (state.surfaceMode === "work" ? "landing" : "blank"));
+      return;
     }
 
     let uploaded = [];
@@ -4584,6 +4791,8 @@
     }
 
     if (!prompt || state.running || !state.current) return;
+
+    state.lastUserPrompt = prompt;
 
     // Capture model once and keep selectors in sync before any routing.
     syncModelSelectorsFromCanonical();
@@ -4669,15 +4878,15 @@
         return sendAgentPrompt(enrichedPrompt, "execute", { displayPrompt: prompt, model: selectedModel });
       }
       if (looksLikeCodeRequest(prompt)) {
-        addMessage(prompt, "user");
-        els.promptInput.value = "";
-        updateChatHeroVisibility();
-        persistMessage("user", prompt).catch(() => {});
-        addExecuteHandoff(
-          prompt,
-          "Isso parece um pedido para criar ou editar código. No Chat continuamos a conversa; para alterar arquivos, execute:"
+        // Auto handoff: build intents go to Work immediately (less friction).
+        if (els.modeSelect) els.modeSelect.value = "execute";
+        syncModeControls();
+        if (state.surfaceMode !== "work") setSurfaceMode("work");
+        addMessage(
+          "Pedido de construção detectado — executei no Work. Se era só conversa, diga “voltar ao chat”.",
+          "system"
         );
-        return;
+        return sendAgentPrompt(enrichedPrompt, "execute", { displayPrompt: prompt, model: selectedModel });
       }
       return sendChatPrompt(prompt, { model: selectedModel });
     }
@@ -4855,8 +5064,13 @@
         </div>
       </div>`;
     el.querySelector(".handoff-execute")?.addEventListener("click", () => {
+      setSurfaceMode("work");
       if (els.modeSelect) els.modeSelect.value = "execute";
       syncModeControls();
+      if (state.current) {
+        showWorkspace();
+        switchToolGroup("app", "preview");
+      }
       els.promptInput.value = prompt;
       removeMessage(el);
       sendPrompt();
@@ -4872,13 +5086,12 @@
     hideBusyBanner();
     addMessage(prompt, "user");
     els.promptInput.value = "";
-    updateChatHeroVisibility();
     state.running = true;
     state.runId = null;
     state.abortController = new AbortController();
-    els.btnSend.disabled = true;
-    els.btnCancel?.classList.remove("hidden");
-    if (els.btnCancel) els.btnCancel.disabled = false;
+    showBusyBanner({ goal: String(prompt).slice(0, 80), started_at: Date.now() / 1000 });
+    if (els.busyBannerTitle) els.busyBannerTitle.textContent = "Chat";
+    syncRunChrome({ chip: "Chat…" });
 
     const statusEl = addMessage("pensando...", "progress");
     const agentEl = addMessage("", "agent live");
@@ -5056,16 +5269,12 @@
       state.running = false;
       state.runId = null;
       state.abortController = null;
-      els.btnSend.disabled = false;
-      if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) {
-        els.btnCancel?.classList.add("hidden");
-      }
-      if (els.btnCancel) els.btnCancel.disabled = false;
+      hideBusyBanner();
+      syncRunChrome();
       updateActiveModelDisplay(state.activeModel || expectedAutoModel(), {
         source: isAutoModelSelected() ? "auto" : "manual",
         live: false,
       });
-      updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
         await new Promise((r) => setTimeout(r, 400));
@@ -5084,15 +5293,14 @@
     resetLiveCodeViewer();
     addMessage(displayPrompt, "user");
     els.promptInput.value = "";
-    updateChatHeroVisibility();
     state.running = true;
     state.runId = null;
     state.abortController = new AbortController();
     state.llmPreviewChars = 0;
-    els.btnSend.disabled = true;
-    els.btnCancel?.classList.add("hidden");
-    els.btnCancel?.classList.remove("hidden");
-    els.btnCancel.disabled = true;
+    showBusyBanner({ goal: String(displayPrompt).slice(0, 80), started_at: Date.now() / 1000 });
+    if (els.busyBannerTitle) els.busyBannerTitle.textContent = "Work";
+    syncRunChrome({ chip: "Work…" });
+    if (els.btnCancel) els.btnCancel.disabled = false;
 
     const progressEl = addMessage("", "progress");
     const activity = createRunActivity(displayPrompt);
@@ -5331,22 +5539,16 @@
       state.abortController = null;
       state.llmPreviewChars = 0;
       if (followBusy?.run_id) {
-        state.running = false;
-        showBusyBanner(followBusy);
-        els.btnCancel?.classList.remove("hidden");
-        if (els.btnCancel) els.btnCancel.disabled = false;
-        els.btnSend.disabled = false;
+        state.running = true;
+        showBusyBanner({ ...followBusy, reconnect: true });
+        syncRunChrome({ chip: "Acompanhando…" });
       } else {
         state.running = false;
         state.runId = null;
-        els.btnSend.disabled = false;
-        if (!els.busyBanner || els.busyBanner.classList.contains("hidden")) {
-          els.btnCancel?.classList.add("hidden");
-        }
-        els.btnCancel.disabled = false;
+        hideBusyBanner();
+        syncRunChrome();
         syncWorkRail(null);
       }
-      updateChatHeroVisibility();
       syncModeControls();
       if (wasAbort) {
         await new Promise((r) => setTimeout(r, 400));
@@ -5357,7 +5559,7 @@
     if (followBusy?.run_id) {
       await followBusyRun(followBusy, {
         systemNote:
-          "Há uma execução ativa neste projeto — acompanhando o progresso. Use «Cancelar e liberar» se estiver travada.",
+          "Há uma execução ativa neste projeto — acompanhando o progresso. Use «Liberar fila» se estiver travada.",
       });
     }
   }
@@ -5386,18 +5588,18 @@
         updateActivity(activity, {
           runId: ev.run_id || activity.runId,
           phaseId: "prepare",
-          stage: ev.model ? `Agente iniciado · ${ev.model}` : "Agente iniciado",
+          stage: "Preparando o projeto",
           detail: ev.model
-            ? `Modelo em uso: ${ev.model}${ev.model_mode === "auto" ? " (Auto)" : ""}. Preparando leitura do projeto.`
-            : `Run ${ev.run_id || ""} aberto. Preparando leitura do projeto e contexto da conversa.`.trim(),
+            ? `Usando ${ev.model}${ev.model_mode === "auto" ? " (Auto)" : ""} — abrindo o contexto do projeto.`
+            : "Abrindo o contexto do projeto e da conversa.",
           model: ev.model || activity.model,
         });
         setWorkingState(
           agentEl,
-          ev.model ? `Agente iniciado · ${ev.model}` : "Agente iniciado",
+          "Preparando o projeto",
           ev.model
             ? `${ev.model_mode === "auto" ? "Auto → " : ""}${ev.model}`
-            : "Preparando leitura do projeto…",
+            : "Lendo o que já existe…",
           activity
         );
         break;
@@ -5446,16 +5648,16 @@
       case "planning":
         updateActivity(activity, {
           phaseId: "plan",
-          stage: "Criando plano",
-          detail: ev.message || "Lendo o projeto e montando uma sequência segura de tarefas.",
+          stage: "Entendendo o pedido",
+          detail: ev.message || "Analisando o projeto para decidir o que mudar.",
         });
-        setWorkingState(agentEl, "Planejando as mudanças", "Analisando arquivos do projeto…", activity);
+        setWorkingState(agentEl, "Entendendo o pedido", "Analisando arquivos do projeto…", activity);
         break;
       case "plan":
         updateActivity(activity, {
           phaseId: "plan",
-          stage: "Plano criado",
-          detail: "O agente terminou de decidir a estratégia e vai executar as tarefas uma por uma.",
+          stage: "Plano pronto",
+          detail: `Vai fazer ${ev.task_count || "algumas"} etapa(s) no projeto.`,
           planSummary: ev.summary || "Plano criado",
           taskCount: ev.task_count || null,
           planTasks: Array.isArray(ev.tasks) ? ev.tasks : activity.planTasks || [],
@@ -5463,15 +5665,15 @@
         setWorkingState(
           agentEl,
           "Plano pronto — começando a editar",
-          `${ev.task_count || "?"} tarefa(s) · cards de arquivo aparecem abaixo`,
+          `${ev.task_count || "?"} etapa(s)`,
           activity
         );
         break;
       case "step":
         updateActivity(activity, {
           phaseId: "think",
-          stage: "Executando tarefa",
-          detail: `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id || "tarefa"}`,
+          stage: "Editando o projeto",
+          detail: `${ev.step}/${ev.max_steps}: ${ev.task_title || ev.task_id || "próxima mudança"}`,
           step: ev.step || activity.step,
           currentTaskId: ev.task_id || activity.currentTaskId,
           maxSteps: ev.max_steps || activity.maxSteps,
@@ -5483,23 +5685,23 @@
         });
         setWorkingState(
           agentEl,
-          `Passo ${ev.step}/${ev.max_steps}: ${ev.task_title || "trabalhando"}`,
-          "Lendo e editando arquivos — preview linha a linha abaixo",
+          ev.task_title || "Editando o projeto",
+          `Etapa ${ev.step}/${ev.max_steps}`,
           activity
         );
         break;
       case "llm_chunk":
         updateActivity(activity, {
           phaseId: "think",
-          stage: "Modelo decidindo a próxima ação",
-          detail: "Gerando a próxima leitura ou edição de arquivo…",
+          stage: "Pensando na próxima edição",
+          detail: "Escolhendo o próximo arquivo para ler ou alterar…",
           llmChars: (activity.llmChars || 0) + (ev.text ? ev.text.length : 0),
         });
         if (!activity.liveOp) {
           setWorkingState(
             agentEl,
-            "Decidindo a próxima edição",
-            `Tarefa: ${activity.task || "em andamento"}`,
+            "Pensando na próxima edição",
+            activity.task || "em andamento",
             activity
           );
         }
@@ -5519,32 +5721,37 @@
           markChangedFiles([ev.path]);
           scheduleFileRefresh(activity);
           if (isUiPath(ev.path)) {
-            window.setTimeout(() => updatePreview(/\.(html?)$/i.test(ev.path) ? ev.path : findPreviewPath()), 600);
+            window.setTimeout(() => {
+              if (state.surfaceMode === "work") switchToolGroup("app", "preview");
+              updatePreview(/\.(html?)$/i.test(ev.path) ? ev.path : findPreviewPath());
+            }, 500);
           }
         }
         break;
       }
-      case "tools_start":
+      case "tools_start": {
+        const labels = (ev.tools || []).slice(0, 3).map(humanToolLabel);
         updateActivity(activity, {
           phaseId: "work",
-          stage: "Executando ferramentas",
-          detail: `${ev.count || 0} chamada(s) em andamento: ${(ev.tools || []).join(", ") || "preparando"}.`,
+          stage: labels[0] || "Trabalhando nos arquivos",
+          detail: labels.length > 1 ? labels.join(" · ") : "Atualizando o projeto…",
           tools: ev.tools || [],
           toolCount: ev.count || 0,
           okTools: 0,
         });
         setWorkingState(
           agentEl,
-          `Executando: ${(ev.tools || []).slice(0, 3).join(", ") || "ferramentas"}`,
-          "Cards de arquivo atualizam conforme cada operação termina",
+          labels[0] || "Trabalhando nos arquivos",
+          "As mudanças aparecem abaixo conforme terminam",
           activity
         );
         break;
+      }
       case "tools":
         updateActivity(activity, {
           phaseId: "work",
-          stage: "Ferramentas executadas",
-          detail: `${ev.ok || 0} de ${ev.count || 0} chamadas concluíram com sucesso.`,
+          stage: "Mudanças aplicadas",
+          detail: `${ev.ok || 0}/${ev.count || 0} operações concluídas.`,
           tools: ev.tools || [],
           okTools: ev.ok || 0,
           toolCount: ev.count || 0,
@@ -5556,66 +5763,70 @@
         markChangedFiles(paths);
         updateActivity(activity, {
           phaseId: "work",
-          stage: "Arquivos atualizados",
+          stage: paths.length === 1 ? "Arquivo atualizado" : "Arquivos atualizados",
           detail: paths.length
-            ? `Alterações em: ${paths.slice(0, 4).join(", ")}${paths.length > 4 ? "…" : ""}`
-            : "Arquivos do projeto foram atualizados.",
+            ? paths.slice(0, 4).join(", ") + (paths.length > 4 ? "…" : "")
+            : "O projeto foi atualizado.",
           files: unique,
         });
         scheduleFileRefresh(activity);
         if (paths.some(isUiPath)) {
-          window.setTimeout(() => updatePreview(paths.find((p) => /\.html?$/i.test(p)) || findPreviewPath()), 800);
+          window.setTimeout(() => {
+            switchToolGroup("app", "preview");
+            updatePreview(paths.find((p) => /\.html?$/i.test(p)) || findPreviewPath());
+          }, 500);
         }
         break;
       }
       case "validation_start":
         updateActivity(activity, {
           phaseId: "check",
-          stage: "Validando alterações",
-          detail: `Rodando: ${(ev.commands || []).join(", ") || "validações automáticas"}.`,
+          stage: "Conferindo o resultado",
+          detail: `Checando: ${(ev.commands || []).slice(0, 2).join(", ") || "o que mudou"}.`,
         });
         setWorkingState(
           agentEl,
-          "Validando alterações",
-          (ev.commands || []).slice(0, 3).join(", ") || "checagens automáticas",
+          "Conferindo o resultado",
+          (ev.commands || []).slice(0, 2).join(", ") || "checagens",
           activity
         );
         break;
       case "validation":
         updateActivity(activity, {
           phaseId: "check",
-          stage: "Validação concluída",
-          detail: `${ev.ok || 0} de ${ev.count || 0} validações passaram.`,
+          stage: "Conferência concluída",
+          detail: `${ev.ok || 0}/${ev.count || 0} checagens ok.`,
           reflection: ev.summary || activity.reflection,
         });
         setWorkingState(
           agentEl,
-          "Validação concluída",
-          `${ev.ok || 0}/${ev.count || 0} passaram`,
+          "Conferência concluída",
+          `${ev.ok || 0}/${ev.count || 0} ok`,
           activity
         );
         break;
       case "reflection":
         updateActivity(activity, {
           phaseId: "check",
-          stage: "Avaliando resultado",
-          detail: `Decisão: ${ev.status || "continue"}`,
+          stage: "Avaliando se ficou bom",
+          detail: ev.status === "done" || ev.status === "success" ? "Parece suficiente." : "Pode precisar de mais um ajuste.",
           reflection: (ev.analysis || "").slice(0, 180),
         });
-        setWorkingState(agentEl, `Avaliando: ${ev.status || "continue"}`, "", activity);
+        setWorkingState(agentEl, "Avaliando se ficou bom", "", activity);
         break;
-      case "error":
+      case "error": {
+        const errMsg = ev.message || ev.error || "Erro desconhecido durante a execução.";
         updateActivity(activity, {
-          stage: "Erro encontrado",
-          detail: ev.message || ev.error || "Erro desconhecido durante a execução.",
+          stage: /ollama|modelo|memory|memória/i.test(errMsg) ? "Problema com o modelo" : "Erro encontrado",
+          detail: errMsg,
         });
-        setWorkingState(
-          agentEl,
-          "Erro na execução",
-          ev.message || ev.error || "erro desconhecido",
-          activity
-        );
+        setWorkingState(agentEl, "Algo falhou", errMsg, activity);
+        if (/ollama|offline|connection refused|econnrefused/i.test(errMsg)) {
+          showToast("Ollama ficou offline no meio da execução. Abra Modelos para reconectar.", "err", 7000);
+          updateOllamaOfflineUI();
+        }
         break;
+      }
       default:
         break;
     }
@@ -5872,6 +6083,7 @@
   function syncFileEditorDirty() {
     const dirty = !!state.fileEditorDirty;
     els.fileEditorDirty?.classList.toggle("hidden", !dirty);
+    if (dirty) els.fileEditorSaved?.classList.add("hidden");
     if (els.btnFileSave) els.btnFileSave.disabled = !dirty || !state.selectedFile;
   }
 
@@ -5905,13 +6117,14 @@
       }
       syncFileEditorDirty();
       if (els.fileEditorPath) {
-        els.fileEditorPath.textContent = (asCopy ? savePath : path) + " · salvo";
-        window.setTimeout(() => {
-          if (state.selectedFile === path && els.fileEditorPath) {
-            els.fileEditorPath.textContent = path;
-          }
-        }, 1600);
+        els.fileEditorPath.textContent = asCopy ? savePath : path;
       }
+      if (els.fileEditorSaved) {
+        els.fileEditorSaved.textContent = asCopy ? "cópia salva" : "salvo";
+        els.fileEditorSaved.classList.remove("hidden");
+        window.setTimeout(() => els.fileEditorSaved?.classList.add("hidden"), 2200);
+      }
+      showToast(asCopy ? `Salvo como ${savePath}` : "Arquivo salvo.", "ok", 2200);
       await loadFiles().catch(() => {});
       if (/\.html?$|\.css$|\.js$/i.test(savePath)) {
         updatePreview(/\.html?$/i.test(savePath) ? savePath : findPreviewPath());
@@ -5964,7 +6177,9 @@
       els.previewViewport.classList.add(`device-${device}`);
     }
     els.deviceSwitcher?.querySelectorAll(".device-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.device === device);
+      const on = btn.dataset.device === device;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
 
@@ -6039,9 +6254,9 @@
       const runtime = state.devStatus?.runtime || state.devStatus?.script;
       const msg = state.devStatus?.has_dev_script
         ? runtime === "uvicorn"
-          ? "API FastAPI — clique em Iniciar preview ao vivo (abre /docs)."
-          : "Apps React/Vite precisam de npm run dev — clique em Iniciar preview ao vivo."
-        : "Nenhum HTML encontrado. Peça ao agente para criar index.html.";
+          ? "Ainda sem UI estática. Inicie o preview ao vivo para abrir /docs, ou peça uma landing HTML."
+          : "Ainda sem página pronta. Clique em Iniciar preview ao vivo (React/Vite) ou peça uma landing."
+        : "Ainda sem UI — peça no Work: “cria uma landing page com index.html”.";
       setPreviewEmptyVisible(true, msg);
       return;
     }
@@ -6060,59 +6275,107 @@
     const el = document.createElement("div");
     el.className = "msg system next-steps";
     const status = donePayload?.status || "";
+    const created = donePayload?.created_files || [];
     const htmlPath = changed.find((p) => /\.html?$/i.test(p));
+    const uiTouched = !!(htmlPath || changed.some(isUiPath));
     const actions = [];
     const hasDev = !!state.devStatus?.has_dev_script;
     const devRunning = !!state.devStatus?.running;
+    const hasMockupHint = !!(ensureMockupPath() || "").trim();
+    const failed = status && status !== "SUCCESS" && status !== "CANCELLED";
+    const cancelled = status === "CANCELLED";
+    const retryPrompt = (state.lastUserPrompt || "").trim();
 
-    if (hasDev && !devRunning) {
-      actions.push({ action: "start-dev", label: "Iniciar preview" });
-    }
-    if (htmlPath || changed.some(isUiPath)) {
-      actions.push({ action: "preview", label: "Ver preview" });
-    }
-    if (changed[0]) {
-      actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0] });
-    }
-    if (changed.length) {
-      actions.push({ action: "files", label: `Arquivos (${changed.length})` });
-    }
-    actions.push({
-      action: "prompt",
-      label: "Melhorar visual",
-      prompt: "Melhore o visual desta página: tipografia, espaçamento, cores e responsividade, sem quebrar a estrutura.",
-    });
-    actions.push({
-      action: "prompt",
-      label: "Adicionar seção",
-      prompt: "Adicione uma nova seção relevante na página principal com bom layout e texto em português.",
-    });
-    if (status && status !== "SUCCESS" && status !== "CANCELLED") {
+    // Cap: 1 primary + 2 secondary (golden path).
+    if (cancelled) {
+      if (retryPrompt) {
+        actions.push({ action: "prompt", label: "Tentar de novo", primary: true, prompt: retryPrompt });
+      }
+      if (!uiTouched && !findPreviewPath()) {
+        actions.push({
+          action: "prompt",
+          label: "Criar landing",
+          primary: !retryPrompt,
+          prompt: "Crie um index.html moderno com CSS embutido e uma hero section.",
+        });
+      } else if (uiTouched || findPreviewPath()) {
+        actions.push({ action: "preview", label: "Ver preview", primary: !retryPrompt });
+      }
+      if (visualEngineAvailable()) {
+        actions.push({
+          action: hasMockupHint ? "reach-result" : "visual",
+          label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        });
+      }
+    } else if (failed) {
       actions.push({
         action: "prompt",
-        label: "Corrigir o erro da última execução",
+        label: "Corrigir o erro",
+        primary: true,
         prompt:
           "Corrija o erro da última execução neste projeto. Leia o relatório e os logs, identifique a causa e aplique a correção mínima necessária.",
       });
+      if (changed.length) actions.push({ action: "files", label: "Ver arquivos" });
+      if (uiTouched) actions.push({ action: "preview", label: "Ver preview" });
+    } else if (uiTouched || hasDev) {
+      if (uiTouched) actions.push({ action: "preview", label: "Ver preview", primary: true });
+      else if (hasDev && !devRunning) {
+        actions.push({ action: "start-dev", label: "Iniciar preview ao vivo", primary: true });
+      }
+      if (visualEngineAvailable()) {
+        actions.push({
+          action: hasMockupHint ? "reach-result" : "visual",
+          label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        });
+      }
+      if (changed.length) actions.push({ action: "files", label: "Arquivos" });
+    } else {
+      if (!findPreviewPath()) {
+        actions.push({
+          action: "prompt",
+          label: "Criar landing",
+          primary: true,
+          prompt: "Crie um index.html moderno com CSS embutido e uma hero section.",
+        });
+      } else if (changed[0]) {
+        actions.push({ action: "open-file", label: "Abrir arquivo", path: changed[0], primary: true });
+      } else {
+        actions.push({ action: "preview", label: "Ver preview", primary: true });
+      }
+      if (visualEngineAvailable()) {
+        actions.push({
+          action: hasMockupHint ? "reach-result" : "visual",
+          label: hasMockupHint ? "Alcançar resultado" : "Enviar mockup",
+        });
+      }
+      if (changed.length) actions.push({ action: "files", label: "Arquivos" });
     }
-    actions.push({ action: "deploy", label: "Deploy" });
+    const capped = actions.slice(0, 3);
 
+    const createdN = created.length;
+    const editedN = Math.max(0, changed.length - createdN);
+    const summaryBits = [];
+    if (createdN) summaryBits.push(`${createdN} criado(s)`);
+    if (editedN) summaryBits.push(`${editedN} editado(s)`);
     const title =
       status === "CANCELLED"
-        ? "Execução cancelada"
+        ? "Execução cancelada — próximo passo"
         : changed.length
-          ? `${changed.length} arquivo(s) atualizado(s)`
+          ? `Pronto · ${summaryBits.join(" · ") || `${changed.length} arquivo(s)`}`
           : "Pronto para o próximo passo";
 
     el.innerHTML = `
       <div class="next-steps-card">
         <div class="next-steps-title">${escapeHtml(title)}</div>
-        ${changed.length ? `<div class="next-steps-files">${changed.slice(0, 5).map((p) => `<button type="button" class="next-file" data-path="${escapeHtml(p)}">${escapeHtml(p)}</button>`).join("")}</div>` : ""}
+        ${changed.length ? `<div class="next-steps-files">${changed.slice(0, 5).map((p) => {
+          const tag = created.includes(p) ? "novo" : "editado";
+          return `<button type="button" class="next-file" data-path="${escapeHtml(p)}"><span>${escapeHtml(p)}</span><em>${tag}</em></button>`;
+        }).join("")}</div>` : ""}
         <div class="next-steps-actions">
-          ${actions
+          ${capped
             .map(
               (item) =>
-                `<button type="button" class="btn btn-ghost btn-sm next-action" data-action="${item.action}" ${
+                `<button type="button" class="btn ${item.primary ? "btn-primary btn-gradient" : "btn-ghost"} btn-sm next-action" data-action="${item.action}" ${
                   item.path ? `data-path="${escapeHtml(item.path)}"` : ""
                 } ${item.prompt ? `data-prompt="${escapeHtml(item.prompt)}"` : ""}>${escapeHtml(item.label)}</button>`
             )
@@ -6123,16 +6386,21 @@
     el.addEventListener("click", async (event) => {
       const fileBtn = event.target.closest(".next-file");
       if (fileBtn?.dataset.path) {
-        await openFile(fileBtn.dataset.path, { switchToFiles: true, preferPreview: false });
+        await openFile(fileBtn.dataset.path, {
+          switchToFiles: !/\.html?$/i.test(fileBtn.dataset.path),
+          preferPreview: /\.html?$/i.test(fileBtn.dataset.path),
+        });
         return;
       }
       const btn = event.target.closest(".next-action");
       if (!btn) return;
       const action = btn.dataset.action;
       if (action === "preview") {
-        switchTab("preview");
+        setSurfaceMode("work");
+        switchToolGroup("app", "preview");
         updatePreview(htmlPath || findPreviewPath());
       } else if (action === "start-dev") {
+        setSurfaceMode("work");
         state.previewMode = "dev";
         if (els.previewMode) els.previewMode.value = "dev";
         syncDevPolling();
@@ -6140,18 +6408,238 @@
       } else if (action === "deploy") {
         runDeploy();
       } else if (action === "files") {
-        switchTab("files");
+        setSurfaceMode("work");
+        switchToolGroup("app", "files");
+      } else if (action === "visual") {
+        if (hasMockupHint) {
+          setSurfaceMode("work");
+          switchToolGroup("visual", "compare");
+          setCompareFlowStep("compare");
+          runCompareNow({ smartFollowUp: true });
+        } else {
+          openVisualMockupFlow();
+        }
+      } else if (action === "reach-result") {
+        setSurfaceMode("work");
+        switchToolGroup("visual", "compare");
+        startReachResultFlow({ autoCorrect: true });
       } else if (action === "open-file" && btn.dataset.path) {
-        await openFile(btn.dataset.path, { switchToFiles: true, preferPreview: false });
+        await openFile(btn.dataset.path, {
+          switchToFiles: !/\.html?$/i.test(btn.dataset.path),
+          preferPreview: /\.html?$/i.test(btn.dataset.path),
+        });
       } else if (action === "prompt" && btn.dataset.prompt) {
         els.promptInput.value = btn.dataset.prompt;
         els.promptInput.focus();
+        if (!state.running) sendPrompt();
       }
     });
 
     els.chatMessages.appendChild(el);
     els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
     return el;
+  }
+
+  function findProjectMockupPath() {
+    const current = (els.compareMockupPath?.value || "").trim();
+    if (current) return current;
+    const files = state.files || [];
+    const mock = files.find(
+      (f) => /mockup|referencia|reference|design/i.test(f.path || f.name || "") && /\.(png|jpe?g|webp)$/i.test(f.path || "")
+    );
+    return mock?.path || "";
+  }
+
+  function ensureMockupPath() {
+    const path = findProjectMockupPath();
+    if (path && els.compareMockupPath && !(els.compareMockupPath.value || "").trim()) {
+      els.compareMockupPath.value = path;
+    }
+    return (els.compareMockupPath?.value || "").trim() || path;
+  }
+
+  function reportSimilarity(report) {
+    if (!report) return null;
+    const val =
+      report.similarity ??
+      report.best_similarity ??
+      report.current_similarity ??
+      report.minSimilarity ??
+      report.min_similarity;
+    if (val == null) return null;
+    const n = Number(val);
+    return Number.isFinite(n) ? n : null;
+  }
+
+  function visualTargetReached(sim) {
+    const target = Number(state.visualTargetSimilarity) || 0.92;
+    return sim != null && sim >= target;
+  }
+
+  function buildVisualAgentBrief(report, job) {
+    const sim = reportSimilarity(report) ?? reportSimilarity(job);
+    const pct = sim == null ? "—" : `${(sim * 100).toFixed(1)}%`;
+    const target = `${((Number(state.visualTargetSimilarity) || 0.92) * 100).toFixed(0)}%`;
+    const mockup = ensureMockupPath() || "mockup";
+    const regions = Array.isArray(report?.regions) ? report.regions : [];
+    const layout =
+      report?.layoutChanges ||
+      report?.layout_changes ||
+      report?.layoutDiff?.layoutChanges ||
+      [];
+    const regionLines = regions
+      .slice(0, 8)
+      .map((r) => {
+        const el = r.probableElement || r.probable_element || {};
+        const sel = el.selector || "elemento desconhecido";
+        return `- Região ${r.id || "?"}: ${r.category || "diff"} / ${r.severity || "?"} → ${sel}${
+          r.diagnosis ? ` (${r.diagnosis})` : ""
+        }`;
+      })
+      .join("\n");
+    const layoutLines = (Array.isArray(layout) ? layout : [])
+      .slice(0, 8)
+      .map((c) => {
+        const d = c.delta || {};
+        return `- ${c.selector || "?"}: Δx=${d.x || 0} Δy=${d.y || 0} Δw=${d.width || 0} Δh=${d.height || 0}`;
+      })
+      .join("\n");
+    const base = job?.baseline_similarity;
+    const best = job?.best_similarity;
+    const loopLine =
+      base != null && best != null
+        ? `Loop CSS: ${(Number(base) * 100).toFixed(1)}% → ${(Number(best) * 100).toFixed(1)}% (${job.status || "done"}).`
+        : "";
+
+    return [
+      `Ajuste a UI para ficar visualmente parecida com o mockup "${mockup}".`,
+      `Similaridade atual: ${pct} (meta ~${target}). ${loopLine}`.trim(),
+      "Use o preview e os arquivos CSS/HTML existentes. Preserve estrutura e conteúdo; foque em layout, tipografia, espaçamento e cores.",
+      regionLines ? `Regiões com diferença:\n${regionLines}` : "Não há regiões correlacionadas — compare o mockup e o preview e corrija as áreas mais óbvias.",
+      layoutLines ? `Deltas de layout:\n${layoutLines}` : "",
+      "Aplique mudanças mínimas e mensuráveis. Ao terminar, mantenha a página responsiva.",
+    ]
+      .filter(Boolean)
+      .join("\n\n");
+  }
+
+  function updateVisualPrimaryCta(report) {
+    const sim = reportSimilarity(report);
+    const reached = visualTargetReached(sim);
+    const hasMockup = !!(ensureMockupPath() || "").trim();
+    els.comparePrimaryCta?.classList.toggle("hidden", !report && !hasMockup);
+    els.btnVisualAgentBrief?.classList.toggle("hidden", !report || reached);
+    els.btnCorrectPrimary?.classList.toggle("hidden", !report || reached);
+    // Alcançar = primary; Só corrigir CSS = secondary after a score exists.
+    if (els.btnReachResult) {
+      els.btnReachResult.classList.toggle("btn-primary", !reached);
+      els.btnReachResult.classList.toggle("btn-ghost", !!reached);
+      els.btnReachResult.textContent = reached ? "Revalidar" : "Alcançar resultado";
+    }
+    if (els.comparePrimaryHint) {
+      if (!report && hasMockup) {
+        els.comparePrimaryHint.textContent =
+          "Mockup pronto. Alcançar resultado compara e corrige até a meta.";
+      } else if (!report) {
+        els.comparePrimaryHint.textContent =
+          "Um clique: compara → corrige CSS → se ainda ficar longe, prepara o brief para o agente.";
+      } else if (reached) {
+        els.comparePrimaryHint.textContent = `Meta atingida (${(sim * 100).toFixed(1)}%). Pode aprovar baseline ou pedir refinamentos.`;
+      } else {
+        els.comparePrimaryHint.textContent = `Ainda em ${(sim * 100).toFixed(1)}%. Alcançar fecha o loop; Pedir ao agente usa o brief do compare.`;
+      }
+    }
+    syncCompareEmptyState();
+  }
+
+  function addVisualOutcomeCard(report, job) {
+    if (!els.chatMessages) return;
+    const sim = reportSimilarity(report) ?? reportSimilarity(job);
+    const pct = sim == null ? "—" : `${(sim * 100).toFixed(1)}%`;
+    const reached = visualTargetReached(sim);
+    const el = document.createElement("div");
+    el.className = "msg system next-steps visual-outcome";
+    const title = reached
+      ? `Visual próximo do mockup · ${pct}`
+      : `Visual ainda longe do mockup · ${pct}`;
+    const actions = [];
+    if (!reached) {
+      actions.push({ action: "reach", label: "Alcançar resultado", primary: true });
+      actions.push({ action: "agent", label: "Pedir ao agente" });
+    } else {
+      actions.push({ action: "preview", label: "Ver preview", primary: true });
+      actions.push({ action: "compare", label: "Ver comparação" });
+    }
+
+    el.innerHTML = `
+      <div class="next-steps-card visual-outcome-card">
+        <div class="next-steps-title">${escapeHtml(title)}</div>
+        <p class="muted visual-outcome-copy">${
+          reached
+            ? "O motor de comparação indica que o resultado está na meta."
+            : "Alcançar resultado fecha o loop CSS; se estabilizar abaixo da meta, use o brief no agente."
+        }</p>
+        <div class="next-steps-actions">
+          ${actions
+            .map(
+              (item) =>
+                `<button type="button" class="btn ${item.primary ? "btn-primary btn-gradient" : "btn-ghost"} btn-sm visual-outcome-action" data-action="${item.action}">${escapeHtml(item.label)}</button>`
+            )
+            .join("")}
+        </div>
+      </div>`;
+
+    el.addEventListener("click", (event) => {
+      const btn = event.target.closest(".visual-outcome-action");
+      if (!btn) return;
+      const action = btn.dataset.action;
+      if (action === "reach" || action === "correct") {
+        setSurfaceMode("work");
+        switchToolGroup("visual", "compare");
+        startReachResultFlow({ autoCorrect: true });
+      } else if (action === "agent") {
+        fillVisualAgentBrief(report, job, { send: false });
+      } else if (action === "compare") {
+        setSurfaceMode("work");
+        switchToolGroup("visual", "compare");
+      } else if (action === "preview") {
+        setSurfaceMode("work");
+        switchToolGroup("app", "preview");
+        updatePreview();
+      }
+    });
+
+    els.chatMessages.appendChild(el);
+    els.chatMessages.scrollTop = els.chatMessages.scrollHeight;
+  }
+
+  function fillVisualAgentBrief(report, job, { send = false } = {}) {
+    const brief = buildVisualAgentBrief(report || state.lastCompareReport, job || state.correctionJob);
+    if (!brief || !els.promptInput) return;
+    els.promptInput.value = brief;
+    els.promptInput.focus();
+    showToast(send ? "Enviando brief visual ao agente…" : "Brief visual pronto no composer.", "info", 4500);
+    if (send && !state.running) sendPrompt();
+  }
+
+  async function suggestVisualIfMockupPresent({ autoCompare = false, uiChanged = false } = {}) {
+    if (!state.current?.id || !visualEngineAvailable()) return null;
+    const mock = ensureMockupPath();
+    if (!mock) return null;
+    if (autoCompare && uiChanged && !state.running && !state.visualReachInFlight) {
+      showToast(`Mockup ${mock} — comparando com o preview…`, "info", 4500);
+      state.visualAutoCompare = true;
+      try {
+        await runCompareNow({ smartFollowUp: true, quiet: true });
+      } finally {
+        state.visualAutoCompare = false;
+      }
+      return mock;
+    }
+    if (!autoCompare) {
+      showToast(`Mockup encontrado (${mock}). Use “Alcançar resultado” no Visual.`, "info", 5500);
+    }
+    return mock;
   }
 
   async function syncWorkspaceAfterRun(donePayload) {
@@ -6169,6 +6657,7 @@
     const uiChanged = changed.some(isUiPath);
     const packageTouched = changed.some((p) => /(^|\/)package\.json$/i.test(p) || /(^|\/)vite\.config\./i.test(p));
     const hasDev = !!state.devStatus?.has_dev_script;
+    const success = donePayload?.status === "SUCCESS";
 
     if (hasDev && (packageTouched || uiChanged) && !state.devStatus?.running && canStartDevPreview()) {
       await maybeEnableDevPreview({ preferDev: true, autoStart: true });
@@ -6177,18 +6666,37 @@
     }
 
     if (donePayload?.status === "CANCELLED") {
-      switchTab("report");
+      // Keep the user on Preview with a clear recovery path (don't dump into Relatório).
+      if (state.surfaceMode !== "work") setSurfaceMode("work");
+      switchToolGroup("app", "preview");
+      const previewPath = htmlChanged || findPreviewPath();
+      if (previewPath) {
+        updatePreview(previewPath);
+      } else {
+        setPreviewEmptyVisible(
+          true,
+          "Execução cancelada — ainda sem HTML. Use “Tentar de novo” ou “Criar landing”."
+        );
+      }
     } else if (hasDev || uiChanged || htmlChanged) {
-      switchTab("preview");
+      if (state.surfaceMode !== "work") setSurfaceMode("work");
+      switchToolGroup("app", "preview");
       updatePreview(htmlChanged || findPreviewPath());
     } else if (changed[0]) {
+      if (state.surfaceMode !== "work") setSurfaceMode("work");
       await openFile(changed[0], { switchToFiles: true, preferPreview: false });
     } else {
-      switchTab("report");
+      switchToolGroup("app", "preview");
       updatePreview();
     }
 
     addNextStepActions(changed, donePayload);
+    renderWorkspaceDock();
+    syncWorkRailVisibility();
+    await suggestVisualIfMockupPresent({
+      autoCompare: success && !!(uiChanged || htmlChanged),
+      uiChanged: !!(uiChanged || htmlChanged),
+    });
   }
 
   // ── Dev server ──
@@ -6331,21 +6839,28 @@
     } else if (s.running) {
       const label = runtime === "uvicorn" ? "uvicorn" : s.script;
       els.devStatus.textContent = `Rodando :${s.port} (${label})`;
-      els.devErrorLog?.classList.add("hidden");
+      els.devErrorPanel?.classList.add("hidden");
     } else if (runtime === "uvicorn" && s.python_available === false) {
       els.devStatus.textContent = "Instale Python para rodar FastAPI";
+      els.devErrorPanel?.classList.add("hidden");
     } else if (runtime !== "uvicorn" && !s.npm_available) {
       els.devStatus.textContent = "Instale Node.js para dev server";
+      els.devErrorPanel?.classList.add("hidden");
     } else if (s.last_error) {
-      els.devStatus.textContent = "Último erro no preview";
-      if (els.devErrorLog) {
-        els.devErrorLog.textContent = s.last_error;
-        els.devErrorLog.classList.remove("hidden");
-      }
+      const firstLine = String(s.last_error).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "Falha no preview ao vivo";
+      els.devStatus.textContent = firstLine.slice(0, 90);
+      if (els.devErrorLog) els.devErrorLog.textContent = s.last_error;
+      if (els.devErrorSummary) els.devErrorSummary.textContent = firstLine.slice(0, 160);
+      els.devErrorPanel?.classList.remove("hidden");
     } else if (runtime === "uvicorn") {
       els.devStatus.textContent = "Pronto: uvicorn main:app";
+      els.devErrorPanel?.classList.add("hidden");
     } else {
       els.devStatus.textContent = `Pronto: npm run ${s.script}`;
+      els.devErrorPanel?.classList.add("hidden");
+    }
+    if (s.running || !s.last_error) {
+      if (!s.last_error) els.devErrorPanel?.classList.add("hidden");
     }
   }
 
@@ -6381,7 +6896,7 @@
       runtime === "uvicorn"
         ? "Iniciando uvicorn (pip install pode demorar)..."
         : "Iniciando (npm install pode demorar)...";
-    els.devErrorLog?.classList.add("hidden");
+    els.devErrorPanel?.classList.add("hidden");
     try {
       const d = await api(`/api/projects/${encodeURIComponent(state.current.id)}/dev/start`, {
         method: "POST",
@@ -6393,13 +6908,14 @@
       renderDevControls();
       syncDevPolling();
       updatePreview();
-      switchTab("preview");
+      switchToolGroup("app", "preview");
     } catch (e) {
-      els.devStatus.textContent = e.message;
-      if (e.data?.stderr && els.devErrorLog) {
-        els.devErrorLog.textContent = e.data.stderr;
-        els.devErrorLog.classList.remove("hidden");
-      }
+      const errText = e.data?.stderr || e.message || "Falha ao iniciar preview";
+      const firstLine = String(errText).split(/\r?\n/).map((l) => l.trim()).find(Boolean) || "Falha ao iniciar preview";
+      els.devStatus.textContent = firstLine.slice(0, 90);
+      if (els.devErrorLog) els.devErrorLog.textContent = errText;
+      if (els.devErrorSummary) els.devErrorSummary.textContent = firstLine.slice(0, 160);
+      els.devErrorPanel?.classList.remove("hidden");
     } finally {
       els.btnDevStart.disabled = false;
     }
@@ -6578,17 +7094,25 @@
       el.classList.toggle("active", el.dataset.tab === tab);
     });
     const isAppPreview = group === "app" && tab === "preview";
+    const isAppFiles = group === "app" && tab === "files";
     $("panelLive")?.classList.toggle("hidden", tab !== "live");
-    $("panelFiles").classList.toggle("hidden", !isAppPreview && tab !== "files");
-    $("panelPreview").classList.toggle("hidden", tab !== "preview" && tab !== "files");
+    $("panelFiles")?.classList.toggle("hidden", !isAppPreview && !isAppFiles);
+    $("panelPreview")?.classList.toggle("hidden", tab !== "preview" && tab !== "files");
     $("panelCompare")?.classList.toggle("hidden", tab !== "compare");
-    $("panelReport").classList.toggle("hidden", tab !== "report");
+    $("panelReport")?.classList.toggle("hidden", tab !== "report");
+    const workbench = $("appWorkbench");
+    workbench?.classList.toggle("workbench-focus-files", isAppFiles);
+    workbench?.classList.toggle("workbench-focus-preview", isAppPreview);
+    els.btnSidebarSearch?.classList.toggle("is-active", isAppFiles);
     syncMobileTabs(tab, group);
-    if (isMobileLayout()) openMobilePanel();
-    else closeMobilePanel();
+    if (opts.fromMobile && isMobileLayout()) openMobilePanel();
+    else if (!isMobileLayout()) closeMobilePanel();
     if (tab === "preview" || tab === "files") updatePreview();
     else stopPreviewPolling();
-    if (tab === "compare") refreshComparePanel();
+    if (tab === "compare") {
+      refreshComparePanel();
+      syncCompareEmptyState();
+    }
   }
 
   function parseCompareViewport() {
@@ -6680,14 +7204,15 @@
     if (!report) return;
     state.lastCompareReport = report;
     const pct = report.similarity == null ? "—" : `${(Number(report.similarity) * 100).toFixed(1)}%`;
-    const fit = report.normalization?.fit || "";
+    const fit = report.normalization?.fit || report.raw?.normalization?.fit || "";
     if (els.compareScore) {
       els.compareScore.classList.remove("hidden");
       els.compareScore.innerHTML = `<strong>${escapeHtml(pct)}</strong> similar · ${escapeHtml(report.mode || "")} · ${escapeHtml(fit)} · ${escapeHtml(report.status || "")}`;
     }
     const id = report.comparisonId || report.comparison_id;
-    const refFile = report.artifacts?.referenceNormalized ? "reference-normalized.png" : "reference.png";
-    const actFile = report.artifacts?.actualNormalized ? "actual-normalized.png" : "actual.png";
+    const artifacts = report.artifacts || report.raw?.artifacts || {};
+    const refFile = artifacts.referenceNormalized ? "reference-normalized.png" : "reference.png";
+    const actFile = artifacts.actualNormalized ? "actual-normalized.png" : "actual.png";
     if (els.compareRefImg) els.compareRefImg.src = artifactUrl(id, refFile);
     if (els.compareActImg) els.compareActImg.src = artifactUrl(id, actFile);
     if (els.compareDiffImg) els.compareDiffImg.src = artifactUrl(id, "diff.png");
@@ -6698,8 +7223,16 @@
       const warns = (report.warnings || []).slice(0, 2).join(" · ");
       els.compareStatus.textContent = warns || `Comparação ${id} pronta.`;
     }
+    // Prefer regions from promoted fields or raw bridge payload.
+    if (!report.regions?.length && report.raw?.regions) {
+      report = { ...report, regions: report.raw.regions };
+      state.lastCompareReport = report;
+    }
     renderCompareRegions(report);
     setCompareView(state.compareView || "side");
+    setCompareFlowStep("correct");
+    updateVisualPrimaryCta(report);
+    syncCompareEmptyState();
     renderWorkspaceDock();
   }
 
@@ -6780,8 +7313,13 @@
         }),
       });
       if (els.compareMockupPath) els.compareMockupPath.value = data.path;
-      showToast(`Mockup salvo em ${escapeHtml(data.path)}`, "ok");
-      if (els.compareStatus) els.compareStatus.textContent = `Mockup: ${data.path}`;
+      setCompareFlowStep("compare");
+      syncCompareEmptyState();
+      updateVisualPrimaryCta(null);
+      showToast(`Mockup salvo. Use “Alcançar resultado” para fechar o loop.`, "ok", 5500);
+      if (els.compareStatus) {
+        els.compareStatus.textContent = `Mockup pronto: ${data.path}. Clique em Alcançar resultado.`;
+      }
     } catch (e) {
       const msg = visualApiMissingMessage(e);
       showToast(msg, "err");
@@ -7034,31 +7572,59 @@
       if (job && (job.status === "queued" || job.status === "running")) return;
       stopCorrectionPolling();
       if (job?.status === "completed") {
-        showToast("Correction loop finalizado.", "ok");
+        const best = reportSimilarity(job);
+        const reached = visualTargetReached(best);
+        showToast(
+          reached
+            ? `Correção concluída · ${(best * 100).toFixed(1)}% (meta atingida).`
+            : `Correção concluída · ${best == null ? "—" : `${(best * 100).toFixed(1)}%`}. Ainda abaixo da meta.`,
+          reached ? "ok" : "info",
+          6000
+        );
         refreshComparePanel();
+        updatePreview();
+        const synthetic = state.lastCompareReport
+          ? { ...state.lastCompareReport, similarity: best ?? state.lastCompareReport.similarity }
+          : { similarity: best, regions: [], layoutChanges: [] };
+        if (best != null) {
+          state.lastCompareReport = synthetic;
+          updateVisualPrimaryCta(synthetic);
+        }
+        addVisualOutcomeCard(synthetic, job);
+        if (!reached && state.visualReachInFlight) {
+          fillVisualAgentBrief(synthetic, job, { send: false });
+          showToast("CSS estabilizou abaixo da meta — brief visual pronto para o agente.", "info", 6500);
+        }
+        state.visualReachInFlight = false;
       } else if (job?.status === "cancelled") {
+        state.visualReachInFlight = false;
         showToast("Correction loop interrompido.", "info");
       } else if (job?.status === "failed") {
+        state.visualReachInFlight = false;
         showToast(job.error || "Correction loop falhou", "err");
       }
     } catch (e) {
       stopCorrectionPolling();
+      state.visualReachInFlight = false;
       showToast(e.message || "Falha ao consultar correction", "err");
     }
   }
 
-  async function startCorrectionLoop() {
+  async function startCorrectionLoop({ fromSmartFlow = false } = {}) {
     if (!state.current?.id) return;
-    const mockup = (els.compareMockupPath?.value || "").trim();
+    const mockup = ensureMockupPath();
     if (!mockup) {
       showToast("Envie ou informe um mockup antes de corrigir.", "info");
-      return;
+      return null;
     }
     stopCorrectionPolling();
+    setCompareFlowStep("correct");
     if (els.compareStatus) els.compareStatus.textContent = "Iniciando correction loop…";
     els.btnCorrectAuto && (els.btnCorrectAuto.disabled = true);
     try {
-      const suite = selectedCompareSuite();
+      // Prefer single-viewport layout-aware correction unless the user chose a suite.
+      const suite = fromSmartFlow ? "" : selectedCompareSuite();
+      const target = Number(state.visualTargetSimilarity) || 0.92;
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/correction/start`, {
         method: "POST",
         body: JSON.stringify({
@@ -7067,7 +7633,8 @@
           viewport: parseCompareViewport(),
           suite: suite || undefined,
           fit: els.compareFit?.value || "contain",
-          target_similarity: 0.95,
+          options: { includeDomDiff: true, includeLayout: true, fit: els.compareFit?.value || "contain" },
+          target_similarity: Math.max(target, 0.95),
           max_attempts: 5,
         }),
       });
@@ -7075,9 +7642,52 @@
       renderCorrectionJob(data.correction);
       state.correctionTimer = setInterval(() => pollCorrection(data.correction.id), 1500);
       showToast("Correction loop em execução…", "info");
+      return data.correction;
     } catch (e) {
       els.btnCorrectAuto && (els.btnCorrectAuto.disabled = false);
+      state.visualReachInFlight = false;
       showToast(e.message || "Não foi possível iniciar a correção", "err");
+      return null;
+    }
+  }
+
+  async function startReachResultFlow({ autoCorrect = true } = {}) {
+    if (!state.current?.id || state.visualReachInFlight) return;
+    const mockup = ensureMockupPath();
+    if (!mockup) {
+      openVisualMockupFlow();
+      showToast("Envie o mockup para o motor guiar o resultado.", "info", 5000);
+      return;
+    }
+    state.visualReachInFlight = true;
+    setSurfaceMode("work");
+    switchToolGroup("visual", "compare");
+    setCompareFlowStep("compare");
+    try {
+      const report = await runCompareNow({ smartFollowUp: false, quiet: true, layoutAware: true });
+      const sim = reportSimilarity(report);
+      if (visualTargetReached(sim)) {
+        showToast(`Já está perto do mockup (${(sim * 100).toFixed(1)}%).`, "ok", 5000);
+        addVisualOutcomeCard(report, null);
+        state.visualReachInFlight = false;
+        return;
+      }
+      if (!autoCorrect) {
+        updateVisualPrimaryCta(report);
+        addVisualOutcomeCard(report, null);
+        state.visualReachInFlight = false;
+        return;
+      }
+      showToast(
+        `Similaridade ${sim == null ? "—" : `${(sim * 100).toFixed(1)}%`} — iniciando correção automática…`,
+        "info",
+        5500
+      );
+      const job = await startCorrectionLoop({ fromSmartFlow: true });
+      if (!job) state.visualReachInFlight = false;
+    } catch (e) {
+      state.visualReachInFlight = false;
+      showToast(e.message || "Falha ao alcançar resultado", "err");
     }
   }
 
@@ -7096,21 +7706,22 @@
     }
   }
 
-  function buildCompareBody({ pixelPerfect = false } = {}) {
-    const mockup = (els.compareMockupPath?.value || "").trim();
+  function buildCompareBody({ pixelPerfect = false, layoutAware = false } = {}) {
+    const mockup = ensureMockupPath() || (els.compareMockupPath?.value || "").trim();
     const targetUrl = (els.compareTargetUrl?.value || "").trim();
     const fit = els.compareFit?.value || "contain";
-    const suite = selectedCompareSuite();
+    const suite = layoutAware ? "" : selectedCompareSuite();
+    const wantLayout = layoutAware || !(pixelPerfect || !!suite);
     const body = {
       mode: els.previewMode?.value === "dev" ? "dev" : "auto",
       viewport: parseCompareViewport(),
       options: {
         threshold: 0.1,
         fit,
-        includeDomDiff: !(pixelPerfect || !!suite),
-        includeLayout: !(pixelPerfect || !!suite),
+        includeDomDiff: wantLayout,
+        includeLayout: wantLayout,
       },
-      target_similarity: 0.95,
+      target_similarity: Number(state.visualTargetSimilarity) || 0.92,
     };
     if (mockup) body.mockup = mockup;
     else if (targetUrl) body.preview_vs_url = targetUrl;
@@ -7121,14 +7732,18 @@
     return { body, mockup, targetUrl };
   }
 
-  async function runCompareNow() {
-    if (!state.current?.id) return;
-    const { body, mockup, targetUrl } = buildCompareBody({ pixelPerfect: false });
+  async function runCompareNow({ smartFollowUp = false, quiet = false, layoutAware = false } = {}) {
+    if (!state.current?.id) return null;
+    const { body, mockup, targetUrl } = buildCompareBody({
+      pixelPerfect: false,
+      layoutAware: layoutAware || smartFollowUp,
+    });
     if (!mockup && !targetUrl) {
       showToast("Informe uma URL alvo ou um caminho de mockup.", "info");
-      return;
+      return null;
     }
     if (els.compareStatus) els.compareStatus.textContent = "Comparando…";
+    setCompareFlowStep("compare");
     els.btnCompareNow && (els.btnCompareNow.disabled = true);
     try {
       const data = await api(`/api/projects/${encodeURIComponent(state.current.id)}/visual/compare`, {
@@ -7139,10 +7754,30 @@
       else els.compareSuitePanel?.classList.add("hidden");
       renderCompareReport(data.report);
       await refreshComparePanel();
-      showToast(data.suite ? "Suite Pixel Perfect concluída." : "Comparação concluída.", "ok");
+      setCompareFlowStep("correct");
+      updateVisualPrimaryCta(data.report);
+      if (els.compareAdvanced) els.compareAdvanced.open = false;
+      const sim = reportSimilarity(data.report);
+      const reached = visualTargetReached(sim);
+      if (!quiet) {
+        showToast(
+          reached
+            ? `Comparação pronta · ${(sim * 100).toFixed(1)}% (meta ok).`
+            : data.suite
+              ? "Suite concluída. Use “Alcançar resultado” ou corrija as diferenças."
+              : `Comparação pronta · ${sim == null ? "—" : `${(sim * 100).toFixed(1)}%`}. Próximo: corrigir.`,
+          reached ? "ok" : "info",
+          5500
+        );
+      }
+      if (smartFollowUp && data.report) {
+        addVisualOutcomeCard(data.report, null);
+      }
+      return data.report;
     } catch (e) {
       if (els.compareStatus) els.compareStatus.textContent = e.message || "Falha na comparação";
       showToast(e.message || "Falha na comparação", "err");
+      return null;
     } finally {
       if (els.btnCompareNow) els.btnCompareNow.disabled = false;
     }
@@ -7211,21 +7846,43 @@
 
   els.btnSend.addEventListener("click", sendPrompt);
   els.workspaceDock?.addEventListener("click", (e) => {
+    const reach = e.target.closest("[data-dock-action='reach']");
+    if (reach) {
+      setSurfaceMode("work");
+      switchToolGroup("visual", "compare");
+      startReachResultFlow({ autoCorrect: true });
+      return;
+    }
     const btn = e.target.closest(".dock-open-btn");
     if (!btn) return;
     const group = btn.dataset.openGroup;
     const tab = btn.dataset.openTab;
     if (!group || !tab) return;
+    setSurfaceMode("work");
+    if (group === "visual" && !(els.compareMockupPath?.value || "").trim() && !state.lastCompareReport) {
+      openVisualMockupFlow();
+      return;
+    }
     switchToolGroup(group, tab);
   });
   els.mobileTabs?.addEventListener("click", (e) => {
     const btn = e.target.closest(".mobile-tab");
     if (!btn) return;
-    if (btn.dataset.group) {
-      switchToolGroup(btn.dataset.group, btn.dataset.tab);
+    if (btn.dataset.surface === "chat") {
+      closeMobilePanel();
+      setSurfaceMode("chat");
+      syncMobileTabs();
       return;
     }
-    if (btn.dataset.tab) switchTab(btn.dataset.tab);
+    if (btn.dataset.group) {
+      setSurfaceMode("work");
+      switchToolGroup(btn.dataset.group, btn.dataset.tab);
+      // switchToolGroup → switchTab: mark as mobile intent
+      if (isMobileLayout()) openMobilePanel();
+      syncMobileTabs(btn.dataset.tab, btn.dataset.group);
+      return;
+    }
+    if (btn.dataset.tab) switchTab(btn.dataset.tab, { fromMobile: true });
   });
 
   document.getElementById("toolsGroups")?.addEventListener("click", (e) => {
@@ -7280,9 +7937,15 @@
   });
   els.btnSidebarSearch?.addEventListener("click", () => {
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
-    requestAnimationFrame(() => {
+    if (!state.current) {
+      showToast("Escolha um projeto para abrir os arquivos.", "info", 4000);
       els.projectSearch?.focus();
-      els.projectSearch?.select?.();
+      return;
+    }
+    showWorkspace();
+    switchToolGroup("app", "files");
+    requestAnimationFrame(() => {
+      els.fileSearchInput?.focus();
     });
   });
   els.sidebarBackdrop?.addEventListener("click", closeSidebar);
@@ -7372,6 +8035,11 @@
   });
   els.btnSurfaceChat?.addEventListener("click", () => setSurfaceMode("chat"));
   els.btnSurfaceWork?.addEventListener("click", () => setSurfaceMode("work"));
+  els.btnEmptyGoWork?.addEventListener("click", () => setSurfaceMode("work"));
+  els.btnEmptyNewProject?.addEventListener("click", () => {
+    setSurfaceMode("work");
+    openNewProjectModal(state.selectedTemplate || "landing");
+  });
   els.btnChooseProjectEmpty?.addEventListener("click", () => {
     setSurfaceMode("work");
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
@@ -7379,6 +8047,35 @@
     els.projectSearch?.focus();
   });
   els.btnNewProjectEmpty?.addEventListener("click", () => openNewProjectModal("blank"));
+  els.btnUploadMockupPrimary?.addEventListener("click", () => els.compareMockupFile?.click());
+  els.workStepper?.addEventListener("click", (e) => {
+    const step = e.target.closest(".work-step")?.dataset?.step;
+    if (!step || !state.current) return;
+    setSurfaceMode("work");
+    if (step === "check") {
+      if (visualEngineAvailable() && (ensureMockupPath() || "").trim()) {
+        switchToolGroup("visual", "compare");
+      } else {
+        switchToolGroup("app", "preview");
+      }
+    } else if (step === "work") {
+      switchToolGroup("agent", "live");
+    } else if (step === "done") {
+      switchToolGroup("app", "preview");
+    }
+  });
+  els.btnQuickMockup?.addEventListener("click", (e) => {
+    e.preventDefault();
+    openVisualMockupFlow();
+  });
+  els.btnPreviewOpenFiles?.addEventListener("click", () => {
+    if (!state.current) {
+      showToast("Escolha um projeto primeiro.", "info");
+      return;
+    }
+    switchToolGroup("app", "files");
+  });
+  els.btnPreviewGoVisual?.addEventListener("click", () => openVisualMockupFlow());
   els.btnPickProject?.addEventListener("click", () => {
     setSurfaceMode("work");
     if (!isMobileLayout() && isSidebarCollapsed()) setSidebarCollapsed(false);
@@ -7437,6 +8134,7 @@
 
   els.btnDeploy.addEventListener("click", runDeploy);
   els.btnModels.addEventListener("click", openModelsModal);
+  els.activeModelBadge?.addEventListener("click", openModelsModal);
   els.btnRefreshHardware?.addEventListener("click", () => {
     if (els.btnRefreshHardware) els.btnRefreshHardware.disabled = true;
     loadModelRecommendations({ refresh: true })
@@ -7512,7 +8210,25 @@
   els.btnCompareNow?.addEventListener("click", runCompareNow);
   els.btnPixelPerfect?.addEventListener("click", runPixelPerfect);
   els.btnCapturePreview?.addEventListener("click", runCapturePreview);
-  els.btnCorrectAuto?.addEventListener("click", startCorrectionLoop);
+  els.btnCorrectAuto?.addEventListener("click", () => startCorrectionLoop());
+  els.btnCorrectPrimary?.addEventListener("click", () => {
+    if (els.compareAdvanced) els.compareAdvanced.open = true;
+    startCorrectionLoop({ fromSmartFlow: true });
+  });
+  els.btnReachResult?.addEventListener("click", () => startReachResultFlow({ autoCorrect: true }));
+  els.btnVisualAgentBrief?.addEventListener("click", () => {
+    fillVisualAgentBrief(state.lastCompareReport, state.correctionJob, { send: false });
+  });
+  els.btnDevErrorRestart?.addEventListener("click", () => startDevServer());
+  els.projectBadge?.addEventListener("click", () => {
+    setSurfaceMode(state.surfaceMode === "work" ? "chat" : "work");
+  });
+  els.healthStatus?.addEventListener("click", () => {
+    openModelsModal();
+    if (!state.ollamaOk) {
+      showToast("Configure o Ollama para voltar a gerar código.", "info", 4500);
+    }
+  });
   els.btnCorrectCancel?.addEventListener("click", cancelCorrectionLoop);
   els.btnBaselineApprove?.addEventListener("click", approveBaseline);
   els.btnBaselineReject?.addEventListener("click", rejectBaseline);
@@ -7521,6 +8237,10 @@
     const btn = e.target.closest(".compare-baseline-btn");
     if (!btn?.dataset.route || !els.compareRouteId) return;
     els.compareRouteId.value = btn.dataset.route;
+  });
+  els.compareMockupPath?.addEventListener("input", () => {
+    syncCompareEmptyState();
+    if ((els.compareMockupPath.value || "").trim()) updateVisualPrimaryCta(state.lastCompareReport);
   });
   els.btnUploadMockup?.addEventListener("click", () => els.compareMockupFile?.click());
   els.compareMockupFile?.addEventListener("change", () => {
@@ -7571,7 +8291,7 @@
   els.btnDevRestart?.addEventListener("click", startDevServer);
   const MODE_PREF_KEY = "forge.mode";
 
-  function syncModeControls() {
+  function syncModeControls(opts = {}) {
     const mode = els.modeSelect?.value || "chat";
     const isChat = mode === "chat";
     const isExecute = mode === "execute";
@@ -7584,11 +8304,10 @@
         ? "Modo Executar — altera arquivos no projeto (usa o contexto do Chat)"
         : "Modo Chat — conversa livre sobre qualquer assunto";
     }
-    if (els.promptInput) {
-      els.promptInput.placeholder = isChat
-        ? "Converse sobre qualquer assunto… (para alterar código, use Executar)"
-        : "Peça uma mudança, um componente ou uma correção…";
-    }
+    // Placeholders follow Chat|Work surface, not the buried modeSelect.
+    if (!opts.preservePlaceholder) applySurfacePlaceholder();
+    else applySurfacePlaceholder();
+    syncComposerToolHint();
     try {
       localStorage.setItem(MODE_PREF_KEY, mode);
     } catch (_) {
@@ -7627,12 +8346,21 @@
 
   document.querySelectorAll(".quick-card").forEach((card) => {
     card.addEventListener("click", () => {
+      if (card.id === "btnQuickMockup") return;
       const prompt = card.dataset.prompt;
       if (!prompt || !state.current || state.running) return;
       els.promptInput.value = prompt;
       els.promptInput.focus();
+      if (card.dataset.send === "1" && !state.running) sendPrompt();
     });
   });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeComposerMenu();
+  });
+
+  els.btnComposerPlus?.setAttribute("aria-expanded", "false");
+  els.btnComposerPlus?.setAttribute("aria-haspopup", "menu");
 
   els.deviceSwitcher?.addEventListener("click", (e) => {
     const btn = e.target.closest(".device-btn");
@@ -7670,17 +8398,16 @@
     syncSidebarToggle();
     try {
       const savedSurface = localStorage.getItem("forge_surface_mode");
-      setSurfaceMode(savedSurface === "chat" ? "chat" : "work");
+      // Sem projeto, Chat é a entrada mais clara; Work fica após criar template.
+      setSurfaceMode(savedSurface === "work" ? "work" : "chat");
     } catch (_) {
-      setSurfaceMode("work");
+      setSurfaceMode("chat");
     }
     initLayoutSplitters();
     initLayoutPresets();
     setPreviewDevice(state.previewDevice);
     checkHealth();
     setInterval(checkHealth, 30000);
-    refreshSidebarResources();
-    setInterval(refreshSidebarResources, 15000);
     syncWorkRailVisibility();
     checkHealth().then(async () => {
       try {

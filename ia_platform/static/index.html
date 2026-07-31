@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=54" />
+  <link rel="stylesheet" href="/static/app.css?v=64" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -47,18 +47,17 @@
           </svg>
           <span class="nav-label">Chat</span>
         </button>
-        <button type="button" class="sidebar-nav-item" id="btnSidebarSearch" title="Arquivos">
+        <button type="button" class="sidebar-nav-item" id="btnSidebarSearch" title="Arquivos do projeto">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
             <path d="M4 7.5h6l1.4 2H20v8.5H4z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
           </svg>
           <span class="nav-label">Arquivos</span>
         </button>
-        <button type="button" class="sidebar-nav-item" id="btnNewProject" title="Novo projeto">
+        <button type="button" class="sidebar-nav-item" id="btnNewProject" title="Criar novo projeto">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M4 8h16v10H4z" stroke="currentColor" stroke-width="1.7"/>
-            <path d="M8 8V6h8v2" stroke="currentColor" stroke-width="1.7"/>
+            <path d="M12 5v14M5 12h14" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
           </svg>
-          <span class="nav-label">Projetos</span>
+          <span class="nav-label">Novo</span>
         </button>
         <button type="button" class="sidebar-nav-item" id="btnModels" title="Modelos IA">
           <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
@@ -66,19 +65,6 @@
             <path d="M12 12l8-4.5M12 12v9M12 12L4 7.5" stroke="currentColor" stroke-width="1.5" opacity=".7"/>
           </svg>
           <span class="nav-label">Modelos</span>
-        </button>
-        <button type="button" class="sidebar-nav-item" title="Plugins">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M9 4h6v5h5v6h-5v5H9v-5H4V9h5z" stroke="currentColor" stroke-width="1.7" stroke-linejoin="round"/>
-          </svg>
-          <span class="nav-label">Plugins</span>
-        </button>
-        <button type="button" class="sidebar-nav-item" title="Configurações">
-          <svg width="18" height="18" viewBox="0 0 24 24" fill="none" aria-hidden="true">
-            <path d="M12 8.2a3.8 3.8 0 1 0 0 7.6 3.8 3.8 0 0 0 0-7.6z" stroke="currentColor" stroke-width="1.7"/>
-            <path d="M4 12h2.2M17.8 12H20M12 4v2.2M12 17.8V20M6.3 6.3l1.6 1.6M16.1 16.1l1.6 1.6M17.7 6.3l-1.6 1.6M7.9 16.1l-1.6 1.6" stroke="currentColor" stroke-width="1.7" stroke-linecap="round"/>
-          </svg>
-          <span class="nav-label">Configurações</span>
         </button>
       </nav>
 
@@ -102,30 +88,9 @@
       </div>
 
         <div class="sidebar-bottom">
-          <div class="sidebar-resources" id="sidebarResources" aria-label="Recursos locais">
-            <div class="sidebar-resources-head">
-              <strong>Forge local</strong>
-              <span id="sidebarResourceHint">Ollama</span>
-            </div>
-            <div class="resource-meter" data-res="cpu">
-              <span>CPU</span>
-              <div class="resource-track"><i id="resCpuFill"></i></div>
-              <em id="resCpuLabel">—</em>
-            </div>
-            <div class="resource-meter" data-res="ram">
-              <span>RAM</span>
-              <div class="resource-track"><i id="resRamFill"></i></div>
-              <em id="resRamLabel">—</em>
-            </div>
-            <div class="resource-meter" data-res="gpu">
-              <span>GPU</span>
-              <div class="resource-track"><i id="resGpuFill"></i></div>
-              <em id="resGpuLabel">—</em>
-            </div>
-          </div>
           <div class="sidebar-tip" id="sidebarTip">
-            <strong>Como navegar</strong>
-            <p><b>Chat</b> conversa · <b>Work</b> constrói. Painel: <b>App</b> · <b>Agente</b> · <b>Visual</b>.</p>
+            <strong>Caminho rápido</strong>
+            <p><b>1</b> Chat · <b>2</b> Work · <b>3</b> Preview · <b>4</b> Visual (mockup).</p>
           </div>
           <div class="sidebar-user" title="Forge · plataforma local">
             <div class="user-avatar">F</div>
@@ -135,7 +100,9 @@
             </div>
           </div>
           <div class="sidebar-footer">
-            <span id="healthStatus"><span class="status-dot err"></span> verificando...</span>
+            <button type="button" class="health-status-btn" id="healthStatus" title="Status do Ollama">
+              <span class="status-dot err"></span> verificando...
+            </button>
             <div class="sidebar-setup-pill hidden" id="sidebarSetupPill">
               <span id="sidebarSetupLabel">Configurando...</span>
               <span class="mini-bar"><span class="mini-bar-fill" id="sidebarSetupBar"></span></span>
@@ -159,7 +126,7 @@
     <div class="sidebar-backdrop hidden" id="sidebarBackdrop"></div>
 
     <div class="main">
-      <div class="surface-toggle-wrap">
+      <div class="surface-toggle-wrap" hidden aria-hidden="true">
         <div class="surface-toggle" role="tablist" aria-label="Área">
           <button type="button" class="surface-btn active" data-surface="chat" id="btnSurfaceChatGhost" role="tab" aria-selected="true">Chat</button>
           <button type="button" class="surface-btn" data-surface="work" id="btnSurfaceWorkGhost" role="tab" aria-selected="false">Work</button>
@@ -170,8 +137,14 @@
         <div class="aurora-band" aria-hidden="true"></div>
         <div class="empty-brand">Forge</div>
         <h3 id="emptyTitle">No que você está pensando hoje?</h3>
-        <p id="emptySub">Converse no Chat ou mude para Work para criar e editar apps no projeto.</p>
-        <div class="template-grid" id="templateGrid">
+        <p id="emptySub">Converse no Chat ou escolha um template para construir no Work.</p>
+        <div class="empty-chat-actions" id="emptyChatActions">
+          <button type="button" class="btn btn-primary btn-gradient" id="btnEmptyNewProject">Criar projeto e construir</button>
+          <button type="button" class="btn btn-ghost" id="btnEmptyGoWork">Só abrir Work</button>
+          <p class="empty-chat-hint muted">Chat explora ideias. Work edita o projeto e atualiza o Preview.</p>
+        </div>
+        <div class="template-grid hidden" id="templateGrid">
+          <p class="empty-templates-lead muted" id="emptyTemplatesLead">Escolha um ponto de partida</p>
           <button type="button" class="template-card" data-template="landing">
             <h4>Landing Page</h4>
             <p>Site de apresentação HTML/CSS</p>
@@ -194,23 +167,17 @@
           </button>
         </div>
         <div class="work-home-actions hidden" id="workHomeActions">
-          <button type="button" class="btn btn-primary btn-gradient" id="btnChooseProjectEmpty">Escolher projeto</button>
-          <button type="button" class="btn btn-ghost" id="btnNewProjectEmpty">Novo projeto</button>
+          <button type="button" class="btn btn-ghost" id="btnChooseProjectEmpty">Escolher na lista</button>
+          <button type="button" class="btn btn-primary btn-gradient" id="btnNewProjectEmpty">Novo projeto</button>
         </div>
       </section>
 
       <section class="view-workspace hidden" id="workspaceView">
-        <div class="workspace-superbar" aria-label="Navegação do workspace">
+        <div class="workspace-superbar" aria-label="Modo do workspace" hidden>
+          <!-- Chat/Work canônicos ficam na sidebar; estes IDs permanecem para sync do JS. -->
           <div class="workspace-superbar-left">
-            <button type="button" class="superbar-link surface-btn" data-surface="chat" id="btnSurfaceChat" role="tab" aria-selected="false">Chat</button>
-            <button type="button" class="superbar-link surface-btn active" data-surface="work" id="btnSurfaceWork" role="tab" aria-selected="true">Work</button>
-            <button type="button" class="superbar-link">Arquivos</button>
-            <button type="button" class="superbar-link">Banco de Conhecimento</button>
-            <button type="button" class="superbar-link">Configurações</button>
-          </div>
-          <div class="workspace-superbar-right">
-            <span class="superbar-chip">Autosave 2m</span>
-            <span class="superbar-chip">Projeto ativo</span>
+            <button type="button" class="superbar-link surface-btn" data-surface="chat" id="btnSurfaceChat" role="tab" aria-selected="false" hidden>Chat</button>
+            <button type="button" class="superbar-link surface-btn active" data-surface="work" id="btnSurfaceWork" role="tab" aria-selected="true" hidden>Work</button>
           </div>
         </div>
         <header class="topbar">
@@ -223,16 +190,16 @@
             </button>
             <div class="project-heading">
               <h2 id="projectTitle">Projeto</h2>
-              <span class="project-badge" id="projectBadge">Projeto ativo</span>
+              <button type="button" class="project-badge" id="projectBadge" data-surface="work" title="Alternar Chat / Work">Work</button>
             </div>
           </div>
           <div class="topbar-controls">
-            <span class="active-model-badge" id="activeModelBadge" title="Modelo que o Forge vai usar (ou está usando agora)">Auto</span>
+            <button type="button" class="active-model-badge" id="activeModelBadge" title="Abrir Modelos IA">Auto</button>
             <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar arquivos e preview">↻</button>
-            <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">Deploy</button>
             <details class="topbar-more" id="topbarMore">
               <summary class="topbar-more-btn" title="Mais opções">Opções</summary>
               <div class="topbar-more-panel" role="group" aria-label="Opções do workspace">
+                <button type="button" class="btn btn-ghost btn-sm topbar-more-action" id="btnDeploy" title="Deploy Vercel">Deploy</button>
                 <label class="topbar-more-label" for="modeSelect">Modo de execução</label>
                 <select id="modeSelect" title="Modo" class="control-select">
                   <option value="chat" selected>Chat (qualquer assunto)</option>
@@ -241,14 +208,15 @@
                   <option value="dry">Dry-run</option>
                 </select>
                 <span class="mode-chip hidden" id="modeChip" title="Modo atual">Chat</span>
-                <label class="topbar-more-label" for="modelSelect">Modelo (avançado)</label>
-                <select id="modelSelect" title="Modelo IA" class="control-select model-select">
+                <p class="topbar-more-hint muted">Modelo: use o seletor do composer ou o badge Auto no topo.</p>
+                <label class="topbar-more-label sr-only" for="modelSelect">Modelo</label>
+                <select id="modelSelect" title="Modelo IA" class="control-select model-select sr-only" tabindex="-1" aria-hidden="true">
                   <option value="__auto__">Auto (recomendado)</option>
                   <optgroup label="Instalados" id="modelGroupInstalled"></optgroup>
                   <optgroup label="Recomendados" id="modelGroupRecommended"></optgroup>
                   <option value="__custom__">Outro...</option>
                 </select>
-                <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" />
+                <input id="modelCustomInput" type="text" class="hidden control-input" placeholder="Nome do modelo Ollama" tabindex="-1" aria-hidden="true" />
                 <label class="topbar-more-label" for="maxStepsInput">Máx. passos</label>
                 <div class="steps-control" id="stepsControl" title="Max steps">
                   <span class="steps-icon" aria-hidden="true">✦</span>
@@ -272,10 +240,10 @@
 
         <div class="work-rail hidden" id="workRail" aria-label="Fluxo de execução">
           <ol class="work-stepper" id="workStepper">
-            <li class="work-step" data-step="plan"><span>1</span><b>Planejar</b><small>Entender o que sera construido</small></li>
-            <li class="work-step" data-step="work"><span>2</span><b>Executar</b><small>Gerar codigo e executar</small></li>
-            <li class="work-step" data-step="check"><span>3</span><b>Validar</b><small>Testar e comparar resultados</small></li>
-            <li class="work-step" data-step="done"><span>4</span><b>Finalizar</b><small>Ajustar e concluir entrega</small></li>
+            <li class="work-step" data-step="plan"><span>1</span><b>Planejar</b><small>Entender o que será construído</small></li>
+            <li class="work-step" data-step="work"><span>2</span><b>Executar</b><small>Gerar código e aplicar</small></li>
+            <li class="work-step" data-step="check"><span>3</span><b>Validar</b><small>Preview e mockup</small></li>
+            <li class="work-step" data-step="done"><span>4</span><b>Finalizar</b><small>Ajustar e entregar</small></li>
           </ol>
           <div class="work-plan-card" id="workPlanCard">
             <div class="work-plan-head">
@@ -306,30 +274,26 @@
               <p class="hero-kicker" id="heroKicker">Projeto aberto</p>
               <h3 class="hero-title" id="heroTitle">No que você está pensando?</h3>
               <p class="hero-sub" id="heroSub">Converse sobre qualquer assunto. Quando for criar ou editar o app, mude para Work — o contexto do chat acompanha.</p>
-              <div class="quick-actions">
-                <button type="button" class="quick-card quick-card--chat" data-prompt="Quero conversar sobre uma ideia de produto antes de programar. Me faça perguntas para entender o problema, o público e o resultado desejado.">
+              <div class="quick-actions" id="quickActions">
+                <button type="button" class="quick-card quick-card--chat" data-prompt="Quero conversar sobre uma ideia de produto antes de programar. Me faça perguntas para entender o problema, o público e o resultado desejado." data-send="1">
                   <span class="quick-icon">Ideia</span>
                   <span class="quick-label">Explorar ideia</span>
                 </button>
-                <button type="button" class="quick-card quick-card--chat" data-prompt="Me explique este assunto com calma, em português, sem assumir que eu já sei programar.">
+                <button type="button" class="quick-card quick-card--chat" data-prompt="Me explique este assunto com calma, em português, sem assumir que eu já sei programar." data-send="1">
                   <span class="quick-icon">?</span>
                   <span class="quick-label">Tirar dúvida</span>
                 </button>
-                <button type="button" class="quick-card quick-card--work" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte.">
+                <button type="button" class="quick-card quick-card--work" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte." data-send="1">
                   <span class="quick-icon">Web</span>
                   <span class="quick-label">Criar landing</span>
                 </button>
-                <button type="button" class="quick-card quick-card--work" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia.">
+                <button type="button" class="quick-card quick-card--work" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia." data-send="1">
                   <span class="quick-icon">UI</span>
                   <span class="quick-label">Melhorar visual</span>
                 </button>
-                <button type="button" class="quick-card quick-card--work" data-prompt="Adicione uma seção de funcionalidades com cards e ícones simples em CSS.">
-                  <span class="quick-icon">+</span>
-                  <span class="quick-label">Nova seção</span>
-                </button>
-                <button type="button" class="quick-card" data-prompt="Explique a estrutura deste projeto e sugira as próximas melhorias.">
-                  <span class="quick-icon">Ask</span>
-                  <span class="quick-label">Perguntar</span>
+                <button type="button" class="quick-card quick-card--work quick-card--mockup" id="btnQuickMockup" data-prompt="">
+                  <span class="quick-icon">Mock</span>
+                  <span class="quick-label">Enviar mockup</span>
                 </button>
               </div>
             </div>
@@ -339,14 +303,10 @@
               <div class="composer" id="composer">
                 <div class="composer-plus-wrap">
                   <button type="button" class="composer-plus" id="btnComposerPlus" title="Anexar" aria-label="Anexar arquivos">+</button>
-                  <div class="composer-menu hidden" id="composerMenu">
-                    <button type="button" class="composer-menu-item" id="btnAttachFiles">
+                  <div class="composer-menu hidden" id="composerMenu" role="menu" aria-label="Anexar">
+                    <button type="button" class="composer-menu-item" id="btnAttachFiles" role="menuitem">
                       <strong>Adicionar arquivos</strong>
                       <span>Enviar do computador</span>
-                    </button>
-                    <button type="button" class="composer-menu-item" id="btnAttachFromProject" disabled>
-                      <strong>Arquivo do projeto</strong>
-                      <span>Em breve</span>
                     </button>
                   </div>
                 </div>
@@ -366,14 +326,23 @@
                   Projeto
                 </button>
                 <span class="composer-tool muted" id="composerProjectLabel">Nenhum selecionado</span>
-                <span class="composer-tool-hint muted" id="composerToolHint">Arraste as bordas para redimensionar · Chat/Work no topo</span>
+                <span class="run-status-chip hidden" id="runStatusChip" aria-live="polite">Em execução</span>
+                <span class="composer-tool-hint muted" id="composerToolHint">Chat conversa · Work constrói · Preview à direita</span>
               </div>
               <div class="chat-input-actions">
-                <div class="busy-banner hidden" id="busyBanner">
-                  <span id="busyBannerText">Há uma execução em andamento.</span>
-                  <button type="button" class="btn btn-ghost btn-sm" id="btnForceCancel">Cancelar e liberar</button>
+                <div class="busy-banner hidden" id="busyBanner" role="status" aria-live="polite">
+                  <div class="busy-banner-main">
+                    <span class="busy-pulse" aria-hidden="true"></span>
+                    <div class="busy-banner-copy">
+                      <strong class="busy-banner-title" id="busyBannerTitle">Executando</strong>
+                      <span id="busyBannerText">Há uma execução em andamento.</span>
+                    </div>
+                  </div>
+                  <div class="busy-banner-actions">
+                    <button type="button" class="btn btn-ghost btn-sm btn-cancel-run" id="btnCancel">Cancelar</button>
+                    <button type="button" class="btn btn-ghost btn-sm hidden" id="btnForceCancel" title="Força liberar o projeto se o cancelamento normal travar">Liberar fila</button>
+                  </div>
                 </div>
-                <button type="button" class="btn btn-ghost btn-cancel-run hidden" id="btnCancel">Cancelar</button>
               </div>
             </div>
           </div>
@@ -414,10 +383,7 @@
               <div class="tools-subtabs" id="toolsSubtabs">
                 <div class="tools-subrow" data-group-panel="app">
                   <button type="button" class="panel-tab tools-sub active" data-tab="preview" data-group="app">Preview</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Console</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Logs</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Testes</button>
-                  <button type="button" class="tools-sub tools-sub-ghost" aria-disabled="true">Banco de Dados</button>
+                  <button type="button" class="panel-tab tools-sub" data-tab="files" data-group="app">Arquivos</button>
                 </div>
                 <div class="tools-subrow hidden" data-group-panel="agent">
                   <button type="button" class="panel-tab tools-sub" data-tab="live" data-group="agent">Ao vivo</button>
@@ -461,57 +427,45 @@
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnDevRestart">Reiniciar</button>
                 <span class="dev-status" id="devStatus"></span>
               </div>
-              <pre class="dev-error-log hidden" id="devErrorLog"></pre>
+              <div class="dev-error-panel hidden" id="devErrorPanel">
+                <p class="dev-error-summary" id="devErrorSummary">Falha no preview ao vivo.</p>
+                <pre class="dev-error-log" id="devErrorLog"></pre>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnDevErrorRestart">Reiniciar preview</button>
+              </div>
               <div class="app-workbench" id="appWorkbench">
                 <div class="app-preview-col">
                   <div class="preview-viewport device-desktop" id="previewViewport">
                     <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
                     <div class="preview-empty" id="previewEmpty">
-                      <div class="preview-empty-title">Preview ao vivo</div>
-                      <p class="preview-empty-copy">Quando o agente criar HTML ou um app, a prévia aparece aqui.</p>
+                      <div class="preview-empty-title">Preview do app</div>
+                      <p class="preview-empty-copy">Peça no Work para criar a UI, ou envie um mockup no Visual.</p>
                       <div class="preview-empty-actions">
-                        <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
-                        <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section.">Criar landing</button>
-                        <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um app React + Vite simples com página inicial e estilos.">Criar React</button>
+                        <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section." data-send="1">Criar landing</button>
+                        <button type="button" class="btn btn-ghost btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
+                        <button type="button" class="btn btn-ghost btn-sm" id="btnPreviewGoVisual">Enviar mockup</button>
                       </div>
                     </div>
                   </div>
                   <p class="preview-hint hidden" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
-                  <div class="device-switcher" id="deviceSwitcher">
-                    <button type="button" class="device-btn active" data-device="desktop" title="Desktop">Desk</button>
-                    <button type="button" class="device-btn" data-device="tablet" title="Tablet">Tab</button>
-                    <button type="button" class="device-btn" data-device="mobile" title="Mobile">Mob</button>
+                  <div class="device-switcher" id="deviceSwitcher" role="group" aria-label="Tamanho do preview">
+                    <button type="button" class="device-btn active" data-device="desktop" title="Desktop" aria-pressed="true">Desktop</button>
+                    <button type="button" class="device-btn" data-device="tablet" title="Tablet" aria-pressed="false">Tablet</button>
+                    <button type="button" class="device-btn" data-device="mobile" title="Mobile" aria-pressed="false">Mobile</button>
                   </div>
                 </div>
                 <div class="app-explorer-col" id="panelFiles">
                   <div class="app-explorer-head">
                     <strong>Arquivos do projeto</strong>
-                    <div class="app-explorer-actions" aria-hidden="true">
-                      <button type="button" tabindex="-1" title="Novo arquivo">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M14 3H7a2 2 0 0 0-2 2v14a2 2 0 0 0 2 2h10a2 2 0 0 0 2-2V8z"/><path d="M14 3v5h5"/></svg>
-                      </button>
-                      <button type="button" tabindex="-1" title="Atualizar">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M20 11a8 8 0 0 0-13.7-5.6L4 8"/><path d="M4 4v4h4"/><path d="M4 13a8 8 0 0 0 13.7 5.6L20 16"/><path d="M20 20v-4h-4"/></svg>
-                      </button>
-                      <button type="button" tabindex="-1" title="Mais">
-                        <svg viewBox="0 0 24 24" aria-hidden="true"><path d="M5 12h.01M12 12h.01M19 12h.01"/></svg>
-                      </button>
-                    </div>
                   </div>
                   <div class="file-search-row">
                     <input id="fileSearchInput" type="search" placeholder="Buscar arquivos..." />
                   </div>
                   <ul class="file-tree" id="fileTree"></ul>
-                  <div class="app-explorer-git" aria-hidden="true">
-                    <strong>Git</strong>
-                    <span>⌘ main</span>
-                    <span>○ 3</span>
-                    <span>○ 1</span>
-                  </div>
                   <div class="file-editor-shell hidden" id="fileEditorShell">
                     <div class="file-editor-toolbar">
                       <span class="file-editor-path" id="fileEditorPath"></span>
-                      <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas">•</span>
+                      <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas" aria-live="polite">não salvo</span>
+                      <span class="file-editor-saved hidden" id="fileEditorSaved" aria-live="polite">salvo</span>
                       <button type="button" class="btn btn-ghost btn-sm" id="btnFileSave" disabled>Salvar</button>
                     </div>
                     <textarea class="file-viewer" id="fileViewer" spellcheck="false" aria-label="Editor de arquivo"></textarea>
@@ -520,6 +474,16 @@
               </div>
             </div>
             <div class="panel-content hidden" id="panelCompare">
+              <ol class="compare-flow" id="compareFlow" aria-label="Fluxo visual">
+                <li class="compare-flow-step is-current" data-flow="mockup"><span>1</span><b>Mockup</b></li>
+                <li class="compare-flow-step" data-flow="compare"><span>2</span><b>Comparar</b></li>
+                <li class="compare-flow-step" data-flow="correct"><span>3</span><b>Alcançar</b></li>
+              </ol>
+              <div class="compare-dropzone" id="compareDropzone">
+                <strong>Envie o mockup de referência</strong>
+                <p class="muted">PNG, JPG ou WebP — o motor compara com o Preview e guia as correções.</p>
+                <button type="button" class="btn btn-primary btn-sm" id="btnUploadMockupPrimary">Enviar mockup</button>
+              </div>
               <div class="compare-toolbar">
                 <select id="compareViewport" class="control-select" title="Viewport">
                   <option value="1366x768">Desktop 1366</option>
@@ -527,20 +491,30 @@
                   <option value="768x1024">Tablet</option>
                   <option value="393x852">Mobile</option>
                 </select>
-                <button type="button" class="btn btn-primary btn-sm" id="btnCompareNow">Comparar</button>
+                <button type="button" class="btn btn-ghost btn-sm" id="btnCompareNow">Comparar</button>
                 <button type="button" class="btn btn-ghost btn-sm" id="btnCapturePreview">Capturar</button>
                 <button type="button" class="btn btn-ghost btn-sm hidden" id="btnCorrectCancel">Interromper</button>
               </div>
-              <p class="compare-status" id="compareStatus">Compare o preview com uma URL ou mockup.</p>
+              <p class="compare-status" id="compareStatus">Envie um mockup, compare com o preview e alcance o resultado.</p>
               <label class="compare-label" for="compareMockupPath">Mockup no projeto</label>
               <div class="compare-mockup-row">
                 <input id="compareMockupPath" type="text" placeholder="ex: mockups/home.png" class="compare-input compare-input-inline" />
                 <button type="button" class="btn btn-ghost btn-sm" id="btnUploadMockup">Enviar</button>
                 <input type="file" id="compareMockupFile" accept="image/png,image/jpeg,image/webp" class="hidden" />
               </div>
-              <label class="compare-label" for="compareTargetUrl">URL alvo (opcional)</label>
+              <label class="compare-label compare-label-advanced" for="compareTargetUrl">URL alvo (opcional)</label>
               <input id="compareTargetUrl" type="url" placeholder="https://…" class="compare-input" />
               <div class="compare-score hidden" id="compareScore"></div>
+              <div class="compare-primary-cta hidden" id="comparePrimaryCta">
+                <div class="compare-primary-actions">
+                  <button type="button" class="btn btn-primary btn-sm" id="btnReachResult">Alcançar resultado</button>
+                  <button type="button" class="btn btn-ghost btn-sm" id="btnCorrectPrimary">Só corrigir CSS</button>
+                  <button type="button" class="btn btn-ghost btn-sm hidden" id="btnVisualAgentBrief">Pedir ao agente</button>
+                </div>
+                <p class="muted compare-primary-hint" id="comparePrimaryHint">
+                  Um clique: compara → corrige CSS → se ainda ficar longe, prepara o brief para o agente.
+                </p>
+              </div>
               <details class="compare-advanced" id="compareAdvanced">
                 <summary>Ferramentas avançadas</summary>
                 <div class="compare-advanced-body">
@@ -582,6 +556,7 @@
                 <p class="compare-correction-meta" id="compareCorrectionMeta"></p>
                 <ol class="compare-correction-attempts" id="compareCorrectionAttempts"></ol>
               </div>
+              <div class="compare-results hidden" id="compareResults">
               <div class="compare-view-tabs" id="compareViewTabs">
                 <button type="button" class="compare-view-btn active" data-view="side">Lado a lado</button>
                 <button type="button" class="compare-view-btn" data-view="diff">Diff</button>
@@ -624,6 +599,7 @@
                 <h4>Histórico visual</h4>
                 <ul class="compare-history-list" id="compareHistoryList"></ul>
               </div>
+              </div>
             </div>
             <div class="panel-content hidden" id="panelReport">
               <div class="run-history" id="runHistory">
@@ -634,40 +610,42 @@
             </div>
           </aside>
         </div>
-        <section class="workspace-dock" id="workspaceDock" aria-label="Painéis inferiores">
-          <article class="dock-card dock-compare">
-            <header class="dock-head">
-              <strong>Comparação visual</strong>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="visual" data-open-tab="compare">Abrir</button>
-            </header>
-            <p class="dock-main" id="dockCompareStatus">Sem comparações recentes.</p>
-            <p class="dock-meta muted" id="dockCompareMeta">Use “Visual” para iniciar uma nova comparação.</p>
-          </article>
-          <article class="dock-card dock-history">
-            <header class="dock-head">
-              <strong>Histórico</strong>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Ver runs</button>
-            </header>
-            <ul class="dock-run-list" id="dockRunList">
-              <li class="muted">Nenhuma execução registrada.</li>
-            </ul>
-          </article>
-          <article class="dock-card dock-metrics">
-            <header class="dock-head">
-              <strong>Métricas</strong>
-              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="live">Ao vivo</button>
-            </header>
-            <div class="dock-metric-grid">
-              <div class="dock-metric"><span>Performance</span><b id="dockMetricTotal">96%</b></div>
-              <div class="dock-metric"><span>Erros</span><b id="dockMetricFail">0</b></div>
-              <div class="dock-metric"><span>Tempo</span><b id="dockMetricSuccess">1.2s</b></div>
+        <section class="workspace-dock hidden" id="workspaceDock" aria-label="Resumo inferior" hidden>
+          <div class="dock-strip" role="group" aria-label="Status do workspace">
+            <div class="dock-seg dock-seg-visual">
+              <span class="dock-kicker">Visual</span>
+              <div class="dock-seg-body">
+                <strong class="dock-main" id="dockCompareStatus">Sem comparações</strong>
+                <span class="dock-meta muted" id="dockCompareMeta">Mockup → Preview</span>
+              </div>
+              <div class="dock-seg-actions">
+                <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="visual" data-open-tab="compare" id="dockBtnVisual">Abrir</button>
+                <button type="button" class="btn btn-primary btn-sm dock-open-btn hidden" data-dock-action="reach" id="dockBtnReach">Alcançar</button>
+              </div>
             </div>
-          </article>
+            <div class="dock-seg dock-seg-runs">
+              <span class="dock-kicker">Último run</span>
+              <ul class="dock-run-list" id="dockRunList">
+                <li class="muted">Nenhuma execução</li>
+              </ul>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn" data-open-group="agent" data-open-tab="report">Runs</button>
+            </div>
+            <div class="dock-seg dock-seg-stats">
+              <span class="dock-stat" title="Total de execuções"><b id="dockMetricTotal">0</b><em>total</em></span>
+              <span class="dock-stat ok" title="Sucessos"><b id="dockMetricSuccess">0</b><em>ok</em></span>
+              <span class="dock-stat err" title="Falhas"><b id="dockMetricFail">0</b><em>erro</em></span>
+              <button type="button" class="btn btn-ghost btn-sm dock-open-btn dock-live-btn" data-open-group="agent" data-open-tab="live">
+                <i class="dock-live-dot" aria-hidden="true"></i> Ao vivo
+              </button>
+            </div>
+          </div>
         </section>
         <nav class="mobile-tabs hidden" id="mobileTabs" aria-label="Ferramentas do projeto">
-          <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">App</button>
+          <button type="button" class="mobile-tab mobile-tab-chat" data-surface="chat" id="mobileTabChat">Conversa</button>
+          <button type="button" class="mobile-tab active" data-group="app" data-tab="preview">Preview</button>
+          <button type="button" class="mobile-tab" data-group="app" data-tab="files">Arquivos</button>
           <button type="button" class="mobile-tab" data-group="agent" data-tab="live">Agente</button>
-          <button type="button" class="mobile-tab" data-group="visual" data-tab="compare">Visual</button>
+          <button type="button" class="mobile-tab" data-group="visual" data-tab="compare" id="mobileTabVisual">Visual</button>
         </nav>
         <div class="mobile-backdrop hidden" id="mobileBackdrop"></div>
       </section>
@@ -890,6 +868,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=42"></script>
+  <script src="/static/app.js?v=52"></script>
 </body>
 </html>

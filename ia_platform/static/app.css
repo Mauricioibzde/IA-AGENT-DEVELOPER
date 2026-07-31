@@ -3056,7 +3056,7 @@ body.surface-chat #workRail { display: none !important; }
 
 /* Deploy is a Work action — keep Chat chrome quieter */
 body.surface-chat .btn-deploy { display: none; }
-body.surface-work .btn-deploy { display: inline-flex; }
+body.surface-work .btn-deploy { display: flex; width: 100%; justify-content: flex-start; }
 
 .composer-tool-hint {
   margin-left: auto;
@@ -7283,4 +7283,810 @@ body.surface-work .composer {
   min-height: 22px !important;
   margin-left: 8px !important;
   padding: 0 8px !important;
+}
+
+/* ── Lovable shell (UX slice 1): coherent tools only ── */
+.sr-only {
+  position: absolute !important;
+  width: 1px !important;
+  height: 1px !important;
+  padding: 0 !important;
+  margin: -1px !important;
+  overflow: hidden !important;
+  clip: rect(0, 0, 0, 0) !important;
+  white-space: nowrap !important;
+  border: 0 !important;
+}
+
+.workspace-superbar[hidden],
+.surface-toggle-wrap[hidden],
+.workspace-dock[hidden] {
+  display: none !important;
+}
+
+button.active-model-badge {
+  appearance: none;
+  border: 0;
+  cursor: pointer;
+  font: inherit;
+}
+
+button.active-model-badge:hover {
+  filter: brightness(1.08);
+}
+
+.topbar-more-hint {
+  margin: 0 0 8px;
+  font-size: 0.78rem;
+  line-height: 1.35;
+}
+
+#appWorkbench.workbench-focus-files {
+  grid-template-columns: minmax(0, 1fr) !important;
+}
+
+#appWorkbench.workbench-focus-files .app-preview-col {
+  display: none !important;
+}
+
+#appWorkbench.workbench-focus-files .app-explorer-col {
+  width: 100% !important;
+  max-width: none !important;
+  min-width: 0 !important;
+}
+
+.tools-sub-ghost {
+  display: none !important;
+}
+
+.app-explorer-actions,
+.app-explorer-git {
+  display: none !important;
+}
+
+/* ── Lovable shell slice 2: empty + workbench flows ── */
+.empty-chat-actions {
+  display: grid;
+  gap: 10px;
+  justify-items: center;
+  margin: 18px auto 8px;
+  max-width: 420px;
+}
+
+.empty-chat-hint {
+  margin: 0;
+  text-align: center;
+  font-size: 0.86rem;
+  line-height: 1.4;
+}
+
+.project-badge[data-surface="chat"] {
+  opacity: 0.92;
+}
+
+.compare-flow {
+  list-style: none;
+  display: flex;
+  gap: 8px;
+  margin: 0 0 10px;
+  padding: 0;
+}
+
+.compare-flow-step {
+  flex: 1;
+  display: flex;
+  align-items: center;
+  gap: 6px;
+  min-width: 0;
+  padding: 6px 8px;
+  border-radius: 8px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  opacity: 0.55;
+  font-size: 0.72rem;
+}
+
+.compare-flow-step span {
+  display: inline-grid;
+  place-items: center;
+  width: 18px;
+  height: 18px;
+  border-radius: 999px;
+  background: color-mix(in srgb, currentColor 12%, transparent);
+  font-weight: 700;
+}
+
+.compare-flow-step b {
+  font-weight: 600;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.compare-flow-step.is-current {
+  opacity: 1;
+  border-color: color-mix(in srgb, currentColor 28%, transparent);
+}
+
+.compare-flow-step.is-done {
+  opacity: 0.8;
+}
+
+.preview-empty-actions {
+  flex-wrap: wrap;
+}
+
+.tools-group.hidden,
+.mobile-tab.hidden {
+  display: none !important;
+}
+
+body.surface-chat .quick-card--mockup {
+  display: none !important;
+}
+
+/* ── Lovable shell slice 3: run chrome + hierarchy polish ── */
+body.is-running .composer {
+  outline: 1px solid color-mix(in srgb, #d97706 45%, transparent);
+}
+
+.composer.is-running textarea:disabled {
+  opacity: 0.72;
+  cursor: not-allowed;
+}
+
+.run-status-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  margin-left: auto;
+  padding: 3px 9px;
+  border-radius: 999px;
+  border: 1px solid color-mix(in srgb, #d97706 35%, transparent);
+  background: color-mix(in srgb, #d97706 12%, transparent);
+  color: #b45309;
+  font-size: 0.72rem;
+  font-weight: 700;
+  letter-spacing: 0.02em;
+  white-space: nowrap;
+}
+
+.run-status-chip::before {
+  content: "";
+  width: 7px;
+  height: 7px;
+  border-radius: 50%;
+  background: #d97706;
+  box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.55);
+  animation: forge-busy-pulse 1.4s ease-out infinite;
+}
+
+.busy-banner {
+  width: 100%;
+  margin: 0;
+  padding: 10px 12px;
+  border-radius: 12px;
+  border: 1px solid color-mix(in srgb, #d97706 32%, transparent);
+  background: linear-gradient(135deg, color-mix(in srgb, #d97706 12%, transparent), color-mix(in srgb, #d97706 4%, transparent));
+  color: inherit;
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+
+.busy-banner-main {
+  display: flex;
+  align-items: flex-start;
+  gap: 10px;
+  min-width: 0;
+  flex: 1;
+}
+
+.busy-pulse {
+  width: 10px;
+  height: 10px;
+  margin-top: 4px;
+  border-radius: 50%;
+  flex-shrink: 0;
+  background: #d97706;
+  box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.5);
+  animation: forge-busy-pulse 1.4s ease-out infinite;
+}
+
+@keyframes forge-busy-pulse {
+  0% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0.45); }
+  70% { box-shadow: 0 0 0 8px rgba(217, 119, 6, 0); }
+  100% { box-shadow: 0 0 0 0 rgba(217, 119, 6, 0); }
+}
+
+.busy-banner-copy {
+  display: grid;
+  gap: 2px;
+  min-width: 0;
+}
+
+.busy-banner-title {
+  font-size: 0.78rem;
+  font-weight: 750;
+  letter-spacing: 0.02em;
+  color: #b45309;
+}
+
+#busyBannerText {
+  font-size: 0.8rem;
+  line-height: 1.35;
+  color: color-mix(in srgb, currentColor 78%, transparent);
+  overflow: hidden;
+  text-overflow: ellipsis;
+  display: -webkit-box;
+  -webkit-line-clamp: 2;
+  -webkit-box-orient: vertical;
+}
+
+.busy-banner-actions {
+  display: flex;
+  gap: 6px;
+  flex-shrink: 0;
+}
+
+.composer-toolbar {
+  align-items: center;
+  gap: 8px;
+}
+
+.composer-tool-hint {
+  max-width: 42ch;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.empty-brand {
+  font-size: clamp(2.4rem, 6vw, 3.4rem);
+  font-weight: 750;
+  letter-spacing: -0.04em;
+  line-height: 0.95;
+  margin-bottom: 0.35rem;
+}
+
+#emptyTitle {
+  font-size: clamp(1.25rem, 2.6vw, 1.65rem);
+  font-weight: 650;
+  letter-spacing: -0.02em;
+  margin: 0.2rem 0 0.45rem;
+}
+
+#emptySub {
+  max-width: 34rem;
+  margin: 0 auto 0.4rem;
+  font-size: 0.95rem;
+  line-height: 1.45;
+  opacity: 0.82;
+}
+
+.hero-title {
+  letter-spacing: -0.03em;
+}
+
+.hero-sub {
+  max-width: 40rem;
+}
+
+.project-badge {
+  font-size: 0.68rem;
+  font-weight: 750;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  padding: 0.22rem 0.55rem;
+  border-radius: 999px;
+}
+
+.sidebar-tip {
+  opacity: 0.88;
+  font-size: 0.78rem;
+}
+
+.sidebar-tip p {
+  margin: 0.25rem 0 0;
+  line-height: 1.35;
+}
+
+.tools-group {
+  letter-spacing: 0.01em;
+}
+
+.topbar h2 {
+  letter-spacing: -0.02em;
+}
+
+body.is-running .btn-send {
+  opacity: 0.45;
+}
+
+/* ── Workspace improvements: feedback, files, visual, health ── */
+button.project-badge {
+  appearance: none;
+  border: 1px solid color-mix(in srgb, currentColor 18%, transparent);
+  background: color-mix(in srgb, currentColor 8%, transparent);
+  color: inherit;
+  cursor: pointer;
+}
+
+button.project-badge:hover {
+  filter: brightness(1.08);
+}
+
+.health-status-btn {
+  appearance: none;
+  border: 0;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  font-size: 0.78rem;
+  padding: 0;
+  cursor: pointer;
+  text-align: left;
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+}
+
+.health-status-btn.is-offline {
+  color: #b45309;
+  font-weight: 650;
+}
+
+.health-status-btn:hover {
+  text-decoration: underline;
+}
+
+.file-node.changed,
+.file-dir.changed > .file-dir-toggle {
+  background: color-mix(in srgb, #d97706 12%, transparent);
+}
+
+.file-node.changed .file-changed {
+  color: #b45309;
+  font-weight: 800;
+}
+
+.next-steps-files {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+  margin: 8px 0;
+}
+
+.next-file {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 5%, transparent);
+  border-radius: 999px;
+  padding: 4px 10px;
+  font: inherit;
+  font-size: 0.75rem;
+  cursor: pointer;
+  color: inherit;
+}
+
+.next-file em {
+  font-style: normal;
+  opacity: 0.65;
+  font-size: 0.68rem;
+  text-transform: uppercase;
+  letter-spacing: 0.04em;
+}
+
+.next-steps-actions .btn-primary {
+  order: -1;
+}
+
+.dev-error-panel {
+  margin: 8px 10px 0;
+  padding: 10px 12px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, #ef4444 28%, transparent);
+  background: color-mix(in srgb, #ef4444 8%, transparent);
+  display: grid;
+  gap: 8px;
+}
+
+.dev-error-summary {
+  margin: 0;
+  font-size: 0.82rem;
+  font-weight: 650;
+  color: #b91c1c;
+}
+
+.dev-error-panel .dev-error-log {
+  margin: 0;
+  max-height: 120px;
+  overflow: auto;
+  font-size: 0.72rem;
+  white-space: pre-wrap;
+  opacity: 0.85;
+}
+
+.compare-primary-cta {
+  display: grid;
+  gap: 6px;
+  margin: 0 0 10px;
+  padding: 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, currentColor 14%, transparent);
+  background: color-mix(in srgb, currentColor 4%, transparent);
+}
+
+.compare-primary-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 6px;
+}
+
+.compare-primary-hint {
+  margin: 0;
+  font-size: 0.75rem;
+}
+
+.compare-dropzone {
+  display: grid;
+  gap: 8px;
+  justify-items: start;
+  margin: 0 0 12px;
+  padding: 16px 14px;
+  border-radius: 12px;
+  border: 1px dashed color-mix(in srgb, currentColor 28%, transparent);
+  background:
+    linear-gradient(160deg, color-mix(in srgb, currentColor 5%, transparent), transparent 70%);
+}
+
+.compare-dropzone strong {
+  font-size: 0.92rem;
+}
+
+.compare-dropzone p {
+  margin: 0;
+  font-size: 0.78rem;
+  line-height: 1.35;
+  max-width: 34ch;
+}
+
+.empty-templates-lead {
+  grid-column: 1 / -1;
+  margin: 0 0 2px;
+  font-size: 0.82rem;
+}
+
+.empty-chat-actions {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 8px;
+  align-items: center;
+  justify-content: center;
+  margin-top: 12px;
+}
+
+.empty-chat-actions .empty-chat-hint {
+  flex: 1 1 100%;
+  text-align: center;
+  margin: 4px 0 0;
+}
+
+.visual-outcome-card .visual-outcome-copy {
+  margin: 0 0 8px;
+  font-size: 0.82rem;
+  line-height: 1.35;
+}
+
+.work-step {
+  cursor: pointer;
+}
+
+@media (max-width: 900px) {
+  .work-rail,
+  #splitWorkRail {
+    display: none !important;
+  }
+}
+
+body.surface-chat .work-rail,
+body.surface-chat #splitWorkRail {
+  display: none !important;
+}
+
+/* Sidebar hardware meters removed */
+.sidebar-resources,
+.resource-meter,
+.resource-track {
+  display: none !important;
+}
+
+.sidebar-bottom {
+  gap: 8px;
+}
+
+.sidebar-tip {
+  margin: 0 10px 4px;
+  padding: 8px 10px;
+  border-radius: 10px;
+  border: 1px solid color-mix(in srgb, var(--border, #253047) 80%, transparent);
+  background: color-mix(in srgb, var(--surface, #111827) 88%, transparent);
+  font-size: 0.74rem;
+}
+
+.sidebar-tip p {
+  margin: 4px 0 0;
+  color: var(--muted);
+  line-height: 1.35;
+}
+
+/* ── Compact modern workspace dock (bottom strip) ── */
+.workspace-dock.hidden,
+.workspace-dock[hidden] {
+  display: none !important;
+}
+
+.workspace-dock:not(.hidden):not([hidden]) {
+  display: block !important;
+  height: auto !important;
+  min-height: 0 !important;
+  max-height: none !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border-top: 1px solid color-mix(in srgb, var(--border, #253047) 70%, transparent) !important;
+  background:
+    linear-gradient(180deg, color-mix(in srgb, var(--surface, #111827) 96%, #000), color-mix(in srgb, #0a0f18 90%, #000)) !important;
+  grid-template-columns: none !important;
+  align-items: stretch !important;
+  z-index: 4;
+}
+
+/* Kill legacy tall dock cards completely */
+.workspace-dock .dock-card,
+.workspace-dock article.dock-card,
+.workspace-dock .dock-metric-grid,
+.workspace-dock .dock-head {
+  display: contents !important;
+  min-height: 0 !important;
+  height: auto !important;
+  padding: 0 !important;
+  margin: 0 !important;
+  border: 0 !important;
+  background: transparent !important;
+  box-shadow: none !important;
+}
+
+.workspace-dock .dock-strip {
+  display: grid;
+  grid-template-columns: minmax(0, 1.45fr) minmax(0, 1.05fr) auto;
+  gap: 0;
+  align-items: center;
+  min-height: 44px;
+  max-height: 48px;
+}
+
+.workspace-dock .dock-seg {
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 6px 12px;
+  min-width: 0;
+  border-right: 1px solid color-mix(in srgb, var(--border, #253047) 55%, transparent);
+}
+
+.workspace-dock .dock-seg:last-child {
+  border-right: 0;
+}
+
+.workspace-dock .dock-kicker {
+  flex: 0 0 auto;
+  font-size: 0.58rem;
+  font-weight: 700;
+  letter-spacing: 0.07em;
+  text-transform: uppercase;
+  color: var(--muted);
+  opacity: 0.85;
+}
+
+.workspace-dock .dock-seg-body {
+  flex: 1 1 auto;
+  min-width: 0;
+  display: grid;
+  gap: 0;
+}
+
+.workspace-dock .dock-main {
+  margin: 0;
+  font-size: 0.76rem;
+  font-weight: 650;
+  color: var(--text);
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
+
+.workspace-dock .dock-meta {
+  margin: 0;
+  font-size: 0.64rem;
+  line-height: 1.15;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  opacity: 0.85;
+}
+
+.workspace-dock .dock-seg-actions {
+  display: flex;
+  gap: 5px;
+  flex: 0 0 auto;
+}
+
+.workspace-dock .dock-open-btn {
+  height: 26px;
+  padding: 0 9px;
+  border-radius: 7px;
+  font-size: 0.68rem;
+  font-weight: 600;
+}
+
+.workspace-dock .dock-run-list {
+  list-style: none;
+  margin: 0;
+  padding: 0;
+  flex: 1 1 auto;
+  min-width: 0;
+  display: flex;
+  flex-direction: column;
+  gap: 0;
+  font-size: 0.68rem;
+}
+
+.workspace-dock .dock-run-list li {
+  display: flex;
+  justify-content: space-between;
+  align-items: center;
+  gap: 8px;
+  color: var(--muted);
+  min-width: 0;
+}
+
+.workspace-dock .dock-run-list li span {
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.workspace-dock .dock-run-list strong {
+  flex: 0 0 auto;
+  font-size: 0.62rem;
+  letter-spacing: 0.02em;
+}
+
+.workspace-dock .dock-run-list .ok { color: var(--ok); }
+.workspace-dock .dock-run-list .err { color: var(--err); }
+.workspace-dock .dock-run-list .warn { color: var(--warn); }
+
+.workspace-dock .dock-seg-stats {
+  gap: 10px;
+  padding-right: 12px;
+}
+
+.workspace-dock .dock-stat {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 3px;
+  min-width: 0;
+  padding: 2px 0;
+}
+
+.workspace-dock .dock-stat b {
+  font-size: 0.8rem;
+  font-weight: 700;
+  color: var(--text);
+  line-height: 1;
+  border: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  display: inline !important;
+  padding: 0 !important;
+  order: 0 !important;
+  background: transparent !important;
+}
+
+.workspace-dock .dock-stat em {
+  font-style: normal;
+  font-size: 0.58rem;
+  color: var(--muted);
+  text-transform: lowercase;
+}
+
+.workspace-dock .dock-stat.ok b { color: var(--ok); }
+.workspace-dock .dock-stat.err b { color: var(--err); }
+
+.workspace-dock .dock-live-btn {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+}
+
+.workspace-dock .dock-live-dot {
+  width: 6px;
+  height: 6px;
+  border-radius: 50%;
+  background: var(--ok, #21c787);
+  box-shadow: 0 0 0 3px color-mix(in srgb, var(--ok, #21c787) 20%, transparent);
+}
+
+.workspace-dock .dock-metric,
+.workspace-dock .dock-metric b {
+  /* neutralize legacy circular metric badges */
+  border: 0 !important;
+  width: auto !important;
+  height: auto !important;
+  min-height: 0 !important;
+  border-radius: 0 !important;
+  box-shadow: none !important;
+  background: transparent !important;
+  padding: 0 !important;
+}
+
+body.surface-chat .workspace-dock {
+  display: none !important;
+}
+
+@media (max-width: 1100px) {
+  .workspace-dock .dock-strip {
+    grid-template-columns: minmax(0, 1fr) auto;
+  }
+  .workspace-dock .dock-seg-runs {
+    display: none;
+  }
+}
+
+@media (max-width: 900px) {
+  .workspace-dock {
+    display: none !important;
+  }
+}
+
+.active-model-badge.is-offline {
+  color: var(--err, #ff6b6b);
+  border-color: color-mix(in srgb, var(--err, #ff6b6b) 45%, transparent);
+  background: color-mix(in srgb, var(--err, #ff6b6b) 12%, transparent);
+}
+
+.file-editor-dirty {
+  font-size: 0.72rem;
+  color: var(--warn, #f59e0b);
+  margin-right: 6px;
+}
+
+.file-editor-saved {
+  font-size: 0.72rem;
+  color: var(--ok, #21c787);
+  margin-right: 6px;
+}
+
+.compare-results {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.device-switcher .device-btn {
+  min-width: 4.2rem;
+  font-size: 0.72rem;
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 8px;
+  max-width: 36rem;
 }
