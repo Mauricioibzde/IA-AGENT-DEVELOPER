@@ -7,7 +7,7 @@
   <link rel="preconnect" href="https://fonts.googleapis.com" />
   <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin />
   <link href="https://fonts.googleapis.com/css2?family=Instrument+Sans:ital,wght@0,400..700;1,400..700&display=swap" rel="stylesheet" />
-  <link rel="stylesheet" href="/static/app.css?v=60" />
+  <link rel="stylesheet" href="/static/app.css?v=61" />
 </head>
 <body>
   <div class="app" id="appShell">
@@ -110,8 +110,8 @@
             </div>
           </div>
           <div class="sidebar-tip" id="sidebarTip">
-            <strong>Como navegar</strong>
-            <p><b>Chat</b> conversa · <b>Work</b> constrói. À direita: <b>Preview</b>, <b>Arquivos</b> e <b>Visual</b>.</p>
+            <strong>Caminho rápido</strong>
+            <p><b>1</b> Chat · <b>2</b> Work · <b>3</b> Preview · <b>4</b> Visual (mockup).</p>
           </div>
           <div class="sidebar-user" title="Forge · plataforma local">
             <div class="user-avatar">F</div>
@@ -217,10 +217,10 @@
           <div class="topbar-controls">
             <button type="button" class="active-model-badge" id="activeModelBadge" title="Abrir Modelos IA">Auto</button>
             <button type="button" class="btn btn-ghost btn-icon-text" id="btnRefreshFiles" title="Atualizar arquivos e preview">↻</button>
-            <button type="button" class="btn btn-primary btn-gradient btn-deploy" id="btnDeploy" title="Deploy Vercel">Deploy</button>
             <details class="topbar-more" id="topbarMore">
               <summary class="topbar-more-btn" title="Mais opções">Opções</summary>
               <div class="topbar-more-panel" role="group" aria-label="Opções do workspace">
+                <button type="button" class="btn btn-ghost btn-sm topbar-more-action" id="btnDeploy" title="Deploy Vercel">Deploy</button>
                 <label class="topbar-more-label" for="modeSelect">Modo de execução</label>
                 <select id="modeSelect" title="Modo" class="control-select">
                   <option value="chat" selected>Chat (qualquer assunto)</option>
@@ -295,34 +295,26 @@
               <p class="hero-kicker" id="heroKicker">Projeto aberto</p>
               <h3 class="hero-title" id="heroTitle">No que você está pensando?</h3>
               <p class="hero-sub" id="heroSub">Converse sobre qualquer assunto. Quando for criar ou editar o app, mude para Work — o contexto do chat acompanha.</p>
-              <div class="quick-actions">
-                <button type="button" class="quick-card quick-card--chat" data-prompt="Quero conversar sobre uma ideia de produto antes de programar. Me faça perguntas para entender o problema, o público e o resultado desejado.">
+              <div class="quick-actions" id="quickActions">
+                <button type="button" class="quick-card quick-card--chat" data-prompt="Quero conversar sobre uma ideia de produto antes de programar. Me faça perguntas para entender o problema, o público e o resultado desejado." data-send="1">
                   <span class="quick-icon">Ideia</span>
                   <span class="quick-label">Explorar ideia</span>
                 </button>
-                <button type="button" class="quick-card quick-card--chat" data-prompt="Me explique este assunto com calma, em português, sem assumir que eu já sei programar.">
+                <button type="button" class="quick-card quick-card--chat" data-prompt="Me explique este assunto com calma, em português, sem assumir que eu já sei programar." data-send="1">
                   <span class="quick-icon">?</span>
                   <span class="quick-label">Tirar dúvida</span>
                 </button>
-                <button type="button" class="quick-card quick-card--work" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte.">
+                <button type="button" class="quick-card quick-card--work" data-prompt="Crie uma landing page moderna com hero, 3 benefícios e CTA forte." data-send="1">
                   <span class="quick-icon">Web</span>
                   <span class="quick-label">Criar landing</span>
                 </button>
-                <button type="button" class="quick-card quick-card--work" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia.">
+                <button type="button" class="quick-card quick-card--work" data-prompt="Melhore o visual deste app: tipografia, espaçamento, cores e hierarquia." data-send="1">
                   <span class="quick-icon">UI</span>
                   <span class="quick-label">Melhorar visual</span>
                 </button>
                 <button type="button" class="quick-card quick-card--work quick-card--mockup" id="btnQuickMockup" data-prompt="">
                   <span class="quick-icon">Mock</span>
                   <span class="quick-label">Enviar mockup</span>
-                </button>
-                <button type="button" class="quick-card quick-card--work" data-prompt="Adicione uma seção de funcionalidades com cards e ícones simples em CSS.">
-                  <span class="quick-icon">+</span>
-                  <span class="quick-label">Nova seção</span>
-                </button>
-                <button type="button" class="quick-card" data-prompt="Explique a estrutura deste projeto e sugira as próximas melhorias.">
-                  <span class="quick-icon">Ask</span>
-                  <span class="quick-label">Perguntar</span>
                 </button>
               </div>
             </div>
@@ -332,14 +324,10 @@
               <div class="composer" id="composer">
                 <div class="composer-plus-wrap">
                   <button type="button" class="composer-plus" id="btnComposerPlus" title="Anexar" aria-label="Anexar arquivos">+</button>
-                  <div class="composer-menu hidden" id="composerMenu">
-                    <button type="button" class="composer-menu-item" id="btnAttachFiles">
+                  <div class="composer-menu hidden" id="composerMenu" role="menu" aria-label="Anexar">
+                    <button type="button" class="composer-menu-item" id="btnAttachFiles" role="menuitem">
                       <strong>Adicionar arquivos</strong>
                       <span>Enviar do computador</span>
-                    </button>
-                    <button type="button" class="composer-menu-item" id="btnAttachFromProject" disabled>
-                      <strong>Arquivo do projeto</strong>
-                      <span>Em breve</span>
                     </button>
                   </div>
                 </div>
@@ -471,21 +459,19 @@
                     <iframe class="preview-frame" id="previewFrame" title="Preview do projeto"></iframe>
                     <div class="preview-empty" id="previewEmpty">
                       <div class="preview-empty-title">Preview do app</div>
-                      <p class="preview-empty-copy">Peça no Work para criar a UI, ou envie um mockup para comparar no Visual.</p>
+                      <p class="preview-empty-copy">Peça no Work para criar a UI, ou envie um mockup no Visual.</p>
                       <div class="preview-empty-actions">
-                        <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
-                        <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section.">Criar landing</button>
-                        <button type="button" class="btn btn-ghost btn-sm preview-cta" data-prompt="Crie um app React + Vite simples com página inicial e estilos.">Criar React</button>
-                        <button type="button" class="btn btn-ghost btn-sm" id="btnPreviewOpenFiles">Abrir arquivos</button>
+                        <button type="button" class="btn btn-primary btn-gradient btn-sm preview-cta" data-prompt="Crie um index.html moderno com CSS embutido e uma hero section." data-send="1">Criar landing</button>
+                        <button type="button" class="btn btn-ghost btn-sm preview-cta-dev hidden" id="btnPreviewStartDev">Iniciar preview ao vivo</button>
                         <button type="button" class="btn btn-ghost btn-sm" id="btnPreviewGoVisual">Enviar mockup</button>
                       </div>
                     </div>
                   </div>
                   <p class="preview-hint hidden" id="previewHint">Abra index.html ou outro arquivo HTML.</p>
-                  <div class="device-switcher" id="deviceSwitcher">
-                    <button type="button" class="device-btn active" data-device="desktop" title="Desktop">Desk</button>
-                    <button type="button" class="device-btn" data-device="tablet" title="Tablet">Tab</button>
-                    <button type="button" class="device-btn" data-device="mobile" title="Mobile">Mob</button>
+                  <div class="device-switcher" id="deviceSwitcher" role="group" aria-label="Tamanho do preview">
+                    <button type="button" class="device-btn active" data-device="desktop" title="Desktop" aria-pressed="true">Desktop</button>
+                    <button type="button" class="device-btn" data-device="tablet" title="Tablet" aria-pressed="false">Tablet</button>
+                    <button type="button" class="device-btn" data-device="mobile" title="Mobile" aria-pressed="false">Mobile</button>
                   </div>
                 </div>
                 <div class="app-explorer-col" id="panelFiles">
@@ -499,7 +485,8 @@
                   <div class="file-editor-shell hidden" id="fileEditorShell">
                     <div class="file-editor-toolbar">
                       <span class="file-editor-path" id="fileEditorPath"></span>
-                      <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas">•</span>
+                      <span class="file-editor-dirty hidden" id="fileEditorDirty" title="Alterações não salvas" aria-live="polite">não salvo</span>
+                      <span class="file-editor-saved hidden" id="fileEditorSaved" aria-live="polite">salvo</span>
                       <button type="button" class="btn btn-ghost btn-sm" id="btnFileSave" disabled>Salvar</button>
                     </div>
                     <textarea class="file-viewer" id="fileViewer" spellcheck="false" aria-label="Editor de arquivo"></textarea>
@@ -590,6 +577,7 @@
                 <p class="compare-correction-meta" id="compareCorrectionMeta"></p>
                 <ol class="compare-correction-attempts" id="compareCorrectionAttempts"></ol>
               </div>
+              <div class="compare-results hidden" id="compareResults">
               <div class="compare-view-tabs" id="compareViewTabs">
                 <button type="button" class="compare-view-btn active" data-view="side">Lado a lado</button>
                 <button type="button" class="compare-view-btn" data-view="diff">Diff</button>
@@ -631,6 +619,7 @@
               <div class="compare-history">
                 <h4>Histórico visual</h4>
                 <ul class="compare-history-list" id="compareHistoryList"></ul>
+              </div>
               </div>
             </div>
             <div class="panel-content hidden" id="panelReport">
@@ -878,6 +867,6 @@ powershell -ExecutionPolicy Bypass -File .\scripts\run-platform.ps1</pre>
 
   <div id="toastStack" class="toast-stack" aria-live="polite"></div>
 
-  <script src="/static/app.js?v=48"></script>
+  <script src="/static/app.js?v=49"></script>
 </body>
 </html>

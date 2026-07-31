@@ -150,6 +150,8 @@
     btnResetProjectLayout: $("btnResetProjectLayout"),
     layoutPresetStatus: $("layoutPresetStatus"),
     btnDeploy: $("btnDeploy"),
+    compareResults: $("compareResults"),
+    fileEditorSaved: $("fileEditorSaved"),
     fileTree: $("fileTree"),
     fileViewer: $("fileViewer"),
     fileEditorShell: $("fileEditorShell"),
@@ -781,9 +783,15 @@
 
     const shown = state.activeModel;
     const auto = isAutoModelSelected() || source === "auto";
+    const offline = state.ollamaOk === false;
 
     if (els.activeModelBadge) {
-      if (!shown) {
+      els.activeModelBadge.classList.toggle("is-offline", offline);
+      if (offline) {
+        els.activeModelBadge.textContent = "Ollama offline";
+        els.activeModelBadge.classList.remove("is-live", "is-manual");
+        els.activeModelBadge.title = "Ollama offline · clique para configurar";
+      } else if (!shown) {
         els.activeModelBadge.textContent = "Auto";
         els.activeModelBadge.classList.remove("is-live", "is-manual");
         els.activeModelBadge.title = "Auto · clique para abrir Modelos IA";
@@ -1581,6 +1589,7 @@
         els.healthStatus.innerHTML = '<span class="status-dot err"></span>Ollama offline · configurar';
         els.healthStatus.title = "Clique para configurar Ollama";
         els.healthStatus.classList.add("is-offline");
+        updateActiveModelDisplay(null, { source: "auto", live: false });
       } else {
         updateActiveModelDisplay(getSelectedModel() || expectedAutoModel(), {
           source: isAutoModelSelected() ? "auto" : "manual",
@@ -1594,6 +1603,7 @@
       els.healthStatus.innerHTML = '<span class="status-dot err"></span>offline · configurar';
       els.healthStatus.title = "Clique para configurar Ollama";
       els.healthStatus.classList.add("is-offline");
+      updateActiveModelDisplay(null, { source: "auto", live: false });
       updateOllamaOfflineUI();
       syncWorkbenchForSurface();
     } finally {
@@ -2349,8 +2359,10 @@
 
   function syncCompareEmptyState() {
     const hasMockup = !!(els.compareMockupPath?.value || "").trim() || !!state.lastCompareReport;
+    const hasReport = !!state.lastCompareReport;
     els.compareDropzone?.classList.toggle("hidden", hasMockup);
-    if (hasMockup && !state.lastCompareReport) {
+    els.compareResults?.classList.toggle("hidden", !hasReport);
+    if (hasMockup && !hasReport) {
       els.comparePrimaryCta?.classList.remove("hidden");
       if (els.comparePrimaryHint) {
         els.comparePrimaryHint.textContent =
@@ -2612,10 +2624,16 @@
 
   function closeComposerMenu() {
     els.composerMenu?.classList.add("hidden");
+    els.btnComposerPlus?.setAttribute("aria-expanded", "false");
   }
 
   function toggleComposerMenu() {
-    els.composerMenu?.classList.toggle("hidden");
+    const isOpen = !els.composerMenu?.classList.contains("hidden");
+    if (isOpen) closeComposerMenu();
+    else {
+      els.composerMenu?.classList.remove("hidden");
+      els.btnComposerPlus?.setAttribute("aria-expanded", "true");
+    }
   }
 
   function renderProjectList() {
@@ -6063,6 +6081,7 @@
   function syncFileEditorDirty() {
     const dirty = !!state.fileEditorDirty;
     els.fileEditorDirty?.classList.toggle("hidden", !dirty);
+    if (dirty) els.fileEditorSaved?.classList.add("hidden");
     if (els.btnFileSave) els.btnFileSave.disabled = !dirty || !state.selectedFile;
   }
 
@@ -6096,13 +6115,14 @@
       }
       syncFileEditorDirty();
       if (els.fileEditorPath) {
-        els.fileEditorPath.textContent = (asCopy ? savePath : path) + " · salvo";
-        window.setTimeout(() => {
-          if (state.selectedFile === path && els.fileEditorPath) {
-            els.fileEditorPath.textContent = path;
-          }
-        }, 1600);
+        els.fileEditorPath.textContent = asCopy ? savePath : path;
       }
+      if (els.fileEditorSaved) {
+        els.fileEditorSaved.textContent = asCopy ? "cópia salva" : "salvo";
+        els.fileEditorSaved.classList.remove("hidden");
+        window.setTimeout(() => els.fileEditorSaved?.classList.add("hidden"), 2200);
+      }
+      showToast(asCopy ? `Salvo como ${savePath}` : "Arquivo salvo.", "ok", 2200);
       await loadFiles().catch(() => {});
       if (/\.html?$|\.css$|\.js$/i.test(savePath)) {
         updatePreview(/\.html?$/i.test(savePath) ? savePath : findPreviewPath());
@@ -6155,7 +6175,9 @@
       els.previewViewport.classList.add(`device-${device}`);
     }
     els.deviceSwitcher?.querySelectorAll(".device-btn").forEach((btn) => {
-      btn.classList.toggle("active", btn.dataset.device === device);
+      const on = btn.dataset.device === device;
+      btn.classList.toggle("active", on);
+      btn.setAttribute("aria-pressed", on ? "true" : "false");
     });
   }
 
@@ -7158,6 +7180,7 @@
     setCompareView(state.compareView || "side");
     setCompareFlowStep("correct");
     updateVisualPrimaryCta(report);
+    syncCompareEmptyState();
     renderWorkspaceDock();
   }
 
@@ -8264,8 +8287,16 @@
       if (!prompt || !state.current || state.running) return;
       els.promptInput.value = prompt;
       els.promptInput.focus();
+      if (card.dataset.send === "1" && !state.running) sendPrompt();
     });
   });
+
+  document.addEventListener("keydown", (e) => {
+    if (e.key === "Escape") closeComposerMenu();
+  });
+
+  els.btnComposerPlus?.setAttribute("aria-expanded", "false");
+  els.btnComposerPlus?.setAttribute("aria-haspopup", "menu");
 
   els.deviceSwitcher?.addEventListener("click", (e) => {
     const btn = e.target.closest(".device-btn");

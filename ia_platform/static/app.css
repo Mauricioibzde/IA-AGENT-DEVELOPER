@@ -3056,7 +3056,7 @@ body.surface-chat #workRail { display: none !important; }
 
 /* Deploy is a Work action — keep Chat chrome quieter */
 body.surface-chat .btn-deploy { display: none; }
-body.surface-work .btn-deploy { display: inline-flex; }
+body.surface-work .btn-deploy { display: flex; width: 100%; justify-content: flex-start; }
 
 .composer-tool-hint {
   margin-left: auto;
@@ -7792,8 +7792,49 @@ button.project-badge:hover {
   }
 }
 
+body.surface-chat .work-rail,
+body.surface-chat #splitWorkRail {
+  display: none !important;
+}
+
 /* Kill decorative "Aplicar sugestão" residue on plan cards */
 .work-plan-card::after {
   content: none !important;
   display: none !important;
+}
+
+.active-model-badge.is-offline {
+  color: var(--err, #ff6b6b);
+  border-color: color-mix(in srgb, var(--err, #ff6b6b) 45%, transparent);
+  background: color-mix(in srgb, var(--err, #ff6b6b) 12%, transparent);
+}
+
+.file-editor-dirty {
+  font-size: 0.72rem;
+  color: var(--warn, #f59e0b);
+  margin-right: 6px;
+}
+
+.file-editor-saved {
+  font-size: 0.72rem;
+  color: var(--ok, #21c787);
+  margin-right: 6px;
+}
+
+.compare-results {
+  display: grid;
+  gap: 10px;
+  margin-top: 8px;
+}
+
+.device-switcher .device-btn {
+  min-width: 4.2rem;
+  font-size: 0.72rem;
+}
+
+.quick-actions {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(9.5rem, 1fr));
+  gap: 8px;
+  max-width: 36rem;
 }
